@@ -22,10 +22,9 @@ chunks = text_splitter.split_documents(docs)
 embeddings = OllamaEmbeddings(model="qwen2.5:1.5b")
 db = Chroma.from_documents(chunks, embeddings, persist_directory="./chroma_db")
 
-# 👇 아까 에러가 났던 원인! 여기서 llm(Qwen 모델)을 정의해 줍니다.
 llm = Ollama(model="qwen2.5:1.5b")
 
-# 1. 엣지 세이버의 정체성을 부여하는 아주 강력한 프롬프트
+# 1. 엣지 세이버의 정체성을 부여하는 프롬프트
 template = """너는 통신이 끊긴 재난 현장에서 생명을 구하는 '엣지 세이버(Edge Saver)' AI 비서야.
 반드시 제공된 [매뉴얼 내용]만을 바탕으로, '한국어'로 침착하고 명확하게 대답해.
 매뉴얼에 없는 내용이라면 절대로 지어내지 말고 "해당 상황에 대한 매뉴얼이 없습니다. 구조대를 기다리십시오."라고 대답해.
