@@ -29,18 +29,16 @@
 
 ## 🛠️ 환경 세팅
 
-이 스크립트는 파이썬 가상환경(`.venv` 등) 위에서 동작하는 것을 권장합니다.
+이 스크립트는 파이썬 가상환경(`.venv` 등) 위에서 동작하는 것을 권장합니다. 필요한 모든 패키지들을 아래 명령어로 한 번에 설치할 수 있습니다.
 
 ```bash
-# 1. 크롤링용 Selenium 설치
-pip install selenium
-
-# 2. 파싱용 한글(HWP), PDF 라이브러리 설치
-pip install pywin32
-pip install PyMuPDF
+# 크롤링 및 파싱에 필요한 라이브러리 일괄 설치
+pip install selenium webdriver-manager beautifulsoup4 requests PyMuPDF pywin32
 ```
 
-> **주의:** `crawler.py`는 구글 크롬 브라우저를 기반으로 작동하며, `parsing.py`에서 HWP 파일을 처리하려면 실행하는 윈도우(Windows) PC에 **한글(HWP) 프로그램**이 정상적으로 설치되어 있어야 합니다.
+> **주의:** 
+> - `crawler.py`는 구글 크롬 브라우저를 기반으로 작동하며, `webdriver-manager`가 크롬 버전에 맞는 드라이버를 자동 설치합니다. 단, 시스템에 **Google Chrome 브라우저** 자체가 설치되어 있어야 합니다.
+> - `parsing.py`에서 HWP 파일을 처리하려면 스크립트를 실행하는 윈도우(Windows) PC에 **한글(HWP) 프로그램**이 정상적으로 설치되어 있어야 합니다. Mac이나 Linux 환경에서는 HWP 파싱 기능을 사용할 수 없습니다.
 
 ---
 
