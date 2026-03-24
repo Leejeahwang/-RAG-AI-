@@ -1,5 +1,5 @@
 """
-터치스크린용 GUI 애플리케이션 (종화님 담당)
+터치스크린용 GUI 애플리케이션 (승훈님 담당)
 
 Phase 2 작업 내용 (4주차):
 - Streamlit 또는 PyQt 기반 터치스크린 GUI
@@ -12,7 +12,7 @@ Phase 2 작업 내용 (4주차):
     - PyQt5:    pip install PyQt5
 """
 
-# TODO (종화님):
+# TODO (승훈님):
 # 1. GUI 프레임워크 선택 (Streamlit vs PyQt)
 # 2. 레이아웃 구성:
 #    - 상단: 카메라 영상 표시
@@ -25,7 +25,7 @@ def launch():
     """
     GUI 애플리케이션을 실행합니다.
 
-    TODO (종화님):
+    TODO (승훈님):
         - Streamlit 또는 PyQt 기반으로 GUI 구현
         - 카메라 ↔ Vision AI ↔ RAG ↔ 음성 출력 파이프라인 연결
     """

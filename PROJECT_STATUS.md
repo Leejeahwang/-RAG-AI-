@@ -12,7 +12,7 @@
 ├── main.py                      ✅ 구현됨    (전체)
 ├── test.py                      ✅ 구현됨    (전체)
 │
-├── rag/                         👤 승훈
+├── rag/                         👤 승훈(검색), 종화(파싱)
 │   ├── loader.py                ✅ 구현됨
 │   ├── retriever.py             ✅ 구현됨
 │   ├── chain.py                 ✅ 구현됨
@@ -25,7 +25,7 @@
 │   ├── stt.py                   📌 TODO
 │   └── tts.py                   📌 TODO
 │
-├── gui/                         👤 종화
+├── gui/                         👤 승훈
 │   └── app.py                   📌 TODO
 │
 ├── docker/                      👤 재황
@@ -42,14 +42,14 @@
 
 ## 👥 팀원별 할 일 요약
 
-### 👤 이승훈 — RAG Backend (`rag/`)
+### 👤 이승훈 — RAG Search & GUI (`rag/`, `gui/`)
 
 | 파일 | 상태 | 할 일 |
 |------|------|-------|
 | `rag/loader.py` | ✅ 완료 | 문서 로딩 & 청킹 |
 | `rag/retriever.py` | ✅ 완료 | 벡터DB 생성 & 검색 |
 | `rag/chain.py` | ✅ 완료 | QA 체인 & 프롬프트 |
-| `rag/pdf_parser.py` | 📌 TODO | 적십자 매뉴얼 PDF 파싱 (PyMuPDF), 스마트 청킹 (300~500자) |
+| `gui/app.py` | 📌 TODO | 터치스크린용 GUI (Streamlit 또는 PyQt) |
 
 ### 👤 박규태 — Vision AI (`vision/`)
 
@@ -57,13 +57,13 @@
 |------|------|-------|
 | `vision/camera.py` | 📌 TODO | OpenCV 웹캠 캡처, 프레임 선택 전략, 이미지 전처리, Vision→RAG 연결 |
 
-### 👤 채종화 — Voice & GUI (`voice/`, `gui/`)
+### 👤 채종화 — Voice & PDF Data (`voice/`, `rag/pdf_parser.py`)
 
 | 파일 | 상태 | 할 일 |
 |------|------|-------|
+| `rag/pdf_parser.py` | 📌 TODO | 매뉴얼 PDF 수집 및 파싱 (PyMuPDF) |
 | `voice/stt.py` | 📌 TODO | 오프라인 STT (vosk 한국어 모델), 웨이크워드("세이버") 감지 |
 | `voice/tts.py` | 📌 TODO | 오프라인 TTS (pyttsx3), 한국어 음성 출력 |
-| `gui/app.py` | 📌 TODO | 터치스크린용 GUI (Streamlit 또는 PyQt) |
 
 ### 👤 이재황 — DevOps & HW (`docker/`)
 
@@ -80,10 +80,9 @@
 | 구분 | 완료 | 남음 | 진행률 |
 |------|------|------|--------|
 | 공통 (config, main, test) | 3 | 0 | ██████████ 100% |
-| RAG (승훈) | 3 | 1 | ███████░░░ 75% |
+| RAG/GUI (승훈) | 3 | 1 | ███████░░░ 75% |
 | Vision (규태) | 0 | 1 | ░░░░░░░░░░ 0% |
-| Voice (종화) | 0 | 2 | ░░░░░░░░░░ 0% |
-| GUI (종화) | 0 | 1 | ░░░░░░░░░░ 0% |
+| Voice/PDF (종화) | 0 | 3 | ░░░░░░░░░░ 0% |
 | Docker (재황) | 0 | 2 | ░░░░░░░░░░ 0% |
 | **전체** | **6** | **7** | **████░░░░░░ 46%** |
 

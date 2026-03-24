@@ -13,7 +13,7 @@
 | 주차 | 작업 | 담당 |
 |------|------|------|
 | 1주 | ✅ ~~코드 리팩토링 (모듈화)~~ 완료 | 전체 |
-| 1주 | 실제 PDF 파싱 → FAISS 인덱스 빌드 | 승훈 |
+| 1주 | 재난 대응 매뉴얼 PDF 수집 및 파싱 → 인덱스 빌드 | 종화 |
 | 1주 | OpenCV 웹캠 연동 → LLaVA 실시간 분석 | 규태 |
 | 2주 | RAG 검색 고도화 (Top-K, 메타데이터) | 승훈 |
 | 2주 | 오프라인 STT/TTS 모듈 개발 | 종화 |
@@ -26,7 +26,7 @@
 
 | 주차 | 작업 | 담당 |
 |------|------|------|
-| 4주 | 터치스크린용 GUI 개발 (Streamlit/PyQt) | 종화 |
+| 4주 | 터치스크린용 GUI 개발 (Streamlit/PyQt) | 승훈 |
 | 4주 | 시나리오별 E2E 테스트 (화상·골절·출혈 등) | 전체 |
 | 5주 | 성능 프로파일링 & 병목 식별 | 재황 |
 | 5주 | 경량화 준비 (모델 양자화, ONNX 변환 검토) | 재황 + 규태 |
@@ -58,16 +58,16 @@
 - 이미지 전처리 (리사이즈, 압축)
 - Vision → RAG 파이프라인 연결 안정화
 
-### 이승훈 (RAG Backend)
-- 적십자 매뉴얼 PDF 파싱 (`rag/pdf_parser.py`, PyMuPDF 사용)
+### 이승훈 (GUI & RAG Search)
+- 터치스크린용 GUI 개발 (Streamlit 또는 PyQt)
+- GUI ↔ AI 파이프라인 연동
 - 스마트 청킹 (제목 기준 300~500자 단위)
-- FAISS 인덱스 영구 저장/로드
 - Top-K 검색 + 유사도 점수 반환 (이미 구현됨)
 
-### 채종화 (Frontend & Voice UX)
-- 오프라인 STT: `vosk` (한국어 모델)
-- 오프라인 TTS: `pyttsx3`
-- 터치스크린용 GUI (Streamlit 또는 PyQt)
+### 채종화 (Voice UX & Data Processing)
+- 응급처치/재난 대응 매뉴얼 자료 PDF 수집
+- 적십자 매뉴얼 PDF 파싱 (`rag/pdf_parser.py`, PyMuPDF 사용)
+- 오프라인 STT (`vosk`) / TTS (`pyttsx3`)
 - 웨이크워드("세이버") 감지
 
 ---
@@ -114,9 +114,9 @@
 - `feature/{기능명}` 브랜치: 각자 작업하는 개인 브랜치
 
 **생성 예시:**
-- 승훈: `feature/rag-pdf-parsing`
+- 승훈: `feature/gui-app`
 - 규태: `feature/vision-camera`
-- 종화: `feature/voice-stt`
+- 종화: `feature/pdf-data`
 - 재황: `feature/docker-setup`
 
 ### 2. 작업 순서 (매일 할 일)

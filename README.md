@@ -55,11 +55,11 @@ python test.py
 ├── main.py                      # 통합 진입점 (대화형 모드)
 ├── test.py                      # 파이프라인 테스트 (Vision AI 시뮬레이션)
 │
-├── rag/                         # RAG 모듈 (승훈)
-│   ├── loader.py                #   문서 로딩 & 청킹
-│   ├── retriever.py             #   벡터DB 생성 & 검색
-│   ├── chain.py                 #   QA 체인 & 프롬프트
-│   └── pdf_parser.py            #   PDF 파싱 (구현 예정)
+├── rag/                         # RAG 모듈 (승훈, 종화)
+│   ├── loader.py                #   문서 로딩 & 청킹 (승훈)
+│   ├── retriever.py             #   벡터DB 생성 & 검색 (승훈)
+│   ├── chain.py                 #   QA 체인 & 프롬프트 (승훈)
+│   └── pdf_parser.py            #   PDF 파싱 (종화)
 │
 ├── vision/                      # Vision 모듈 (규태)
 │   └── camera.py                #   카메라 캡처 (구현 예정)
@@ -68,7 +68,7 @@ python test.py
 │   ├── stt.py                   #   오프라인 음성 인식 (vosk)
 │   └── tts.py                   #   오프라인 음성 합성 (pyttsx3)
 │
-├── gui/                         # GUI 모듈 (종화)
+├── gui/                         # GUI 모듈 (승훈)
 │   └── app.py                   #   터치스크린 GUI (구현 예정)
 │
 ├── docker/                      # Docker 설정 (재황)
@@ -90,5 +90,5 @@ python test.py
 |------|------|-----------|
 | 이재황 | PM & DevOps | `docker/`, 라즈베리파이 환경 |
 | 박규태 | Vision AI | `vision/` |
-| 이승훈 | RAG Backend | `rag/` |
-| 채종화 | Voice & GUI | `voice/`, `gui/` |
+| 이승훈 | RAG Search & GUI | `rag/`, `gui/` |
+| 채종화 | Voice & PDF Data | `voice/`, `rag/pdf_parser.py` |
