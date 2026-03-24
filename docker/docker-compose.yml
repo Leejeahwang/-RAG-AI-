@@ -1,0 +1,50 @@
+# ──────────────────────────────────────────────
+# 엣지 세이버 Docker Compose (재황님 담당)
+# ──────────────────────────────────────────────
+#
+# Phase 1 (3주차): Docker Compose 멀티 서비스 구성
+# Phase 3 (5주차~): 라즈베리파이 배포
+#
+# TODO (재황님):
+#   1. Ollama 서비스 정의 (모델 서빙)
+#   2. App 서비스 정의 (Python 앱)
+#   3. 볼륨 마운트 (매뉴얼 데이터, 벡터DB)
+#   4. GPU/CPU 리소스 제한 설정
+#
+# 참고 구조 예시:
+# ──────────────────────────────────────────────
+
+version: "3.8"
+
+services:
+  # LLM 추론 서버
+  ollama:
+    image: ollama/ollama:latest
+    container_name: edge-saver-ollama
+    # TODO: GPU 설정 (RPi에서는 제거)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  # 엣지 세이버 앱
+  app:
+    build: .
+    container_name: edge-saver-app
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - .:/app
+    # TODO: 포트 설정 (GUI 사용 시)
+    # ports:
+    #   - "8501:8501"
+
+volumes:
+  ollama_data:
