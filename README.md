@@ -38,11 +38,11 @@ ollama pull qwen2.5:1.5b
 ### 4. 실행
 
 ```bash
-# 대화형 모드 (텍스트 질문/답변)
+# 기본 실행 (Vision AI 시뮬레이션)
 python main.py
 
-# 파이프라인 테스트 (Vision AI 시뮬레이션)
-python test.py
+# 특정 사진을 넘겨 실행할 경우
+python main.py 테스트사진.png
 ```
 
 ---
@@ -52,8 +52,7 @@ python test.py
 ```text
 -RAG-AI-/
 ├── config.py                    # 전역 설정 (모델명, 경로, 파라미터)
-├── main.py                      # 통합 진입점 (대화형 모드)
-├── test.py                      # 파이프라인 테스트 (Vision AI 시뮬레이션)
+├── main.py                      # E2E 통합 진입점 (Vision 연동 등)
 │
 ├── rag/                         # RAG 모듈 (승훈, 종화)
 │   ├── loader.py                #   문서 로딩 & 청킹 (승훈)
