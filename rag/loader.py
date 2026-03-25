@@ -1,36 +1,40 @@
 """
-문서 로딩 & 청킹 모듈
-- 현재: TXT 파일 로딩 (TextLoader)
-- 향후: PDF 파싱으로 확장 예정 (승훈님 담당, PyMuPDF 사용)
+문서 로딩 & 청킹 모듈 (승훈님 담당)
 """
 
-from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 import config
+import os
 
 
-def load_and_split(file_path: str = None) -> list:
+def load_and_split():
     """
-    매뉴얼 파일을 로드하고 청크 단위로 분할합니다.
-
-    Args:
-        file_path: 매뉴얼 파일 경로 (기본값: config.MANUAL_PATH)
+    data/ 폴더의 매뉴얼 문서를 로딩하고 청킹합니다.
 
     Returns:
-        list: 분할된 Document 객체 리스트
+        list: 청킹된 Document 리스트
     """
-    if file_path is None:
-        file_path = config.MANUAL_PATH
+    data_dir = config.DATA_DIR
 
-    loader = TextLoader(file_path, encoding="utf-8")
-    docs = loader.load()
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
 
-    text_splitter = RecursiveCharacterTextSplitter(
+    # txt 파일이 있으면 로드
+    txt_files = [f for f in os.listdir(data_dir) if f.endswith('.txt')]
+    if not txt_files:
+        print(f"⚠️ {data_dir}/ 폴더에 매뉴얼 파일이 없습니다.")
+        print("   → data/ 폴더에 소방 매뉴얼 txt 파일을 넣어주세요.")
+        return []
+
+    loader = DirectoryLoader(data_dir, glob="**/*.txt", loader_cls=TextLoader,
+                             loader_kwargs={"encoding": "utf-8"})
+    documents = loader.load()
+
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=config.CHUNK_SIZE,
         chunk_overlap=config.CHUNK_OVERLAP,
     )
-    chunks = text_splitter.split_documents(docs)
-
-    print(f"📦 문서 로딩 완료: {len(chunks)}개 청크 생성")
+    chunks = splitter.split_documents(documents)
+    print(f"✅ {len(documents)}개 문서 → {len(chunks)}개 청크로 분할 완료")
     return chunks

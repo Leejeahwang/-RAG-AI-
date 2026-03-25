@@ -15,3 +15,7 @@ __pycache__/
 
 # 보관용 폴더
 _archive/
+
+# 임시 캡처 파일
+temp_capture.jpg
+captured_frame.jpg

@@ -1,4 +1,5 @@
 """
-Vision 모듈 (카메라 & 이미지 분석)
-- camera: 웹캠/카메라 프레임 캡처 (규태님 담당)
+Vision AI 모듈 (규태님 담당)
+- camera: 실시간 카메라 캡처
+- fire_detector: 화재/연기 영상 판별 AI
 """

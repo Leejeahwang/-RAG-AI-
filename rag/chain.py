@@ -1,51 +1,44 @@
 """
-QA 체인 & 프롬프트 모듈
-- 엣지 세이버 시스템 프롬프트 템플릿
-- RetrievalQA 체인 생성
+QA 체인 & 프롬프트 모듈 (승훈님 담당)
 """
 
+from langchain.chains import RetrievalQA
 from langchain_community.llms import Ollama
-from langchain_classic.chains import RetrievalQA
-from langchain_core.prompts import PromptTemplate
-
 import config
 
 
-# ──────────────────────────────────────────────
-# 엣지 세이버 시스템 프롬프트
-# ──────────────────────────────────────────────
-EDGE_SAVER_PROMPT = """너는 통신이 끊긴 재난 현장에서 생명을 구하는 '엣지 세이버(Edge Saver)' AI 비서야.
-반드시 제공된 [매뉴얼 내용]만을 바탕으로, '한국어'로 침착하고 명확하게 대답해.
-매뉴얼에 없는 내용이라면 절대로 지어내지 말고 "해당 상황에 대한 매뉴얼이 없습니다. 구조대를 기다리십시오."라고 대답해.
+SYSTEM_PROMPT = """너는 건물 내 화재 감시 및 대응을 전담하는 AI 시스템 '엣지 세이버(Edge Saver)'야.
 
-[매뉴얼 내용]: {context}
+너의 역할:
+1. 센서와 카메라가 감지한 화재 상황에 대해, 건물 매뉴얼을 검색하여 정확한 대응 지침을 제공한다.
+2. 해당 구역의 위험물질, 소화기 종류, 대피 경로 등을 포함한 구체적인 안내를 한다.
+3. 반드시 한국어로 답변한다.
+4. 매뉴얼에 없는 내용은 추측하지 말고 "해당 정보가 매뉴얼에 없습니다"라고 정직하게 말한다.
+5. 인명 안전을 최우선으로 한다.
 
 질문: {question}
+참고 매뉴얼: {context}
+
 답변:"""
 
 
 def build_qa_chain(retriever):
-    """
-    RetrievalQA 체인을 생성합니다.
-
-    Args:
-        retriever: 벡터DB 검색기
-
-    Returns:
-        RetrievalQA 체인 인스턴스
-    """
-    llm = Ollama(model=config.LLM_MODEL)
+    """RAG 기반 QA 체인을 구성합니다."""
+    from langchain.prompts import PromptTemplate
 
     prompt = PromptTemplate(
-        template=EDGE_SAVER_PROMPT,
-        input_variables=["context", "question"],
+        template=SYSTEM_PROMPT,
+        input_variables=["question", "context"],
     )
+
+    llm = Ollama(model=config.LLM_MODEL)
 
     qa = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
         retriever=retriever,
+        return_source_documents=False,
         chain_type_kwargs={"prompt": prompt},
     )
-
+    print("✅ QA 체인 구성 완료")
     return qa
