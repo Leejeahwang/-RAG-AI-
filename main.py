@@ -18,6 +18,7 @@ import config
 from rag.loader import load_and_split
 from rag.retriever import build_vectorstore, get_retriever
 from rag.chain import build_qa_chain
+from vision.camera import capture_frame
 
 # ──────────────────────────────────────────────
 # Vision AI 구현 전까지 사용할 시뮬레이션 시나리오
@@ -114,12 +115,16 @@ class EdgeSaverApp:
             raise RuntimeError("시스템이 초기화되지 않았습니다. initialize()를 먼저 호출하세요.")
 
         # ── Step 1: Vision AI로 상황 분석 ──
-        print("[분석] Vision AI에게 사진 분석을 요청합니다...")
+        print("[카메라] 현장 사진 확보 중...")
+        if not image_path:
+            image_path = capture_frame("temp_capture.jpg")
+            
         if image_path:
+            print(f"[분석] Vision AI에게 사진({image_path}) 분석을 요청합니다...")
             query = self.analyze_image(image_path)
         else:
             query = random.choice(SIMULATION_SCENARIOS)
-            print("📷 이미지 없음 → 시뮬레이션 질문 사용\n")
+            print("📷 이미지 확보 실패 또는 캡처 취소됨 → 시뮬레이션 질문 사용\n")
 
         print(f"👁️‍🗨️ [Vision AI 분석 결과]: {query}\n")
 
