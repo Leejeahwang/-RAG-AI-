@@ -90,5 +90,19 @@ def capture_frame(save_dir=DEFAULT_SAVE_DIR):
 if __name__ == "__main__":
     result = capture_frame()
     if result:
-        print(f"✅ 테스트 성공! 저장 위치: {result}")
+        print(f"✅ 캡처 성공! 저장 위치: {result}")
+        
+        # 캡처 직후 AI 모델 테스트 연동
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from fire_detector import detect_fire
+        
+        analysis = detect_fire(result)
+        print("\n" + "="*50)
+        print("🔥 [화재 감지 분석 결과]")
+        print(f"- 화재 발견 여부: {analysis['fire_detected']}")
+        print(f"- AI 신뢰도:      {analysis['confidence']}")
+        print(f"- 상세 내역:      {analysis['description']}")
+        print("="*50 + "\n")
 

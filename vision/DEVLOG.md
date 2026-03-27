@@ -32,6 +32,10 @@
 - 바탕화면/루트 폴더 지저분해짐 방지를 위해 전용 저장 구역(`vision/captures/`) 디렉토리 추가 및 자동 생성 로직 구현
 - 동일한 파일명으로 덮어씌워지던 문제 해결 (캡처 시각 `YYYYMMDD_HHMMSS` 기반의 고유 파일명 부여 적용)
 - 실행 시 발생한 `cv2` 모듈 누락 에러 해결 (프로젝트 전용 `.venv`에 `opencv-python` 설치 완료)
+- `vision/fire_detector.py` 전면 개편: YOLOv8 딥러닝 기반 화재/연기 객체 인식 로직 연동
+- 라즈베리파이용 '완전 오프라인(`ultralytics` 로컬 구동)' 모드와 PC 테스트용 'Roboflow API' 모드를 자동 스위칭하는 하이브리드 아키텍처 구축
+- 깃허브 공개 저장소(150 Epoch 훈련)에서 가장 가벼운 YOLOv8n `best.pt` 가중치를 추출하여 `vision/models/fire_smoke.pt` 파일로 배치 완료
+- 최종 형태인 Phase 3(라즈베리파이 CCTV 실시간 자동 감시망) 구현 및 AI 센서 퓨전 트리거 설계 문서(`CCTV_MIGRATION_PLAN.md`) 작성 완료
 
 ---
 

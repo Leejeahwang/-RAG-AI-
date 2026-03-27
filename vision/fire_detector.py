@@ -2,10 +2,29 @@
 화재/연기 영상 판별 AI 모듈 (규태님 담당)
 
 카메라로 촬영한 프레임에서 불꽃이나 연기를 감지합니다.
-Phase 1: 시뮬레이션 (항상 False 반환)
-Phase 2: 실제 Vision AI 모델 적용 (OpenCV + 경량 모델)
+Phase 2: Roboflow Object Detection AI 적용 (fire-smoke-mx4z8/1)
 """
 
+import os
+from roboflow import Roboflow
+
+# ----------------------------------------------------
+# 팀장님(제황/규태) 발급 API Key 및 모델 설정
+# ----------------------------------------------------
+ROBOFLOW_API_KEY = "TEKa7OkOyop4SxpnZDbR"
+OVERLAP_THRESHOLD = 30
+CONFIDENCE_THRESHOLD = 40  # 40% 이상의 확신이 있을 때만 화재로 간주
+
+try:
+    # 파이썬 시작 시 Roboflow 클라이언트를 미리 초기화 (딜레이 최소화)
+    rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+    # Universe에 등록된 공개 워크스페이스 모델 불러오기
+    project = rf.workspace("latifa-sassi-zqgnz").project("fire-smoke-mx4z8")
+    model = project.version(1).model
+    ROBOFLOW_READY = True
+except Exception as e:
+    print(f"❌ [에러] Roboflow 초기화 실패 (API 키나 인터넷 연결을 확인하세요): {e}")
+    ROBOFLOW_READY = False
 
 def detect_fire(image_path):
     """
@@ -20,20 +39,60 @@ def detect_fire(image_path):
             "confidence": float (0.0~1.0),
             "description": str (상황 설명)
         }
-
-    TODO (규태님):
-        1. 화재/연기 감지용 경량 CNN 모델 조사 및 선택
-           - YOLOv8-nano (불꽃 감지 파인튜닝)
-           - 또는 OpenCV 색상 기반 불꽃 감지 (HSV 필터링)
-        2. 모델 로드 및 추론 파이프라인 구현
-        3. 감지 결과를 dict 형태로 반환
     """
-    # Phase 1: 시뮬레이션 모드
-    print(f"📷 [Vision AI] 이미지 분석 중: {image_path}")
-    print("   ⚠️ 현재 시뮬레이션 모드 (Phase 2에서 실제 모델 적용)")
+    print(f"📷 [Vision AI] Roboflow 모델로 화재/연기 정밀 분석 중: {image_path}")
 
-    return {
-        "fire_detected": False,
-        "confidence": 0.0,
-        "description": "시뮬레이션 모드 - 화재 미감지",
-    }
+    if not ROBOFLOW_READY:
+        return {
+            "fire_detected": False,
+            "confidence": 0.0,
+            "description": "Roboflow 모델이 로드되지 않아 분석할 수 없습니다."
+        }
+
+    if not os.path.exists(image_path):
+        return {
+            "fire_detected": False,
+            "confidence": 0.0,
+            "description": "이미지 파일을 읽어올 수 없습니다."
+        }
+
+    try:
+        # 모델 예측 (이미지를 로보플로우 API로 전송하여 결과를 분석)
+        prediction = model.predict(image_path, confidence=CONFIDENCE_THRESHOLD, overlap=OVERLAP_THRESHOLD).json()
+        
+        predictions_list = prediction.get("predictions", [])
+        
+        if not predictions_list:
+            return {
+                "fire_detected": False,
+                "confidence": 0.0,
+                "description": "화재나 연기 객체가 감지되지 않았습니다. (안전 구역)"
+            }
+
+        # 감지된 객체(불/연기) 분석
+        max_conf = 0.0
+        detected_classes = set()
+
+        for pred in predictions_list:
+            # 예: {"class": "fire", "confidence": 0.85, ...}
+            conf = pred.get("confidence", 0.0)
+            cls = pred.get("class", "unknown").upper()
+            
+            detected_classes.add(cls)
+            if conf > max_conf:
+                max_conf = conf
+
+        classes_str = ", ".join(detected_classes) # 예: "FIRE, SMOKE"
+
+        return {
+            "fire_detected": True,
+            "confidence": round(max_conf, 2),
+            "description": f"🚨 위험 감지! 객체: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)"
+        }
+
+    except Exception as e:
+        return {
+            "fire_detected": False,
+            "confidence": 0.0,
+            "description": f"AI 분석 중 통신/처리 오류 발생: {str(e)}"
+        }
