@@ -10,18 +10,27 @@ Phase 1 작업 내용:
 
 import cv2
 import os
+import datetime
 
-def capture_frame(output_path="captured_frame.jpg"):
+# 캡처된 이미지를 저장할 기본 폴더 (vision/captures/)
+DEFAULT_SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
+
+def capture_frame(save_dir=DEFAULT_SAVE_DIR):
     """
     카메라에서 실시간 프레임을 받아 화면에 띄웁니다.
     사용자가 캡처 버튼('c' 또는 스페이스바)을 누르면 프레임을 저장(리사이즈 포함)하고 경로를 반환합니다.
 
     Args:
-        output_path: 캡처된 이미지를 임시로 저장할 위치
+        save_dir: 캡처된 이미지를 저장할 디렉토리 경로
 
     Returns:
-        str: 저장된 이미지의 경로 또는 캡처 취소 시 None
+        str: 저장된 이미지의 파일 경로 또는 캡처 취소 시 None
     """
+    # 저장 디렉토리가 없으면 자동 생성
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+        print(f"📁 캡처 폴더를 생성했습니다: {save_dir}")
+
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ 카메라를 열 수 없습니다. 카메라가 연결되어 있는지 확인해 주세요.")
@@ -31,6 +40,7 @@ def capture_frame(output_path="captured_frame.jpg"):
     print("📷 [Vision AI] 카메라가 켜졌습니다.")
     print("   👉 캡처하려면 'c' 키 또는 '스페이스바'를 누르세요.")
     print("   👉 캡처하지 않고 취소하려면 'q'를 누르세요.")
+    print(f"   📥 저장 위치: {save_dir}")
     print("="*50 + "\n")
 
     captured_file = None
@@ -56,6 +66,11 @@ def capture_frame(output_path="captured_frame.jpg"):
         elif key == ord('c') or key == 32:
             print("📸 찰칵! 프레임을 캡처했습니다.")
             
+            # 현재 시간을 파일명으로 사용 (예: capture_20260328_143000.jpg)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"capture_{timestamp}.jpg"
+            output_path = os.path.join(save_dir, filename)
+
             # 원본 프레임 사용 (화면 출력만 반전시켰음)
             # LLM 처리 속도를 높이기 위해 최대 너비 640px로 리사이즈
             h, w = frame.shape[:2]

@@ -1,7 +1,0 @@
-langchain
-langchain-community
-langchain-core
-langchain-classic
-langchain-text-splitters
-chromadb
-opencv-python
