@@ -9,17 +9,13 @@ import random
 import config
 
 
-def read_temperature(simulate=True):
+def read_temperature(simulate=False, pin=4):
     """
     온도/습도 센서 값을 읽어옵니다.
 
-    Returns:
-        dict: {"temperature": float, "humidity": float}
-
-    TODO (재황님):
-        Phase 3에서 DHT22 센서 연동
-        - pip install Adafruit_DHT
-        - GPIO 핀 지정 후 읽기
+    Args:
+        simulate (bool): True이면 가상 랜덤값을 반환 (로컬 개발용)
+        pin (int): DHT11이 연결된 라즈베리파이 BCM GPIO 핀 번호 (기본값: GPIO4)
     """
     if simulate:
         return {
@@ -27,7 +23,25 @@ def read_temperature(simulate=True):
             "humidity": round(random.uniform(40.0, 60.0), 1),
         }
 
-    raise NotImplementedError("GPIO 연동은 라즈베리파이에서 구현 예정")
+    try:
+        import Adafruit_DHT
+    except ImportError:
+        print("⚠️ [경고] Adafruit_DHT 라이브러리가 없습니다.")
+        return read_temperature(simulate=True)
+
+    # 라즈베리파이 진짜 센서(DHT11) 읽기 시도
+    sensor = Adafruit_DHT.DHT11
+    humidity, temperature = Adafruit_DHT.read_retry(sensor, pin)
+
+    if humidity is not None and temperature is not None:
+        return {
+            "temperature": round(temperature, 1),
+            "humidity": round(humidity, 1)
+        }
+    else:
+        print("❌ [오류] DHT11 센서에서 값을 읽어오지 못했습니다.")
+        # 실패 시 프로그램이 죽지 않게 가짜 값 반환
+        return read_temperature(simulate=True)
 
 
 def is_temperature_abnormal(data=None):
