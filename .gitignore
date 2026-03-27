@@ -2,9 +2,20 @@
 venv/
 .env
 
-# 벡터 데이터베이스 (ChromaDB)
+# 벡터 데이터베이스
 chroma_db/
+faiss_index/
 
 # 파이썬 캐시 파일
 __pycache__/
 *.pyc
+
+# macOS 시스템 파일
+.DS_Store
+
+# 보관용 폴더
+_archive/
+
+# 임시 캡처 파일
+temp_capture.jpg
+captured_frame.jpg

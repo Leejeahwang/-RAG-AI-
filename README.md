@@ -1,67 +1,85 @@
-# 🚑 로컬 RAG 기반 재난 대피 및 응급처치 AI 비서
+# 🔥 엣지 세이버 (Edge Saver)
 
-> **프로젝트**
-> 아두이노 센서와 라즈베리파이를 연동하여, 재난 상황(화재, 지진 등) 발생 시 사용자의 텍스트 및 음성 질문을 인식하고 오프라인 상태에서도 로컬 LLM을 통해 최적의 대피로와 응급처치 방법을 안내하는 시스템입니다.
+> 멀티센서 + 카메라 AI + LLM/RAG를 결합한 **라즈베리파이 기반 지능형 화재 감시 시스템**
 
 ---
 
 ## 🚀 프로젝트 소개
 
-이 프로젝트는 인터넷 연결이 불안정한 재난 상황에서도 작동하는 **오프라인 AI 비서**의 프로토타입입니다. 백화점 매뉴얼과 공신력 있는 응급처치 가이드라인을 데이터베이스화하여, 사용자의 질문에 가장 정확하고 안전한 정보를 실시간으로 제공하는 것을 목표로 합니다.
+기존 화재경보기의 높은 오경보율, 단순 ON/OFF 알림 한계를 극복하는 **엣지 AI 화재 감시 시스템**입니다. 연기·가스·온도 센서와 카메라 AI를 결합하여 화재를 정확히 판별하고, LLM+RAG가 건물 매뉴얼을 검색하여 **맞춤형 대응 지침을 자연어로 즉시 생성**합니다.
 
-**핵심 기능:**
-- **Local RAG (검색 증강 생성):** 신뢰할 수 있는 매뉴얼 데이터에 기반한 답변 생성 (환각 현상 방지).
-- **한국어 특화 로컬 LLM:** 작은 용량 대비 한국어 성능이 뛰어난 Qwen 2.5 (1.5B) 모델 활용.
-- **다국어 및 고정 답변:** 연속 대화가 가능한 챗봇 모드 및 시스템 프롬프트를 통한 한국어 전용 답변 구현.
+**핵심 차별점:**
+- 🎯 **AI 오경보 필터링:** 센서 반응 시 카메라 AI가 2차 검증 → 거짓 경보 대폭 감소
+- 🧠 **건물 맞춤 자연어 안내:** RAG가 건물 DB를 검색, LLM이 "CO2 소화기 사용, 서쪽 계단으로 대피" 등 구체적 지침 생성
+- 📡 **완전 오프라인:** 화재로 통신 인프라가 다운되어도 엣지 AI가 독립 동작
+- 💰 **저비용 대량 배치:** 라즈베리파이 기반으로 기존 스마트 시스템 대비 1/10 비용
 
 ---
 
-## 🛠️ 설치 및 실행 방법 (Windows 기준)
+## 🛠️ 설치 및 실행
 
-이 프로젝트를 윈도우 로컬 환경에서 구동하기 위한 단계별 가이드입니다. 
+```bash
+# 패키지 설치
+pip install langchain langchain-community langchain-core langchain-classic langchain-text-splitters chromadb opencv-python
 
-### **1. 필수 프로그램 설치**
-
-먼저 컴퓨터에 아래 프로그램들이 설치되어 있어야 합니다.
-1. **Python (3.11 이상 권장)**
-2. **Miniconda** (가상환경 관리): [Miniconda 다운로드](https://docs.conda.io/en/latest/miniconda.html)
-3. **Ollama** (로컬 LLM 구동 엔진): [Ollama 다운로드](https://ollama.com)
-
-### **2. 프로젝트 로드 및 가상환경 세팅**
-
-윈도우 검색창에서 **'Anaconda Prompt'**를 실행한 뒤, 아래 명령어들을 순서대로 입력하세요.
-
-```cmd
-# 프로젝트 폴더로 이동 (바탕화면에 폴더가 있는 경우)
-cd Desktop\disaster-ai
-
-# 1. 전용 가상환경 생성 (이름: disaster_env)
-conda create -n disaster_env python=3.11 -y
-
-# 2. 가상환경 활성화
-conda activate disaster_env
-# (프롬프트 맨 앞이 (disaster_env)로 바뀌었는지 확인하세요.)
-
-# 3. 필수 파이썬 패키지 설치
-pip install langchain langchain-community langchain-core chromadb pypdf ollama langchain-classic
-
-### **3. 한국어 특화 AI 모델 다운로드 (Qwen 2.5 적용)
 # AI 모델 다운로드
 ollama pull qwen2.5:1.5b
 
-### **4. 실행 및 대화
-# 가상환경 (disaster_env)이 켜져있는 상태에서
-python rag_test.py
+# 실행 (현재: 시뮬레이션 모드)
+python main.py
 ```
 
 ---
 
 ## 📂 프로젝트 구조
+
 ```text
-disaster-ai/
-├── rag_test.py          # [핵심] 대화형 RAG 챗봇 실행 파이썬 스크립트
-├── mall_guide_ko.txt    # AI 지식 데이터베이스 (백화점 대피로 & 응급처치 매뉴얼)
-├── .gitignore           # 깃허브 업로드 제외 목록 (가상환경, 벡터DB 등)
-└── README.md            # [현재 파일] 프로젝트 설명서
+-RAG-AI-/
+├── config.py                    # 전역 설정 (센서 임계값, 모델, 위험도 기준)
+├── main.py                      # 메인 진입점 (전체 파이프라인)
+│
+├── sensors/                     # 센서 모듈 (재황)
+│   ├── smoke.py                 #   MQ-2 연기 감지
+│   ├── gas.py                   #   MQ-135 가스 감지
+│   ├── temperature.py           #   DHT22 온도/습도
+│   └── fusion.py                #   멀티센서 퓨전 & 위험도 산정 (규태+재황)
+│
+├── vision/                      # Vision AI (규태)
+│   ├── camera.py                #   카메라 캡처 ✅
+│   └── fire_detector.py         #   화재/연기 영상 판별 AI
+│
+├── rag/                         # RAG 엔진 (승훈+종화)
+│   ├── loader.py                #   문서 로딩 & 청킹 (승훈)
+│   ├── retriever.py             #   벡터DB & 검색 (승훈)
+│   ├── chain.py                 #   QA 체인 & 프롬프트 (승훈)
+│   └── pdf_parser.py            #   PDF 파싱 (종화)
+│
+├── alerts/                      # 경보 모듈 (재황)
+│   ├── alarm.py                 #   부저/LED 경보 출력
+│   └── notifier.py              #   관제실 알림 전송
+│
+├── voice/                       # 음성 모듈 (종화)
+│   └── tts.py                   #   오프라인 TTS 안내
+│
+├── gui/                         # GUI 모듈 (승훈)
+│   └── dashboard.py             #   관제 대시보드
+│
+├── docker/                      # Docker 설정 (재황)
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── data/                        # 매뉴얼 데이터 (종화가 수집/파싱)
+├── _archive/                    # 이전 버전 코드 보관
+└── PROJECT_PROPOSAL.md          # 프로젝트 최종 계획서
 ```
 
+---
+
+## 👥 팀원
+
+| 이름 | 역할 | 담당 모듈 |
+|------|------|-----------|
+| 이재황 | PM & DevOps | `sensors/`, `alerts/`, `docker/`, RPi |
+| 박규태 | Vision AI | `vision/`, `sensors/fusion.py` |
+| 이승훈 | GUI & RAG Search | `gui/`, `rag/` |
+| 채종화 | Voice & Data | `voice/`, `rag/pdf_parser.py`, `data/` |
