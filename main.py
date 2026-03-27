@@ -1,4 +1,4 @@
-from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
@@ -15,15 +15,21 @@ if os.path.exists("./chroma_db"):
     import shutil
     shutil.rmtree("./chroma_db")
 
-print("📦 엣지 세이버 매뉴얼 데이터를 분석 중입니다...")
-# 매뉴얼 파일 경로 확인 (root에 위치)
-manual_path = "edge_saver_manual.txt"
-if not os.path.exists(manual_path):
-    print(f"⚠️ {manual_path} 파일을 찾을 수 없습니다. 기본 설정을 확인하세요.")
+print("📦 재난 안전 매뉴얼 데이터를 분석 중입니다...")
+# 매뉴얼 데이터 폴더 경로 (중앙 관리되는 data/raw_documents 사용)
+data_dir = "data/raw_documents"
+if not os.path.exists(data_dir):
+    os.makedirs(data_dir)
+    print(f"⚠️ {data_dir} 폴더에 매뉴얼 파일(.txt)이 없습니다. 전처리(rag/crawler.py)를 먼저 수행하세요.")
     sys.exit(1)
 
-loader = TextLoader(manual_path, encoding="utf-8")
+# 폴더 내 모든 .txt 파일 로드
+loader = DirectoryLoader(data_dir, glob="**/*.txt", loader_cls=TextLoader, loader_kwargs={"encoding": "utf-8"})
 docs = loader.load()
+
+if not docs:
+    print(f"⚠️ {data_dir} 폴더에 로드할 수 있는 텍스트 문서가 없습니다.")
+    sys.exit(1)
 
 # 텍스트 분할 (청크 크기 200, 중첩 30)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=30)
