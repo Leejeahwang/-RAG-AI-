@@ -39,7 +39,7 @@ pip install langchain langchain-community chromadb requests selenium webdriver-m
 ### 3. 시스템 가동
 프로젝트 루트에서 아래 명령어를 실행하여 AI 비서와 대화를 시작합니다.
 ```bash
-python main.py
+python main_test.py
 ```
 
 ---
@@ -50,6 +50,6 @@ RAG_Data&voice/
 ├── data/               # 매뉴얼 및 가공 데이터
 ├── rag/                # 전처리 파이프라인 (crawler, parsing, chunking)
 ├── voice/              # 음성 인터페이스 (stt, tts)
-├── main.py             # [핵심] 프로젝트 통합 실행 파일
+├── main_test.py        # [핵심] 프로젝트 통합 실행 파일
 └── README.md           # [현재 파일] 프로젝트 안내서
 ```
