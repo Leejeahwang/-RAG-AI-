@@ -8,20 +8,21 @@ from langchain_core.prompts import PromptTemplate
 import os
 import sys
 
-# 프로젝트 루트 경로 추가 (voice 모듈 임포트용)
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
 from voice.tts import TTSHelper
 
-# 기존 DB가 있다면 삭제하여 데이터 업데이트 반영
+# 기존 DB가 있다면 삭제하여 데이터 업데이트 반영 (필요시 비활성화)
 if os.path.exists("./chroma_db"):
     import shutil
     shutil.rmtree("./chroma_db")
 
 print("📦 엣지 세이버 매뉴얼 데이터를 분석 중입니다...")
-loader = TextLoader("edge_saver_manual.txt", encoding="utf-8")
+# 매뉴얼 파일 경로 확인 (root에 위치)
+manual_path = "edge_saver_manual.txt"
+if not os.path.exists(manual_path):
+    print(f"⚠️ {manual_path} 파일을 찾을 수 없습니다. 기본 설정을 확인하세요.")
+    sys.exit(1)
+
+loader = TextLoader(manual_path, encoding="utf-8")
 docs = loader.load()
 
 # 텍스트 분할 (청크 크기 200, 중첩 30)
@@ -56,22 +57,22 @@ qa = RetrievalQA.from_chain_type(
 )
 
 print("\n" + "="*50)
-print("🚑 엣지 세이버(Edge Saver)가 실행되었습니다.")
+print("🚑 엣지 세이버(Edge Saver)가 가동되었습니다.")
 print("   질문을 입력하세요. (종료하려면 '종료' 또는 'exit' 입력)")
 print("="*50 + "\n")
 
 while True:
-    query = input("❓ 질문: ")
-    
-    if query.strip() in ['종료', 'exit', 'quit']:
-        print("👋 안전을 기원합니다. 시스템을 종료합니다.")
-        break
-        
-    if not query.strip():
-        continue
-
-    print("🔍 답변 생성 중...")
     try:
+        query = input("❓ 질문: ").strip()
+        
+        if query in ['종료', 'exit', 'quit']:
+            print("👋 안전을 기원합니다. 시스템을 종료합니다.")
+            break
+            
+        if not query:
+            continue
+
+        print("🔍 답변 생성 중...")
         # AI 답변 생성
         result = qa.invoke(query)
         response_text = result['result']
@@ -81,5 +82,8 @@ while True:
         # TTS 음성 출력
         tts.speak(response_text)
         
+    except KeyboardInterrupt:
+        print("\n👋 시스템을 종료합니다.")
+        break
     except Exception as e:
         print(f"❌ 오류가 발생했습니다: {e}")

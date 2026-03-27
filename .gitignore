@@ -1,7 +1,11 @@
 .venv/
+venv/
+.env
 __pycache__/
-raw_documents/
+*.pyc
+*.log
 .vscode/
-*.json
-*.html
-*.txt
+
+# 데이터 및 데이터베이스
+data/raw_documents/
+chroma_db/
