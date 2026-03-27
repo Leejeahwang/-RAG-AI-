@@ -1,79 +1,64 @@
-# 국민재난안전포털 RAG 전처리 파이프라인 (Prototype 1)
+# 🚑 엣지 세이버(Edge Saver) - 지능형 재난 안전 RAG 시스템
 
-이 프로젝트는 국가재난안전포털의 지침 및 행동요령(HWP, PDF) 문서를 자동으로 수집하고, AI(LLM) 기반의 지식 검색 증강(RAG) 챗봇이 바로 읽어들일 수 있도록 데이터를 가공하는 완벽한 3단계 파이프라인입니다.
-
-## 🚀 파이프라인 구성
-
-### 1단계: 수집 (`crawler.py`)
-- **목적:** 국민재난안전포털 자료실의 구조를 뚫고 모든 첨부파일(HWP, PDF)을 다운로드합니다.
-- **특징:**
-  - 관공서 사이트 고유의 '존재하지 않는 페이지' 자바스크립트 경고창 및 백지화 버그를 회피하는 **Self-Healing(자가 수복)** 방어 로직이 적용되어 무한 크롤링이 가능합니다.
-  - 이전에 이미 다운로드 받은 파일명은 똑똑하게 패스하여 중복 다운로드를 100% 방지합니다.
-
-### 2단계: 정제 (`parsing.py`)
-- **목적:** 다운로드 폴더(`raw_documents`)에 쌓인 수백 개의 파일 중, 노이즈를 제거하고 순수한 '텍스트 매뉴얼'만 뽑아냅니다.
-- **특징:**
-  - 파이썬의 `win32com`과 `PyMuPDF(fitz)`를 사용하여 HWP와 PDF 텍스트를 모두 추출합니다.
-  - 하나의 게시글에 HWP와 PDF가 중복으로 첨부된 경우, 표 양식 파편화가 적은 **HWP 문서를 우선적으로 파싱**합니다.
-  - **AI 기반 필터링 (Ollama):** 로컬 LLM(`qwen2.5:3b`)을 사용하여 단순 홍보물이나 지역 정보를 자동으로 걸러내고, 실제 도움이 되는 지침성 문서만 통과시킵니다.
-  - **출력물:** `parsed_manuals.json`
-
-### 3단계: 분할 (`chunking.py`)
-- **목적:** 거대한 텍스트 덩어리들을 AI 임베딩 모델(Embedding Model)이나 벡터 데이터베이스(Vector DB)가 가장 군침을 흘리는 크기로 정교하게 자릅니다.
-- **특징:**
-  - 글로벌 RAG 시스템의 표준인 **슬라이딩 윈도우 & 오버랩 (Sliding Window & Overlap)** 알고리즘을 자체 구현했습니다.
-  - 덩어리를 500자 단위로 균일하게 분할하되, 조각 간에 100자 가량을 일부러 겹치게 잘라서 다음 조각으로 넘어갈 때 **문맥이 단절되거나 단어 절반이 날아가는 대참사를 완전히 방지**합니다.
-  - **최종 출력물:** `chunked_manuals.json`
+이 프로젝트는 통신망이 단절된 극한의 재난 상황에서도 '국민재난안전포털'의 풍부한 가이드라인(HWP, PDF)을 바탕으로, 사용자에게 즉각적이고 정확한 행동 요령을 제공하는 **오프라인 특화형 RAG(Retrieval-Augmented Generation) AI 비서**입니다.
 
 ---
 
-## 🛠️ 환경 세팅
+## 🏗️ 시스템 구성 (Module Details)
 
-이 스크립트는 파이썬 가상환경(`.venv` 등) 위에서 동작하는 것을 권장합니다.
+프로젝트는 모듈형 설계로 관리의 편의성을 높였으며, 각 폴더는 독립적인 역할을 수행합니다.
 
-### 1. 파이썬 라이브러리 설치
-아래 명령어로 필요한 모든 패키지들을 한 번에 설치할 수 있습니다.
+### 1. 전처리 파이프라인 (`rag/`)
+재난 안전 데이터를 수집하고 AI가 읽기 쉬운 형태로 가공하는 핵심 엔진입니다.
+- **`crawler.py`**: Selenium을 사용하여 재난안전포털의 게시판을 순회합니다. 중복 다운로드 방지 로직이 포함되어 있으며, 최신 매뉴얼을 `data/raw_documents`에 자동으로 저장합니다.
+- **`parsing.py`**:
+    - **HWP 파싱**: `pywin32`를 통해 설치된 한글 프로그램을 원격 제어하여 표(Table) 구조 등 텍스트를 정확하게 추출합니다.
+    - **PDF 파싱**: `PyMuPDF`를 사용하여 텍스트 데이터를 확보합니다.
+    - **AI 필터링**: Ollama(`qwen2.5:3b`)를 활용해 가이드라인이 아닌 홍보물, 단순 공지사항 등을 사전에 선별하여 데이터 품질을 높입니다.
+- **`chunking.py`**: 추출된 긴 텍스트를 500자 단위로 정교하게 분할합니다. 100자의 중복 구간(Overlap)을 두어 검색 시 문맥이 끊기지 않도록 최적화합니다.
+
+### 2. 지능형 음성 인터페이스 (`voice/`)
+사용자와의 상호작용을 담당하는 오프라인 기반 보이스 엔진입니다.
+- **`stt.py` (음성 인식)**: `faster-whisper` 모델을 사용하여 매우 낮은 지연 시간으로 음성을 텍스트로 변환합니다. **"세이버"**라는 호출어(Wake-word) 감지 후 명령을 수락하는 하이브리드 VAD 로직이 적용되어 있습니다.
+- **`tts.py` (음성 합성)**: `pyttsx3`를 기반으로 한 오프라인 TTS 모듈입니다. Windows의 Heami 엔진이나 리눅스의 eSpeak를 자동 감지하며, AI의 복잡한 답변을 부드러운 한국어 음성으로 출력합니다.
+
+### 3. 데이터 저장소 및 메인 로직 (`data/`, `main/`)
+- **`data/`**: 시스템의 지식 베이스입니다. 원본 파일과 이를 전처리한 `parsed_manuals.json`, 최종 검색용 `chunked_manuals.json`이 통합 관리됩니다.
+- **`main/`**: RAG 시스템의 작동을 테스트하는 환경입니다. `rag_test.py`는 LangChain을 통해 로컬 벡터 DB(Chroma)에 접속하고, AI 답변 생성과 TTS 음성 출력을 연결하는 통합 인터페이스를 제공합니다.
+
+---
+
+## 🛠️ 기술 스택 및 환경 설정
+
+### 1. 주요 라이브러리 (Dependencies)
 ```bash
-pip install selenium webdriver-manager beautifulsoup4 requests PyMuPDF pywin32
+# RAG 및 AI
+pip install langchain langchain-community chromadb requests
+# 데이터 전처리
+pip install selenium webdriver-manager beautifulsoup4 PyMuPDF pywin32
+# 음성 처리
+pip install numpy pyaudio faster-whisper pyttsx3
 ```
 
-### 2. 로컬 LLM (Ollama) 세팅
-`parsing.py`의 AI 필터링 기능을 사용하기 위해 Ollama 설치 및 모델 다운로드가 필요합니다.
-1. [Ollama 공식 홈페이지](https://ollama.com/)에서 설치 프로그램을 다운로드하여 설치합니다.
-2. 터미널에서 아래 명령어를 실행하여 필터링에 사용할 모델을 다운로드합니다.
+### 2. 로컬 LLM 환경
+이 프로젝트는 개인정보 보호와 재난 상황 대응을 위해 **로컬 LLM**을 사용합니다.
+1. [Ollama 공식 홈페이지](https://ollama.com/)에서 Ollama를 설치합니다.
+2. 아래 명령어로 추론 및 필터링에 필요한 모델을 내려받습니다.
    ```bash
-   ollama pull qwen2.5:3b
+   ollama pull qwen2.5:1.5b  # 메인 추론용
+   ollama pull qwen2.5:3b    # 데이터 전처리/필터링용 (선택 사항)
    ```
-
-> **주의:** 
-> - `crawler.py`는 구글 크롬 브라우저를 기반으로 작동하며, `webdriver-manager`가 크롬 버전에 맞는 드라이버를 자동 설치합니다. 단, 시스템에 **Google Chrome 브라우저** 자체가 설치되어 있어야 합니다.
-> - `parsing.py`에서 HWP 파일을 처리하려면 스크립트를 실행하는 윈도우(Windows) PC에 **한글(HWP) 프로그램**이 정상적으로 설치되어 있어야 합니다. Mac이나 Linux 환경에서는 HWP 파싱 기능을 사용할 수 없습니다.
 
 ---
 
-## 🏃‍♂️ 실행 방법
+## 🚀 워크플로우 (How to Run)
 
-반드시 아래에 나열된 순서대로 스크립트를 실행해야 정상적인 데이터 파이프라인이 동작합니다.
-
-1. **크롤링 (수집 로봇 가동)**
-   ```bash
-   python crawler.py
-   ```
-   *수집된 파일은 자동으로 생성되는 `raw_documents` 폴더 안에 쌓입니다.*
-
-2. **파싱 (노이즈 정제 로봇 가동)**
-   ```bash
-   python parsing.py
-   ```
-   *진짜배기 텍스트만 남아 `parsed_manuals.json` 파일이 생성됩니다.*
-
-3. **청킹 (RAG 조각 분할 로봇 가동)**
-   ```bash
-   python chunking.py
-   ```
-   *문맥이 겹쳐서 예쁘게 재단된 최종 RAG용 결과물 `chunked_manuals.json`이 탄생합니다.*
+1. **데이터 수집**: `python rag/crawler.py` 실행 (최신 매뉴얼 확보)
+2. **데이터 변환**: `python rag/parsing.py` 실행 (텍스트 추출 및 AI 클리닝)
+3. **데이터 최적화**: `python rag/chunking.py` 실행 (검색용 청크 생성)
+4. **AI 비서 가동**: `python main/rag_test.py` 실행 (음성 대화 시작)
 
 ---
 
-## 💡 Next Step
-완성된 `chunked_manuals.json` 파일은 OpenAI, Anthropic 챗봇이나 LangChain 파이프라인 등 어디든 즉시 던져 넣을 수 있는 최고급 재료입니다! 이 데이터를 바탕으로 Vector DB를 구축하면 "화산 폭발 시 어떻게 대피해야 해?" 하고 물어볼 수 있는 나만의 재난안전 AI 전문가를 즉시 만드실 수 있습니다!
+## 💡 프로젝트의 지향점
+**엣지 세이버**는 '인터넷이 없는 환경에서도 생존할 수 있는 기술'을 지향합니다. 모든 프로세스는 로컬 하드웨어(노트북, 라즈베리 파이 5)에서 완결되도록 설계되었습니다.
