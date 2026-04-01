@@ -243,24 +243,25 @@ def run_realtime():
         stream.stop_stream(); stream.close(); pa.terminate()
         print("[STT] 종료되었습니다.")
 
-def listen_once(model=None, pa=None, stream=None) -> str:
-    """호출어 대기 후 한 문장 인식"""
+def listen_once(model=None, pa=None, stream=None, use_wake_word=True) -> str:
+    """음성 인식 수행 (선택적으로 호출어 대기 가능)"""
     if model is None: model = _load_model()
     close_pa = False
     if pa is None: pa = _get_pyaudio_instance(); close_pa = True
     close_stream = False
     if stream is None: stream = _open_stream(pa); close_stream = True
 
-    print("\n[STT] 호출어(\"세이버\")를 기다리는 중...")
     _record_chunk(stream, 0.1, drain=True)
 
     try:
-        while True:
-            audio = _record_chunk(stream, 2.0)
-            text = _transcribe(model, audio)
-            if _contains_wake_word(text):
-                print(f"\n[VAD] 호출어가 감지되었습니다.")
-                break
+        if use_wake_word:
+            print("\n[STT] 호출어(\"세이버\")를 기다리는 중...")
+            while True:
+                audio = _record_chunk(stream, 2.0)
+                text = _transcribe(model, audio)
+                if _contains_wake_word(text):
+                    print(f"\n[VAD] 호출어가 감지되었습니다.")
+                    break
 
         print("[STT] 말씀해 주세요...")
         question_buffer = []
@@ -290,7 +291,7 @@ def listen_once(model=None, pa=None, stream=None) -> str:
         if close_stream: stream.stop_stream(); stream.close()
         if close_pa: pa.terminate()
 
-    if question: print(f"[STT] 인식 결과: \"{question}\"")
+    # if question: print(f"[STT] 인식 결과: \"{question}\"")  # main_test.py에서 출력하므로 중복 제거
     return question
 
 def run_stt_loop(on_question_callback=None):

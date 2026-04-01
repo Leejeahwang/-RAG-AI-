@@ -12,12 +12,14 @@ class TTSHelper:
     """
     def __init__(self, rate=180, volume=1.0):
         try:
-            self.engine = pyttsx3.init()
+            # Windows에서는 sapi5 드라이버 명시
+            driver = 'sapi5' if platform.system() == 'Windows' else None
+            self.engine = pyttsx3.init(driver)
             self._set_korean_voice()
             self.engine.setProperty('rate', rate)
             self.engine.setProperty('volume', volume)
             self.lock = threading.Lock()
-            print("[TTS] 초기화 성공.")
+            print(f"[TTS] 초기화 성공. (드라이버: {driver if driver else '기본'})")
         except Exception as e:
             print(f"[TTS] 초기화 실패: {e}")
             self.engine = None
@@ -49,7 +51,7 @@ class TTSHelper:
             return
             
         with self.lock:
-            print(f"[TTS] 출력 중: {text}")
+            # print(f"[TTS] 출력 중: {text}") # main_test.py와 중복되어 주석 처리
             self.engine.say(text)
             self.engine.runAndWait()
 

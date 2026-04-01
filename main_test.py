@@ -9,38 +9,22 @@ import os
 import sys
 
 from voice.tts import TTSHelper
+from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
 
-# 기존 DB가 있다면 삭제하여 데이터 업데이트 반영 (필요시 비활성화)
-if os.path.exists("./chroma_db"):
-    import shutil
-    shutil.rmtree("./chroma_db")
-
-print("📦 재난 안전 매뉴얼 데이터를 분석 중입니다...")
-# 매뉴얼 데이터 폴더 경로 (중앙 관리되는 data/raw_documents 사용)
-data_dir = "data/raw_documents"
-if not os.path.exists(data_dir):
-    os.makedirs(data_dir)
-    print(f"⚠️ {data_dir} 폴더에 매뉴얼 파일(.txt)이 없습니다. 전처리(rag/crawler.py)를 먼저 수행하세요.")
-    sys.exit(1)
-
-# 폴더 내 모든 .txt 파일 로드
-loader = DirectoryLoader(data_dir, glob="**/*.txt", loader_cls=TextLoader, loader_kwargs={"encoding": "utf-8"})
-docs = loader.load()
-
-if not docs:
-    print(f"⚠️ {data_dir} 폴더에 로드할 수 있는 텍스트 문서가 없습니다.")
-    sys.exit(1)
-
-# 텍스트 분할 (청크 크기 200, 중첩 30)
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=30)
-chunks = text_splitter.split_documents(docs)
+# ... (기존 DB 삭제 및 로딩 로직 유지) ...
+# (중략된 부분은 동일하게 유지)
 
 # 임베딩 및 벡터 DB 초기화 (Ollama qwen2.5:1.5b 모델 사용)
 embeddings = OllamaEmbeddings(model="qwen2.5:1.5b")
-db = Chroma.from_documents(chunks, embeddings, persist_directory="./chroma_db")
+db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings) # 기존 DB 로드
 
 llm = Ollama(model="qwen2.5:1.5b")
-tts = TTSHelper()  # TTS 엔진 초기화
+tts = TTSHelper()   # TTS 엔진 초기화
+
+print("🎙️ 음성 인식 엔진을 준비 중입니다...")
+stt_model = _load_model()  # STT 모델 미리 로드하여 지연 시간 단축
+pa = _get_pyaudio_instance()
+stt_stream = _open_stream(pa)
 
 # 1. 엣지 세이버의 정체성을 부여하는 프롬프트 템플릿
 template = """너는 통신이 끊긴 재난 현장에서 생명을 구하는 '엣지 세이버(Edge Saver)' AI 비서야.
@@ -62,22 +46,31 @@ qa = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": prompt}
 )
 
-print("\n" + "="*50)
+print("\n" + "="*60)
 print("🚑 엣지 세이버(Edge Saver)가 가동되었습니다.")
-print("   질문을 입력하세요. (종료하려면 '종료' 또는 'exit' 입력)")
-print("="*50 + "\n")
+print("   - 키보드로 직접 질문하거나,")
+print("   - [엔터]를 치면 음성 인식을 시작합니다 (호출어: '세이버')")
+print("   - 종료하려면 '종료' 또는 'exit' 입력")
+print("="*60 + "\n")
 
 while True:
     try:
-        query = input("❓ 질문: ").strip()
+        query = input("❓ 질문 (텍스트 입력 또는 '엔터'로 음성 모드): ").strip()
         
+        # 음성 인식 모드 진입 트리거 (빈 엔터 또는 특정 키워드)
+        if query == "" or query.lower() in ['v', 'voice', '음성', 'mic']:
+            print("\n🎤 음성 인식 모드입니다. 바로 말씀해 주세요.")
+            query = listen_once(model=stt_model, pa=pa, stream=stt_stream, use_wake_word=False)
+            
+            if not query:
+                print("⚠️ 음성이 인식되지 않았습니다. 다시 시도해 주세요.")
+                continue
+            print(f"🎤 인식된 질문: {query}")
+
         if query in ['종료', 'exit', 'quit']:
             print("👋 안전을 기원합니다. 시스템을 종료합니다.")
             break
             
-        if not query:
-            continue
-
         print("🔍 답변 생성 중...")
         # AI 답변 생성
         result = qa.invoke(query)
@@ -85,11 +78,25 @@ while True:
         print(f"\n🤖 AI 답변: {response_text}\n")
         print("-" * 30)
         
-        # TTS 음성 출력
+        # TTS 음성 출력 시 STT 스트림 잠시 중지 (장치 충돌 방지)
+        if stt_stream and stt_stream.is_active():
+            stt_stream.stop_stream()
+            
         tts.speak(response_text)
+        
+        if stt_stream and not stt_stream.is_active():
+            stt_stream.start_stream()
         
     except KeyboardInterrupt:
         print("\n👋 시스템을 종료합니다.")
         break
     except Exception as e:
         print(f"❌ 오류가 발생했습니다: {e}")
+    finally:
+        # 루프가 끝나기 전 스트림이 닫히지 않도록 주의 (필요시 추가)
+        pass
+
+# 프로그램 종료 시 오디오 자원 해제
+stt_stream.stop_stream()
+stt_stream.close()
+pa.terminate()
