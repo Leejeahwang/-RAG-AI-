@@ -1,34 +1,49 @@
 """
-화재/연기 영상 판별 AI 모듈 (규태님 담당)
+화재/연기 영상 판별 AI 모듈 (로컬 오프라인 YOLOv8 버전)
 
 카메라로 촬영한 프레임에서 불꽃이나 연기를 감지합니다.
-Phase 2: Roboflow Object Detection AI 적용 (fire-smoke-mx4z8/1)
+Phase 3: 인터넷 연결 없이 라즈베리파이 로컬에서 ultralytics 모델 구동
 """
 
 import os
-from roboflow import Roboflow
+try:
+    from ultralytics import YOLO
+except ImportError:
+    print("❌ [에러] ultralytics 라이브러리가 설치되지 않았습니다. 터미널에서 'pip install ultralytics' 를 실행하세요.")
 
-# ----------------------------------------------------
-# 팀장님(제황/규태) 발급 API Key 및 모델 설정
-# ----------------------------------------------------
-ROBOFLOW_API_KEY = "TEKa7OkOyop4SxpnZDbR"
-OVERLAP_THRESHOLD = 30
-CONFIDENCE_THRESHOLD = 40  # 40% 이상의 확신이 있을 때만 화재로 간주
+# 로컬 모델 경로 설정 (vision/models 폴더)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+
+# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
+POSSIBLE_MODELS = [
+    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
+    os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
+    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
+]
+
+model = None
+CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
 try:
-    # 파이썬 시작 시 Roboflow 클라이언트를 미리 초기화 (딜레이 최소화)
-    rf = Roboflow(api_key=ROBOFLOW_API_KEY)
-    # Universe에 등록된 공개 워크스페이스 모델 불러오기
-    project = rf.workspace("latifa-sassi-zqgnz").project("fire-smoke-mx4z8")
-    model = project.version(1).model
-    ROBOFLOW_READY = True
+    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
+    loaded_model_path = None
+    for m_path in POSSIBLE_MODELS:
+        if os.path.exists(m_path):
+            loaded_model_path = m_path
+            break
+            
+    if loaded_model_path:
+        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
+        model = YOLO(loaded_model_path)
+    else:
+        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
 except Exception as e:
-    print(f"❌ [에러] Roboflow 초기화 실패 (API 키나 인터넷 연결을 확인하세요): {e}")
-    ROBOFLOW_READY = False
+    print(f"❌ [에러] 모델 초기화 실패: {e}")
 
 def detect_fire(image_path):
     """
-    이미지에서 화재(불꽃/연기)를 감지합니다.
+    이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
 
     Args:
         image_path: 분석할 이미지 파일 경로
@@ -40,13 +55,11 @@ def detect_fire(image_path):
             "description": str (상황 설명)
         }
     """
-    print(f"📷 [Vision AI] Roboflow 모델로 화재/연기 정밀 분석 중: {image_path}")
-
-    if not ROBOFLOW_READY:
+    if model is None:
         return {
             "fire_detected": False,
             "confidence": 0.0,
-            "description": "Roboflow 모델이 로드되지 않아 분석할 수 없습니다."
+            "description": "모델 서버가 초기화되지 않았거나 로컬 모델 파일(pt)이 없습니다."
         }
 
     if not os.path.exists(image_path):
@@ -57,42 +70,53 @@ def detect_fire(image_path):
         }
 
     try:
-        # 모델 예측 (이미지를 로보플로우 API로 전송하여 결과를 분석)
-        prediction = model.predict(image_path, confidence=CONFIDENCE_THRESHOLD, overlap=OVERLAP_THRESHOLD).json()
+        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
+        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
-        predictions_list = prediction.get("predictions", [])
+        if not results or len(results) == 0:
+            return {
+                "fire_detected": False,
+                "confidence": 0.0,
+                "description": "분석 결과가 반환되지 않았습니다."
+            }
+            
+        result = results[0]
+        boxes = result.boxes
         
-        if not predictions_list:
+        if len(boxes) == 0:
             return {
                 "fire_detected": False,
                 "confidence": 0.0,
                 "description": "화재나 연기 객체가 감지되지 않았습니다. (안전 구역)"
             }
 
-        # 감지된 객체(불/연기) 분석
+        # 감지된 객체 분석
         max_conf = 0.0
         detected_classes = set()
+        
+        # 클래스 이름 딕셔너리 (예: {0: 'fire', 1: 'smoke'})
+        names = result.names 
 
-        for pred in predictions_list:
-            # 예: {"class": "fire", "confidence": 0.85, ...}
-            conf = pred.get("confidence", 0.0)
-            cls = pred.get("class", "unknown").upper()
+        for box in boxes:
+            conf = float(box.conf[0])
+            cls_id = int(box.cls[0])
+            cls_name = names[cls_id].upper()
             
-            detected_classes.add(cls)
+            detected_classes.add(cls_name)
             if conf > max_conf:
                 max_conf = conf
 
-        classes_str = ", ".join(detected_classes) # 예: "FIRE, SMOKE"
+        classes_str = ", ".join(detected_classes)
 
         return {
             "fire_detected": True,
             "confidence": round(max_conf, 2),
-            "description": f"🚨 위험 감지! 객체: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)"
+            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)"
         }
 
     except Exception as e:
         return {
             "fire_detected": False,
             "confidence": 0.0,
-            "description": f"AI 분석 중 통신/처리 오류 발생: {str(e)}"
+            "description": f"AI 분석 중 로컬 처리 오류 발생: {str(e)}"
         }
