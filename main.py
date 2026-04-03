@@ -81,6 +81,8 @@ class EdgeSaver:
         if re.search('[ぁ-んァ-ヶ]', text): return 'ja'
         # 한자 포함 시 중국어 (한국/일어 제외 후)
         if re.search('[\u4e00-\u9fff]', text): return 'zh'
+        # 영어 알파벳 포함 시 영어
+        if re.search('[a-zA-Z]', text): return 'en'
         # 기본값 한국어
         return 'ko'
 
