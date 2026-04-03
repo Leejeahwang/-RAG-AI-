@@ -19,13 +19,19 @@
 ## 🛠️ 설치 및 실행
 
 ```bash
-# 패키지 설치
-pip install langchain langchain-community langchain-core langchain-classic langchain-text-splitters chromadb opencv-python
+# 1. 필수 라이브러리 설치 (RAG, Vision, Voice)
+pip install -r requirements.txt
 
-# AI 모델 다운로드
-ollama pull qwen2.5:1.5b
+# 2. 로컬 LLM 서버 (Ollama) 설치 및 모델 다운로드
+# https://ollama.com 에서 설치 후 아래 명령 실행
+ollama pull qwen2.5:1.5b  # LLM 및 임베딩용 (config.py 설정)
 
-# 실행 (현재: 시뮬레이션 모드)
+# 3. 추가 시스템 의존성 (필요 시)
+# - Windows: HWP 파싱을 위해 한글(HWP) 설치 필요
+# - Linux: sudo apt install libportaudio2 (PyAudio 용)
+# - Linux: sudo apt install espeak-ng (TTS 용)
+
+# 4. 실행
 python main.py
 ```
 

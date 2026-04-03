@@ -1,7 +1,24 @@
+# Core RAG / LLM
 langchain
 langchain-community
 langchain-core
-langchain-classic
+langchain-ollama
+langchain-chroma
 langchain-text-splitters
 chromadb
+
+# Vision / OCR
 opencv-python
+easyocr
+pymupdf
+pillow
+
+# Voice (STT/TTS)
+faster-whisper
+pyaudio
+pyttsx3
+
+# Utils
+numpy
+requests
+pywin32; platform_system == 'Windows'

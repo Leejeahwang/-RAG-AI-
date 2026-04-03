@@ -2,8 +2,8 @@
 벡터DB 생성 & 검색 모듈 (승훈님 담당)
 """
 
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings
 import config
 
 
