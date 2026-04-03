@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 from voice.tts import TTSHelper
 from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
+from sensors.temperature import read_temperature, is_temperature_abnormal
+from alerts.alarm import trigger_alarm
+from alerts.notifier import send_alert
 
 
 class EdgeSaver:
@@ -34,6 +37,10 @@ class EdgeSaver:
         self.stt_model = None
         self.pa = None
         self.stt_stream = None
+
+        # 모니터링 관리 (main 브랜치에서 통합)
+        self._monitor_running = False
+        self._monitor_thread = None
 
     def initialize(self):
         """시스템 초기화: RAG DB 구축 + QA 체인 구성"""
@@ -86,6 +93,54 @@ class EdgeSaver:
         # 기본값 한국어
         return 'ko'
 
+    def start_sensor_monitoring(self):
+        """백그라운드에서 센서 데이터를 주기적으로 검사합니다 (main 브랜치 통합)."""
+        def monitor():
+            print("[모니터링] 환경 센서 백그라운드 감시 시작 (3초 주기)...")
+            alarm_handled = False
+            while self._monitor_running:
+                # 시뮬레이션 모드로 온도/습도 읽기
+                data = read_temperature(simulate=True)
+                print(f"  > [센서] 현재 온도: {data['temperature']}°C / 습도: {data['humidity']}%", end="\r")
+                
+                if is_temperature_abnormal(data):
+                    if not alarm_handled:
+                        trigger_alarm(3, f"고온 감지! 현재 온도: {data['temperature']}°C")
+                        print(f"\n🚨 [위험 감지] 온도 {data['temperature']}°C 초과! RAG 시스템 개입 시작...")
+                        
+                        prompt = f"경고: 공장 내 온도가 {data['temperature']}도로 비정상적으로 높습니다. 작업장 화재 매뉴얼에 따른 즉각적인 초기 대응 지령은 무엇입니까?"
+                        
+                        try:
+                            # 1. LLM 지침 생성
+                            result = self.qa.invoke(prompt)
+                            ai_response = result['result']
+                            
+                            print("\n" + "=" * 55)
+                            print("🔥 [AI 자동 생성: 긴급 대응 지침]")
+                            print("=" * 55)
+                            print(f"\n{ai_response}\n")
+                            print("=" * 55 + "\n")
+                            
+                            # 2. TTS 음성 출력 (추가된 기능)
+                            self.tts.speak_async(ai_response, lang='ko')
+                            
+                            # 3. 관제실 MQTT 알림 전송
+                            sensor_info = f"온도 {data['temperature']}°C / 습도 {data['humidity']}%"
+                            send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
+                            
+                        except Exception as e:
+                            print(f"\n❌ RAG 생성 실패: {e}\n")
+                        
+                        alarm_handled = True
+                else:
+                    alarm_handled = False
+                    
+                time.sleep(3)
+
+        self._monitor_running = True
+        self._monitor_thread = threading.Thread(target=monitor, daemon=True)
+        self._monitor_thread.start()
+
     def run(self):
         """전체 감시 파이프라인 실행 (음성 모드 포함)"""
         if not self._initialized:
@@ -101,6 +156,9 @@ class EdgeSaver:
         print("       - 직접 질문을 입력하거나,")
         print("       - [엔터]를 치면 음성 인식을 시작합니다.")
         print("       - 종료하려면 'q' 또는 'exit'를 입력하세요.\n")
+
+        # 백그라운드 센서 모니터링 시작
+        self.start_sensor_monitoring()
 
         while True:
             try:
@@ -159,6 +217,9 @@ class EdgeSaver:
                 self.stt_stream.close()
             if self.pa:
                 self.pa.terminate()
+            
+            # 모니터링 스레드 종료
+            self._monitor_running = False
             print("✅ 모든 자원이 안전하게 해제되었습니다.")
         except Exception as e:
             print(f"⚠️ 자원 해제 중 오류 발생: {e}")

@@ -21,4 +21,5 @@ pyttsx3
 # Utils
 numpy
 requests
+paho-mqtt
 pywin32; platform_system == 'Windows'
