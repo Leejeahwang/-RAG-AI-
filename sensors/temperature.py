@@ -22,7 +22,6 @@ def read_temperature(simulate=False, pin=4):
             "temperature": round(random.uniform(20.0, 30.0), 1),
             "humidity": round(random.uniform(40.0, 60.0), 1),
         }
-
     try:
         import Adafruit_DHT
     except ImportError:

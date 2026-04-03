@@ -38,7 +38,7 @@ class EdgeSaver:
         self.pa = None
         self.stt_stream = None
 
-        # 모니터링 관리 (main 브랜치에서 통합)
+        # 센서 모니터링 관리 (main 브랜치 통합)
         self._monitor_running = False
         self._monitor_thread = None
 
@@ -63,7 +63,7 @@ class EdgeSaver:
             print("[시스템] 3/3: LLM QA 체인 구성...")
             self.qa = build_qa_chain(retriever)
 
-            # --- 음성 엔진 추가 초기화 ---
+            # --- 음성 엔진 초기화 ---
             print("[시스템] + 음성 출력(TTS) 엔진 준비 중...")
             self.tts = TTSHelper()
 
@@ -124,12 +124,12 @@ class EdgeSaver:
                             # 2. TTS 음성 출력 (추가된 기능)
                             self.tts.speak_async(ai_response, lang='ko')
                             
-                            # 3. 관제실 MQTT 알림 전송
+                            # 3. 관제실 MQTT 알림 전송 (Notifier 통합)
                             sensor_info = f"온도 {data['temperature']}°C / 습도 {data['humidity']}%"
                             send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
                             
                         except Exception as e:
-                            print(f"\n❌ RAG 생성 실패: {e}\n")
+                            print(f"\n❌ RAG 시스템 오류: {e}\n")
                         
                         alarm_handled = True
                 else:
@@ -146,27 +146,25 @@ class EdgeSaver:
         if not self._initialized:
             raise RuntimeError("initialize()를 먼저 호출하세요.")
 
-        # [버그 수정] 시작 시 터미널 버퍼에 남아있는 엔터 키 등을 비웁니다 (Windows 전용)
+        # [버그 수정] 시작 시 터미널 버퍼에 남아있는 키보드 입력을 비웁니다 (Windows 전용)
         if platform.system() == "Windows":
             import msvcrt
             while msvcrt.kbhit():
                 msvcrt.getch()
         
-        print("[대기] 🚑 엣지 세이버(Edge Saver)가 가동되었습니다.")
+        print("[운영] 🚑 엣지 세이버(Edge Saver)가 가동되었습니다.")
         print("       - 직접 질문을 입력하거나,")
         print("       - [엔터]를 치면 음성 인식을 시작합니다.")
         print("       - 종료하려면 'q' 또는 'exit'를 입력하세요.\n")
 
-        # 백그라운드 센서 모니터링 시작
+        # 백그라운드 센서 모니터링 시작 (main 브랜치 통합)
         self.start_sensor_monitoring()
 
         while True:
             try:
-                # 87-88라인의 잘못된 위치(루프 상단)에서 tts.stop()을 제거했습니다.
-                
                 query = input("❓ 질문 (텍스트 입력 또는 '엔터'로 음성 모드): ").strip()
                 
-                # 사용자가 엔터를 누르는 순간(입력 완료) 기존 음성 안내를 중단합니다.
+                # 사용자가 입력을 시도하면 기존의 음성 안내를 즉시 중단합니다.
                 self.tts.stop()
                 
                 # 음성 인식 모드 진입
@@ -189,7 +187,7 @@ class EdgeSaver:
                 
                 print("\n[검색] 대응 지침 생성 중...")
                 
-                # [강력 조치] 언어 이탈 방지용 힌트는 프롬프트 단계로 수관하고, 여기선 순수 쿼리만 전달
+                # LLM 지침 생성
                 result = self.qa.invoke(query)
                 answer = result['result']
 
@@ -199,14 +197,16 @@ class EdgeSaver:
                 print(f"\n{answer}\n")
                 print("=" * 55 + "\n")
 
-                # TTS 음성 출력 (감지된 언어에 맞게 출력)
+                # TTS 음성 출력
                 self.tts.speak_async(answer, lang=lang)
 
             except KeyboardInterrupt:
                 print("\n\n사용자에 의해 시스템이 중단되었습니다.")
                 break
             except Exception as e:
-                print(f"❌ 오류: {e}\n")
+                print(f"❌ 오류 발생: {e}\n")
+        
+        self._monitor_running = False
 
     def cleanup(self):
         """시스템 종료 시 자원 해제"""

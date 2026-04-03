@@ -19,7 +19,7 @@ CHUNK_OVERLAP = 50                         # 청크 오버랩
 SENSOR_THRESHOLDS = {
     "smoke_mq2": 300,           # MQ-2 연기감지 아날로그 값 기준
     "gas_mq135": 400,           # MQ-135 가스감지 아날로그 값 기준
-    "temperature_high": 60,     # 이상 고온 (°C)
+    "temperature_high": 28,     # 이상 고온 (°C) - 원활한 테스트를 위해 28도로 하향 조정 (기존 30도)
     "temperature_low": -10,     # 이상 저온 (°C)
     "humidity_low": 15,         # 이상 저습도 (%)
 }
@@ -42,3 +42,8 @@ CAPTURE_PATH = "temp_capture.jpg"          # 임시 캡처 저장 경로
 # ── 알림 설정 ──
 ALERT_BUZZER_PIN = 18                      # GPIO 핀 번호 (부저)
 ALERT_LED_PIN = 23                         # GPIO 핀 번호 (경고 LED)
+
+# ── MQTT통신 설정 ──
+MQTT_BROKER_URL = "test.mosquitto.org"     # 퍼블릭 테스트용 브로커 (추후 로컬 IP로 변경 가능)
+MQTT_BROKER_PORT = 1883                    # 기본 MQTT 포트
+MQTT_TOPIC_ALERTS = "factory/fire_alerts"  # 알림 전송 토픽 (채널)
