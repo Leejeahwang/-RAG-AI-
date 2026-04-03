@@ -5,3 +5,4 @@ langchain-classic
 langchain-text-splitters
 chromadb
 opencv-python
+paho-mqtt

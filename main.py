@@ -10,11 +10,15 @@
 
 import sys
 import os
+import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
-
+from sensors.temperature import read_temperature, is_temperature_abnormal
+from alerts.alarm import trigger_alarm
+from alerts.notifier import send_alert
 
 class EdgeSaver:
     """엣지 세이버 메인 애플리케이션"""
@@ -22,6 +26,8 @@ class EdgeSaver:
     def __init__(self):
         self.qa = None
         self._initialized = False
+        self._monitor_running = False
+        self._monitor_thread = None
 
     def initialize(self):
         """시스템 초기화: RAG DB 구축 + QA 체인 구성"""
@@ -53,6 +59,51 @@ class EdgeSaver:
             print(f"   → 모델 확인: ollama pull {config.LLM_MODEL}")
             sys.exit(1)
 
+    def start_sensor_monitoring(self):
+        """백그라운드에서 센서 데이터를 주기적으로 검사합니다."""
+        def monitor():
+            print("[모니터링] 🌡️ 온도 센서 백그라운드 감시 시작 (3초 주기)...")
+            alarm_handled = False
+            while self._monitor_running:
+                data = read_temperature(simulate=True)
+                # 실시간 측정값 출력
+                print(f"  > [센서] 현재 온도: {data['temperature']}°C / 습도: {data['humidity']}%")
+                
+                if is_temperature_abnormal(data):
+                    if not alarm_handled:
+                        trigger_alarm(3, f"고온 감지! 현재 온도: {data['temperature']}°C")
+                        print(f"\n🚨 [위험 감지] 온도 {data['temperature']}°C 초과! RAG 시스템 개입 시작...")
+                        
+                        prompt = f"경고: 공장 내 온도가 {data['temperature']}도로 비정상적으로 높습니다. 산업용 화재 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
+                        print(f"   > 질의 생성: {prompt}")
+                        try:
+                            # 백그라운드 스레드에서 RAG 호출
+                            result = self.qa.invoke(prompt)
+                            ai_response = result['result']
+                            
+                            print("\n" + "=" * 55)
+                            print("🔥 [AI 자동 생성: 긴급 대응 지침] 🔥")
+                            print("=" * 55)
+                            print(f"\n{ai_response}\n")
+                            print("=" * 55 + "\n")
+                            
+                            # 관제실로 알림 전송 (MQTT)
+                            sensor_info = f"온도 {data['temperature']}°C / 습도 {data['humidity']}%"
+                            send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
+                            
+                        except Exception as e:
+                            print(f"\n❌ RAG 생성 실패: {e}\n")
+                        
+                        alarm_handled = True
+                else:
+                    alarm_handled = False
+                    
+                time.sleep(3)
+
+        self._monitor_running = True
+        self._monitor_thread = threading.Thread(target=monitor, daemon=True)
+        self._monitor_thread.start()
+
     def run(self):
         """
         전체 감시 파이프라인 실행
@@ -75,6 +126,9 @@ class EdgeSaver:
 
         print("[대기] 센서 모니터링을 시작합니다...")
         print("       (현재는 시뮬레이션 모드입니다)\n")
+
+        # 백그라운드 온도 감시 스레드 시작
+        self.start_sensor_monitoring()
 
         # 시뮬레이션: 수동 질문 입력 모드
         while True:
@@ -100,6 +154,8 @@ class EdgeSaver:
                 break
             except Exception as e:
                 print(f"❌ 오류: {e}\n")
+        
+        self._monitor_running = False
 
 
 if __name__ == "__main__":
