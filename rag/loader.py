@@ -51,6 +51,10 @@ def load_and_split():
                              loader_kwargs={"encoding": "utf-8"})
     documents = loader.load()
 
+    for doc in documents:
+        filename = os.path.basename(doc.metadata.get("source", ""))
+        doc.page_content = f"[{filename}의 내용]\n" + doc.page_content
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=config.CHUNK_SIZE,
         chunk_overlap=config.CHUNK_OVERLAP,

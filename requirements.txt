@@ -6,3 +6,8 @@ langchain-text-splitters
 chromadb
 opencv-python
 paho-mqtt
+numpy
+pyaudio
+pyttsx3
+faster-whisper
+roboflow
