@@ -113,8 +113,16 @@ def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
     # 너무 긴 청크는 재귀적으로 분할 (글자 수 기준)
     final_chunks = []
     for item in chunks:
+        # 본문 알맹이만 추출 (헤더 제외)
+        content_lines = item["text"].split("\n")
+        body_content = "\n".join([line for line in content_lines if not line.strip().startswith('#')]).strip()
+        
+        # 알맹이가 너무 짧은(20자 미만) '껍데기 제목 청크'는 버림
+        if len(body_content) < 20:
+            continue
+
         if len(item["text"]) > chunk_size:
-            # 보수적으로 문장 단위 분할 시도 (단순 글자수보다 나음)
+            # 보수적으로 문장 단위 분할 시도
             sub_parts = re.split(r'(?<=\. )', item["text"])
             temp_sub = ""
             for p in sub_parts:
