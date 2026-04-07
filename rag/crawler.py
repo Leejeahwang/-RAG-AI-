@@ -18,9 +18,21 @@ download_dir = os.path.join(project_root, "data", "raw_documents")
 if not os.path.exists(download_dir):
     os.makedirs(download_dir)
 
+# 2. 필터 키워드 정의 (소방 및 화재 전용)
+FIRE_KEYWORDS = [
+    '화재', '소방', '불꽃', '연기', '소화', '폭발', '산불', '전기화재', 
+    '가스화재', '119', '구조', '구급', '화상', '대피', '질식'
+]
+
 def setup_driver():
     chrome_options = Options()
-    # chrome_options.add_argument("--headless")
+    # --- [성능 최적화] 헤드리스 모드 관련 설정 ---
+    chrome_options.add_argument("--headless=new") # 최신 헤드리스 모드 활성화
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false") # 이미지 로딩 비활성화 (속도 향상)
+    
     prefs = {
         "profile.default_content_settings.popups": 0,
         "profile.default_content_setting_values.automatic_downloads": 1,
@@ -28,7 +40,7 @@ def setup_driver():
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
         "safebrowsing.enabled": True,
-        "plugins.always_open_pdf_externally": True  # PDF를 브라우저에서 열지 않고 바로 다운로드
+        "plugins.always_open_pdf_externally": True
     }
     chrome_options.add_experimental_option("prefs", prefs)
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
@@ -50,54 +62,68 @@ def crawl_national_disaster_portal(driver):
         
         for current_page_num in range(1, max_page + 1):
             print(f"\n[페이지] {current_page_num} / {max_page}")
-            time.sleep(2)
             
-            try: driver.switch_to.alert.accept()
+            # [페이지 이동 처리 최적화]
+            try:
+                WebDriverWait(driver, 2).until(EC.alert_is_present())
+                driver.switch_to.alert.accept()
             except: pass
             
             try:
                 if len(driver.find_elements(By.ID, "minPage")) == 0:
                     driver.get(target_url)
-                    time.sleep(3)
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "minPage")))
                     
                 now_num = driver.find_element(By.ID, "minPage").text
                 if str(now_num) != str(current_page_num):
                     driver.execute_script(f"document.getElementById('bbs_page').value = '{current_page_num}'; onGoToPageBtnClick();")
-                    time.sleep(3)
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
             except: pass
                 
             articles = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
             
             for i in range(len(articles)):
                 try:
-                    try: driver.switch_to.alert.accept()
+                    # [최적화] 이전 대기 시간 단축
+                    try: 
+                        WebDriverWait(driver, 1).until(EC.alert_is_present())
+                        driver.switch_to.alert.accept()
                     except: pass
                     
-                    try:
-                        if len(driver.find_elements(By.ID, "minPage")) == 0:
-                            driver.get(target_url)
-                            time.sleep(3)
-                            
-                        now_num = driver.find_element(By.ID, "minPage").text
-                        if str(now_num) != str(current_page_num):
-                            driver.execute_script(f"document.getElementById('bbs_page').value = '{current_page_num}'; onGoToPageBtnClick();")
-                            time.sleep(3)
-                    except: pass
-                            
+                    # [페이지 동기화 체크]
                     current_articles = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
+                    if i >= len(current_articles): continue
                     row = current_articles[i]
                     
                     try:
                         title_link = row.find_element(By.CSS_SELECTOR, "td.title a, td.subj a, td:nth-child(2) a")
                     except: continue
                         
-                    article_title = title_link.text
-                    print(f"  [게시글] {article_title}")
+                    article_title = title_link.text.strip()
+                    
+                    # --- [키워드 필터링 적용] ---
+                    if not any(kw in article_title for kw in FIRE_KEYWORDS):
+                        print(f"  [건너뜀 (키워드 불일치)] {article_title}")
+                        continue
+                        
+                    print(f"  [수집 대상 확인] {article_title}")
                     
                     driver.execute_script("arguments[0].click();", title_link)
-                    time.sleep(2)
                     
-                    download_links = driver.find_elements(By.XPATH, "//a[contains(@href, 'fn_download') or contains(@href, 'download') or contains(text(), 'hwp') or contains(text(), 'pdf') or contains(text(), 'hwp') or contains(text(), 'pdf')]")
+                    # [추가] 클릭 직후 발생할 수 있는 알림창(Alert) 자동 승인
+                    try:
+                        WebDriverWait(driver, 2).until(EC.alert_is_present())
+                        driver.switch_to.alert.accept()
+                    except: pass
+                    
+                    # [다운로드 링크 대기 및 탐색] - 대기 시간을 10초로 상향
+                    wait_for_files = WebDriverWait(driver, 10)
+                    try:
+                        wait_for_files.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'fn_download')] | //a[contains(@href, 'download')] | //a[contains(@href, '.pdf')] | //a[contains(@href, '.hwp')]")))
+                    except:
+                        print("    [경고] 다운로드 링크를 찾는 데 실패했습니다. (페이지 로딩 지연 또는 링크 구조 상이)")
+                        
+                    download_links = driver.find_elements(By.XPATH, "//a[contains(@href, 'fn_download') or contains(@href, 'download') or contains(text(), 'hwp') or contains(text(), 'pdf') or contains(@class, 'file')]")
                     
                     if download_links:
                         # 1. 문서별로 파일 확장자 우선순위 정리 (PDF > HWP/DOCX)

@@ -1,4 +1,3 @@
-import win32com.client as win32
 import os
 import glob
 import json
@@ -9,6 +8,10 @@ import sys
 import easyocr
 import numpy as np
 import io
+import gc
+import torch
+import olefile  # HWP 패키지 분석용
+import zlib     # HWP 압축 해제용
 from PIL import Image
 
 # 인코딩 문제 발생 시 강제 종료 방지
@@ -20,7 +23,8 @@ if sys.stdout.encoding != 'utf-8':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
  
 # --- 설정 옵션 ---
-USE_AI_REFINEMENT = False  # 속도 향상을 위해 기본적으로 끔 (필곡 활성화 시 True로 변경)
+USE_AI_REFINEMENT = True  # AI 기반 구조화 활성화 (Markdown 형식 출력)
+LLM_MODEL_FOR_CLEANING = "gemma4:e2b" # 보다 강력한 고도화 성능을 위해 gemma4 사용
 
 # --- 0. OCR 설정 ---
 # GPU가 있으면 사용, 없으면 CPU (약 1GB 모델 다운로드 발생)
@@ -33,25 +37,72 @@ def get_ocr_reader():
         _ocr_reader = easyocr.Reader(['ko', 'en'], gpu=True) # gpu=True는 있으면 자동 사용
     return _ocr_reader
 
+def release_ocr_reader():
+    """OCR 리소스를 해제하여 GPU/RAM 메모리를 LLM이나 다른 공정에 반환합니다."""
+    global _ocr_reader
+    if _ocr_reader is not None:
+        print("    [OCR] 리소스 해제 중...")
+        del _ocr_reader
+        _ocr_reader = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 # --- 1. 텍스트 추출 함수 ---
-def extract_text_with_hwp(file_path, hwp_app):
+def extract_text_with_hwp(file_path):
+    """
+    한컴오피스를 실행하지 않고 olefile로 HWP 내부 바이너리를 직접 읽어서 텍스트를 추출합니다.
+    보안 팝업이 절대로 뜨지 않으며 속도가 매우 빠릅니다.
+    """
     try:
-        abs_path = os.path.abspath(file_path)
-        hwp_app.Open(abs_path, "HWP", "forceopen:true")
-        hwp_app.InitScan()
+        f = olefile.OleFileIO(file_path)
+        dirs = f.listdir()
         
-        full_text = ""
-        while True:
-            state, text = hwp_app.GetText()
-            if state in [0, 1]: 
-                break
-            full_text += text
+        # HWP v5 이상은 BodyText 스토리지에 Section0, Section1 ... 에 내용이 저장됨
+        bodytext_sections = [d for d in dirs if d[0] == "BodyText" and "Section" in d[1]]
+        # 인덱스 순서대로 정렬 (Section0, Section1 ...)
+        bodytext_sections.sort(key=lambda x: int(re.search(r'\d+', x[1]).group()))
+        
+        full_text = []
+        
+        # 문서 정보(압축 여부 등) 확인
+        is_compressed = False
+        if ["FileHeader"] in dirs:
+            header_node = f.openstream("FileHeader")
+            header_data = header_node.read()
+            # FileHeader의 36번째 바이트가 압축 여부 (0x01: compressed)
+            if header_data[36] & 1:
+                is_compressed = True
+        
+        for section_node in bodytext_sections:
+            stream = f.openstream(section_node)
+            data = stream.read()
             
-        hwp_app.ReleaseScan()
-        return full_text
+            # 압축 해제 (Deflate 방식)
+            if is_compressed:
+                try:
+                    data = zlib.decompress(data, -15)
+                except Exception:
+                    # 일부 버전은 표준 zlib 헤더를 가질 수도 있음
+                    try:
+                        data = zlib.decompress(data)
+                    except:
+                        pass
+            
+            # UTF-16LE 인코딩으로 변환 (HWP 기본 텍스트 인코딩)
+            try:
+                decoded = data.decode('utf-16le', errors='ignore')
+                # 바이너리 값인 태그들 제거 (HWP 제어 문자들)
+                cleaned = re.sub(r'[\x00-\x1f]', ' ', decoded)
+                full_text.append(cleaned)
+            except Exception as e:
+                print(f"      [경고] {section_node} 디코딩 실패: {e}")
+        
+        f.close()
+        return "\n".join(full_text)
     
     except Exception as e:
-        print(f"[{os.path.basename(file_path)}] HWP 오류: {e}")
+        print(f"[{os.path.basename(file_path)}] HWP 분석 오류: {e}")
         return None
 
 def extract_text_with_pdf(file_path):
@@ -60,16 +111,17 @@ def extract_text_with_pdf(file_path):
         full_text = ""
         for page in doc:
             full_text += page.get_text()
+        doc.close()
         
-        # 텍스트가 너무 적으면 이미지 기반 PDF로 간주하고 OCR 시도
+        # 텍스트가 너무 적거나 형식이 깨진 경우 이미지 기반 PDF로 간주하고 OCR 시도
         if len(full_text.strip()) < 100:
-            print(f"    [알림] '{os.path.basename(file_path)}'에서 디지털 텍스트가 부족합니다. OCR을 시도합니다.")
+            print(f"    [알림] '{os.path.basename(file_path)}'에서 디지털 텍스트가 부족하거나 형식이 깨졌습니다. OCR을 시도합니다.")
             return extract_text_with_ocr(file_path)
             
         return full_text
     except Exception as e:
-        print(f"[{os.path.basename(file_path)}] PDF 오류: {e}")
-        return None
+        print(f"    [PDF 오류] '{os.path.basename(file_path)}' 분석 실패: {e}. OCR로 전환합니다.")
+        return extract_text_with_ocr(file_path)
 
 def extract_text_with_ocr(file_path):
     try:
@@ -108,64 +160,98 @@ def extract_text_with_ocr(file_path):
 def clean_noise(text):
     if not text: return ""
     
-    # 1. 문서 레이아웃 기호 및 반복 문자 제거 (. . . , ---, ━━━ 등)
-    text = re.sub(r'\.{2,}', ' ', text)  # 연속된 점 제거
-    text = re.sub(r'·{2,}', ' ', text)  # 연속된 가운뎃점 제거
-    text = re.sub(r'-{3,}', ' ', text)  # 연속된 하이픈 제거
-    text = re.sub(r'={3,}', ' ', text)  # 연속된 등호 제거
-    text = re.sub(r'[━─]{2,}', ' ', text) # 연속된 선 기호 제거
-    
-    # 2. 허용할 문자 패턴 (한글, 영문, 숫자 및 기본 특수문자) - 노이즈 제거
-    safe_pattern = re.compile(r'[^가-힣a-zA-Z0-9\s.,!?()\[\]\-"\':;·•➊-➓▶●■※○-◎◇◈-]')
+    # 1. 제어 문자 및 비가시 문자 완벽 제거 (Whitelist 방식)
+    # 한글, 영문, 숫자, 공백, 주요 문장 부호(\n 포함)만 남김
+    safe_pattern = re.compile(r'[^가-힣a-zA-Z0-9\s.,!?()\[\]\-"\':;·•➊-➓▶●■※○-◎◇◈\n\-_]')
     text = safe_pattern.sub('', text)
     
-    # 3. 불필요한 제어 문자 및 HTML 태그 제거
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    text = re.sub(r'<[^>]+>', '', text)
+    # 2. 비정상적인 공백 조합 정규화 (예: "화 재" -> "화재")
+    # 두 글자 사이의 단일 공백이 한글인 경우 결합 시도 (heuristic)
+    text = re.sub(r'([가-힣])\s([가-힣])', r'\1\2', text)
+    # 한 번 더 실행하여 3글자 이상도 처리
+    text = re.sub(r'([가-힣])\s([가-힣])', r'\1\2', text)
+
+    # 3. 문서 레이아웃 기호 및 반복 문자 제거 (. . . , ---, ━━━ 등)
+    text = re.sub(r'\.{2,}', ' ', text)
+    text = re.sub(r'·{2,}', ' ', text)
+    text = re.sub(r'-{3,}', ' ', text)
+    text = re.sub(r'={3,}', ' ', text)
+    text = re.sub(r'[━─|｜│]{1,}', ' ', text)
     
     # 4. 페이지 번호 단독 행 제거 (예: "\n 12 \n")
     text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
     
-    # 5. 공백 정규화
+    # 5. 불필요한 줄바꿈 정리
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
 
 # --- 2.2 AI 기반 텍스트 최적화 ---
-def sanitize_content_with_ai(text, model="qwen2.5:3b"):
+def sanitize_content_with_ai(text, filename, model=LLM_MODEL_FOR_CLEANING):
     if not text: return ""
     
-    chunk_size = 1500
+    # 너무 짧은 텍스트는 정제하지 않음
+    if len(text) < 100: return text
+
+    # 청크 크기를 줄여 타임아웃 방지 및 처리 속도 향상
+    chunk_size = 1200 
     text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     processed_text = []
 
-    print(f"    [AI 정제] {len(text_chunks)}개 블록 처리 중...")
+    print(f"    [AI 매뉴얼 고도화] {len(text_chunks)}개 블록 처리 중... (파일: {filename})")
     
     for idx, chunk in enumerate(text_chunks):
         prompt = f"""
-        당신은 매뉴얼 전문 편집자입니다. HWP/PDF에서 추출된 다음 텍스트의 레이아웃을 깔끔하게 정리해 주세요.
-        기술적인 세부 사항은 100% 동일하게 유지하면서 공백과 줄바꿈만 정규화하십시오.
-        [블록 {idx+1}/{len(text_chunks)}]
+        당신은 문서 정제 및 데이터 구조화 전문가입니다. 제공된 텍스트는 안전 매뉴얼에서 추출된 데이터입니다.
+        이 데이터를 RAG(검색 증강 생성) 시스템이 답변을 생성하는 데 최적화된 형태로 재구성하세요.
+
+        [수행 미션]
+        1. **중복 제거**: 반복되는 제목, 목차(Contents) 항목, 페이지마다 나오는 로고 텍스트는 즉시 삭제하세요.
+        2. **문장 정규화**: 흩어진 글자를 붙이고, 맞춤법과 띄어쓰기를 완벽하게 교정하세요.
+        3. **구조화**: 핵심 제목은 '#'로, 소주제는 '##'로 표시하여 계층 구조를 만드세요.
+        4. **가독성**: 긴 문장은 명확하게 나누고, 행동 지침은 '*' 불렛포인트를 사용하여 설명문 형태로 다듬으세요.
+        5. **내용 유지**: 수치(예: 119, 4분), 대응 절차, 금지 사항 등 기술적 안전 정보는 **절대로** 생략하거나 변경하지 마세요.
+
+        [원본 파일명]
+        {filename}
+
+        [처리할 데이터 ({idx+1}/{len(text_chunks)})]
         {chunk}
-        [결과]
+
+        [정제된 최종 마크다운 결과물]
         """
-        try:
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                }
-            )
-            cleaned = response.json().get("response", "").strip()
-            if cleaned:
-                processed_text.append(cleaned)
-            else:
-                processed_text.append(chunk) 
-        except Exception as e:
-            print(f"      [오류] 블록 {idx+1} 실패: {e}")
+        
+        success = False
+        for retry in range(3): # 최대 3번 재시도
+            try:
+                response = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.1, 
+                            "num_predict": 2000, 
+                            "top_p": 0.9
+                        }
+                    },
+                    timeout=180 # 3분 타임아웃
+                )
+                cleaned = response.json().get("response", "").strip()
+                
+                if cleaned and len(cleaned) > (len(chunk) * 0.2):
+                    processed_text.append(cleaned)
+                    success = True
+                    break
+                else:
+                    print(f"      [경고] {idx+1}번 블록 결과 미흡, 재시도 중... ({retry+1}/3)")
+            except Exception as e:
+                print(f"      [경고] {idx+1}번 블록 타임아웃/오류, 재시도 중... ({retry+1}/3): {e}")
+        
+        if not success:
+            print(f"      [실패] {idx+1}번 블록 최종 실패. 원본 데이터를 유지합니다.")
             processed_text.append(chunk)
 
     return "\n\n".join(processed_text)
@@ -177,7 +263,7 @@ def looks_broken(text):
     return (garbage_len / total_len) > 0.3  # 5% -> 30%로 완화
 
 # --- 2.5 Ollama 기반 필터링 ---
-def is_valuable_manual(text, filename, model="qwen2.5:3b"):
+def is_valuable_manual(text, filename, model=LLM_MODEL_FOR_CLEANING):
     # --- [건너뜀 방지 1] 파일명 기반 키워드 검사 ---
     safe_keywords = ['매뉴얼', '요령', '가이드', '지침', '안전', '수칙', '대비']
     if any(kw in filename for kw in safe_keywords):
@@ -221,15 +307,6 @@ def is_valid_manual(text):
 # --- 3. 파서 실행 ---
 print("[정보] 문서 파서 초기화 중...")
 
-hwp = None
-try:
-    # 캐시를 정리했으므로 가장 안정적인 EnsureDispatch 방식으로 원복합니다.
-    hwp = win32.gencache.EnsureDispatch("HWPFrame.HwpObject")
-    hwp.XHwpWindows.Item(0).Visible = False 
-except Exception as e:
-    print(f"[정보] HWP 애플리케이션 연결 실패 (에러 내용: {e})")
-    print("[정보] PDF 및 이미지 파일만 처리합니다.")
-
 # 데이터 파일은 data/ 디렉토리, 스크립트는 rag/에 위치
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
@@ -266,8 +343,8 @@ for file in final_targets:
     ext = os.path.splitext(file)[1].lower()
     raw_text = ""
     
-    if ext == '.hwp' and hwp:
-        raw_text = extract_text_with_hwp(file, hwp)
+    if ext == '.hwp':
+        raw_text = extract_text_with_hwp(file)
     elif ext == '.pdf':
         raw_text = extract_text_with_pdf(file)
     elif ext in ['.png', '.jpg', '.jpeg']:
@@ -283,10 +360,9 @@ for file in final_targets:
             
             if ai_pass:
                 final_content = clean_data
-                # AI 정제 사용 여부 및 노이즈 기준 확인
-                if USE_AI_REFINEMENT and looks_broken(clean_data):
-                    print(f"  [AI 정제] 높은 노이즈 레벨 감지. 텍스트 재구조화 중...")
-                    final_content = sanitize_content_with_ai(clean_data)
+                # AI 마크다운 정제 실행
+                if USE_AI_REFINEMENT:
+                    final_content = sanitize_content_with_ai(clean_data, basename)
                 
                 all_documents.append({
                     "source": basename,
@@ -300,8 +376,8 @@ for file in final_targets:
     else:
         print("  [건너뜀] 텍스트 추출 실패")
 
-if hwp:
-    hwp.Quit()
+# 작업 종료
+release_ocr_reader()
 
 save_path = os.path.join(project_root, "data", "parsed_manuals.json")
 with open(save_path, 'w', encoding='utf-8') as f:

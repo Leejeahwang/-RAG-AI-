@@ -1,4 +1,4 @@
-# Core RAG / LLM
+# --- Core RAG & LLM (Ollama / ChromaDB) ---
 langchain
 langchain-community
 langchain-core
@@ -7,18 +7,26 @@ langchain-chroma
 langchain-text-splitters
 chromadb
 
-# Vision / OCR
-opencv-python
-easyocr
+# --- Document Parsing & Vision (PDF / HWP / OCR) ---
 pymupdf
+olefile         # New: HWP binary parsing (no popup)
+easyocr
+opencv-python
 pillow
 
-# Voice (STT/TTS)
+# --- GPU Acceleration (PyTorch CUDA 12.1 recommended) ---
+# Note: For GPU support, manually install: 
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+
+# --- Voice Processing (STT / TTS) ---
 faster-whisper
 pyaudio
 pyttsx3
 
-# Utils
+# --- Utility & Communication ---
 numpy
 requests
 paho-mqtt

@@ -13,7 +13,7 @@ if sys.stdout.encoding != 'utf-8':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # --- 1. AI 기반 스마트 타이틀 추출 ---
-def generate_ai_title(text, filename, model="qwen2.5:1.5b"):
+def generate_ai_title(text, filename, model="gemma4:e2b"):
     """
     Ollama를 사용하여 문서의 핵심 주제를 추출합니다.
     문서당 단 1회 호출하여 고품질 메타데이터 제작.
@@ -48,48 +48,87 @@ def generate_ai_title(text, filename, model="qwen2.5:1.5b"):
         print(f"  [오류] AI 타이틀 추출 실패 ({filename}): {e}")
         return filename
 
-# --- 2. 재귀적 텍스트 분할기 (Context Awareness) ---
-def recursive_chunk_text(text, separators=["\n\n", "\n", ". ", " "], chunk_size=500, overlap=100):
+# --- 2. 마크다운 구조 인식형 스마트 분할기 (Structural Chunking) ---
+def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
     """
-    텍스트를 의미 있는 단위로 재귀적으로 분할하여 정보 소실을 방지합니다.
+    마크다운 헤더(#, ##, ###)를 인식하여 의미 단위로 분할합니다.
+    각 청크 상단에 문서 구조(Breadcrumbs)를 삽입하여 문맥을 보존합니다.
     """
-    def split_recursive(content, current_seps):
-        if len(content) <= chunk_size:
-            return [content]
-        
-        if not current_seps:
-            return [content[i:i + chunk_size] for i in range(0, len(content), chunk_size - overlap)]
-        
-        sep = current_seps[0]
-        remaining_seps = current_seps[1:]
-        
-        parts = content.split(sep)
-        temp_chunks = []
-        current_chunk = ""
-        
-        for part in parts:
-            if current_chunk and len(current_chunk) + len(part) + len(sep) > chunk_size:
-                temp_chunks.append(current_chunk.strip())
-                overlap_text = current_chunk[-(overlap):] if len(current_chunk) > overlap else current_chunk
-                current_chunk = overlap_text + sep + part
-            else:
-                if current_chunk:
-                    current_chunk += sep + part
-                else:
-                    current_chunk = part
-                    
-        if current_chunk:
-            temp_chunks.append(current_chunk.strip())
-            
-        result = []
-        for chunk in temp_chunks:
-            if len(chunk) > chunk_size:
-                result.extend(split_recursive(chunk, remaining_seps))
-            elif len(chunk) > 50:  # 50자 미만의 노이즈성 데이터는 제외
-                result.append(chunk)
-        return result
+    # 헤더 기준으로 분할 (헤더 자체도 보존)
+    sections = re.split(r'(^#{1,4} .+)', text, flags=re.MULTILINE)
+    
+    chunks = []
+    current_breadcrumbs = [title]
+    current_content = ""
+    
+    # 헤더 정규화: '### # 1.' -> '### 1.'
+    def normalize_header(h):
+        return re.sub(r'^(#+)\s*#+\s*', r'\1 ', h).strip()
 
-    return split_recursive(text, separators)
+    for part in sections:
+        if not part.strip(): continue
+        
+        # 헤더 발견 시
+        if part.startswith('#'):
+            normalized_part = normalize_header(part)
+            # 레벨 계산 (### -> 3)
+            level_match = re.match(r'^(#+)', normalized_part)
+            level = len(level_match.group()) if level_match else 1
+            
+            # 브레드크럼 갱신 (레벨에 맞춰 하위 스택 조정)
+            header_text = normalized_part.lstrip('#').strip()
+            
+            # 이전 내용 저장 후 초기화 (내용이 있을 경우)
+            if current_content.strip():
+                breadcrumb_str = " > ".join(current_breadcrumbs)
+                chunks.append({
+                    "breadcrumb": breadcrumb_str,
+                    "text": current_content.strip()
+                })
+            
+            # 레벨에 따라 브레드크럼 스택 조정
+            if level == 1:
+                current_breadcrumbs = [title, header_text]
+            else:
+                current_breadcrumbs = current_breadcrumbs[:level]
+                while len(current_breadcrumbs) < level:
+                    current_breadcrumbs.append("...") # 중간 단계 누락 시 채우기
+                if len(current_breadcrumbs) == level:
+                    current_breadcrumbs.append(header_text)
+                else:
+                    current_breadcrumbs[level] = header_text
+            
+            current_content = normalized_part + "\n"
+        else:
+            current_content += part
+            
+    # 마지막 남은 부분 처리
+    if current_content.strip():
+        breadcrumb_str = " > ".join(current_breadcrumbs)
+        chunks.append({
+            "breadcrumb": breadcrumb_str,
+            "text": current_content.strip()
+        })
+
+    # 너무 긴 청크는 재귀적으로 분할 (글자 수 기준)
+    final_chunks = []
+    for item in chunks:
+        if len(item["text"]) > chunk_size:
+            # 보수적으로 문장 단위 분할 시도 (단순 글자수보다 나음)
+            sub_parts = re.split(r'(?<=\. )', item["text"])
+            temp_sub = ""
+            for p in sub_parts:
+                if len(temp_sub) + len(p) > chunk_size:
+                    final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{temp_sub.strip()}")
+                    temp_sub = p
+                else:
+                    temp_sub += p
+            if temp_sub:
+                final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{temp_sub.strip()}")
+        else:
+            final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{item['text']}")
+            
+    return final_chunks
 
 # --- 2.5 가치 중심 청크 필터링 ---
 def is_useful_chunk(text):
@@ -158,25 +197,22 @@ def main():
         title = f"{clean_filename} ({doc_topic})"
         print(f"-> {doc_topic}")
         
-        # 2. 고성능 재귀적 청킹 수행
-        smart_chunks = recursive_chunk_text(content, chunk_size=500, overlap=100)
+        # 2. 마크다운 구조 인식형 청킹 수행
+        smart_chunks = markdown_aware_chunking(content, title, chunk_size=800, overlap=150)
         
         # 3. 메타데이터 보강 및 저장 (필터링 적용)
         current_doc_chunks = 0
         for i, chunk in enumerate(smart_chunks):
-            # 가치 기반 필터링 적용
+            # 가치 기반 필터링 적용 (헤더 정보를 포함한 상태로 검사)
             if not is_useful_chunk(chunk):
                 filtered_count += 1
                 continue
                 
-            # 문맥 보강 헤더 삽입 (마크다운 형식)
-            enriched_content = f"## 주제: {title}\n(출처: {source_name})\n\n{chunk}"
-            
             chunked_data.append({
                 "source": source_name,
                 "title": title,
                 "chunk_id": current_doc_chunks + 1,
-                "content": enriched_content
+                "content": chunk.strip()
             })
             current_doc_chunks += 1
 
