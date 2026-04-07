@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from sensors.temperature import read_temperature, is_temperature_abnormal
+from sensors.smoke import read_smoke_level, is_smoke_detected
+from sensors.gas import read_gas_level, is_gas_detected
 from alerts.alarm import trigger_alarm
 from alerts.notifier import send_alert
 from voice.tts import TTSHelper
@@ -92,53 +94,72 @@ class EdgeSaver:
         # 기본값 한국어
         return 'ko'
 
+    def _trigger_rag_and_tts(self, prompt, sensor_info):
+        """RAG로 대응 지침 생성 및 TTS 음성 방송"""
+        print(f"   > 질의 생성: {prompt}")
+        try:
+            if self.tts:
+                self.tts.stop()
+                
+            result = self.qa.invoke(prompt)
+            ai_response = result['result']
+            
+            print("\n" + "=" * 55)
+            print("🔥 [AI 자동 생성: 긴급 대응 지침] 🔥")
+            print("=" * 55)
+            print(f"\n{ai_response}\n")
+            print("=" * 55 + "\n")
+            
+            send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
+            
+            print("   📢 [음성 경보] TTS 비상 피난 방송을 시작합니다...")
+            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            
+        except Exception as e:
+            print(f"\n❌ RAG 생성 실패: {e}\n")
+
     def start_sensor_monitoring(self):
         """백그라운드에서 센서 데이터를 주기적으로 검사합니다."""
         def monitor():
-            print("[모니터링] 🌡️ 온도 센서 백그라운드 감시 시작 (3초 주기)...")
-            alarm_handled = False
+            print("[모니터링] 🌡️ 복합 센서(온도, 가스, 연기) 백그라운드 감시 시작 (3초 주기)...")
+            alarm_handled = {"temperature": False, "gas": False, "smoke": False}
             while self._monitor_running:
-                data = read_temperature(simulate=True)
-                # 실시간 측정값 출력
-                print(f"  > [센서] 현재 온도: {data['temperature']}°C / 습도: {data['humidity']}%")
+                temp_data = read_temperature(simulate=True)
+                gas_val = read_gas_level(simulate=True)
+                smoke_val = read_smoke_level(simulate=True)
                 
-                if is_temperature_abnormal(data):
-                    if not alarm_handled:
-                        trigger_alarm(3, f"고온 감지! 현재 온도: {data['temperature']}°C")
-                        print(f"\n🚨 [위험 감지] 온도 {data['temperature']}°C 초과! RAG 시스템 개입 시작...")
-                        
-                        prompt = f"경고: 공장 내 온도가 {data['temperature']}도로 비정상적으로 높습니다. 산업용 화재 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
-                        print(f"   > 질의 생성: {prompt}")
-                        try:
-                            # 기존 음성 중단
-                            if self.tts:
-                                self.tts.stop()
-                                
-                            # 백그라운드 스레드에서 RAG 호출
-                            result = self.qa.invoke(prompt)
-                            ai_response = result['result']
-                            
-                            print("\n" + "=" * 55)
-                            print("🔥 [AI 자동 생성: 긴급 대응 지침] 🔥")
-                            print("=" * 55)
-                            print(f"\n{ai_response}\n")
-                            print("=" * 55 + "\n")
-                            
-                            # 관제실로 알림 전송 (MQTT)
-                            sensor_info = f"온도 {data['temperature']}°C / 습도 {data['humidity']}%"
-                            send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
-                            
-                            # 현장 스피커 비상 방송 (TTS)
-                            print("   📢 [음성 경보] TTS 비상 피난 방송을 시작합니다...")
-                            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
-                            
-                        except Exception as e:
-                            print(f"\n❌ RAG 생성 실패: {e}\n")
-                        
-                        alarm_handled = True
-                else:
-                    alarm_handled = False
-                    
+                print(f"  > [센서] 온도: {temp_data['temperature']}°C / 습도: {temp_data['humidity']}% | 가스: {gas_val} | 연기: {smoke_val}")
+                
+                # 1. 가스 감지
+                if is_gas_detected(gas_val):
+                    if not alarm_handled["gas"]:
+                        trigger_alarm(3, f"유독 가스 감지! 수치: {gas_val}")
+                        print(f"\n🚨 [위험 감지] 가스 유출 의심 (수치 {gas_val})! RAG 시스템 개입 시작...")
+                        prompt = f"경고: 공장 내에 가스 누출이 감지되었습니다. (가스 수치: {gas_val}). 산업용 공장 가스 누출 비상 대응 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
+                        self._trigger_rag_and_tts(prompt, f"가스 농도 {gas_val}")
+                        alarm_handled["gas"] = True
+                else: alarm_handled["gas"] = False
+                
+                # 2. 연기 감지
+                if is_smoke_detected(smoke_val):
+                    if not alarm_handled["smoke"]:
+                        trigger_alarm(3, f"짙은 연기 감지! 수치: {smoke_val}")
+                        print(f"\n🚨 [위험 감지] 연기 감지 (수치 {smoke_val})! RAG 시스템 개입 시작...")
+                        prompt = f"경고: 공장 내 짙은 연기가 발생하고 있습니다. (연기 수치: {smoke_val}). 산업용 공장 연기 발생 비상 매뉴얼에 따른 즉각적인 대응 요령은 무엇입니까?"
+                        self._trigger_rag_and_tts(prompt, f"연기 농도 {smoke_val}")
+                        alarm_handled["smoke"] = True
+                else: alarm_handled["smoke"] = False
+
+                # 3. 온도 감지 (화재)
+                if is_temperature_abnormal(temp_data):
+                    if not alarm_handled["temperature"]:
+                        trigger_alarm(3, f"고온 감지! 수치: {temp_data['temperature']}°C")
+                        print(f"\n🚨 [위험 감지] 고온 감지 (수치 {temp_data['temperature']}°C)! RAG 시스템 개입 시작...")
+                        prompt = f"경고: 공장 전기/기계실의 온도가 {temp_data['temperature']}도로 화재가 의심됩니다. 산업용 화재 비상 대응 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
+                        self._trigger_rag_and_tts(prompt, f"온도 {temp_data['temperature']}°C")
+                        alarm_handled["temperature"] = True
+                else: alarm_handled["temperature"] = False
+
                 time.sleep(3)
 
         self._monitor_running = True
@@ -161,8 +182,8 @@ class EdgeSaver:
         print("       - [엔터]를 치면 음성 인식을 시작합니다.")
         print("       - 종료하려면 'q' 또는 'exit'를 입력하세요.\n")
 
-        # 백그라운드 온도 감시 스레드 시작 (사용자 요청으로 임시 중단)
-        # self.start_sensor_monitoring()
+        # 백그라운드 센서(온도, 가스, 연기) 감시 스레드 시작
+        self.start_sensor_monitoring()
 
         while True:
             try:

@@ -9,7 +9,7 @@ import random
 import config
 
 
-def read_smoke_level(simulate=True):
+def read_smoke_level(simulate=False):
     """
     연기 센서 값을 읽어옵니다.
 
@@ -18,17 +18,25 @@ def read_smoke_level(simulate=True):
 
     Returns:
         int: 연기 농도 (아날로그 0~1023)
-
-    TODO (재황님):
-        Phase 3에서 실제 MQ-2 센서 + MCP3008 ADC 연동
-        - spidev 또는 gpiozero 라이브러리 사용
-        - MCP3008 채널 0번에서 아날로그 값 읽기
     """
     if simulate:
         return random.randint(50, 150)  # 평상시 범위
 
-    # TODO: 실제 GPIO 코드
-    raise NotImplementedError("GPIO 연동은 라즈베리파이에서 구현 예정")
+    try:
+        from gpiozero import MCP3008
+    except ImportError:
+        print("⚠️ [경고] gpiozero 라이브러리가 없습니다.")
+        return read_smoke_level(simulate=True)
+
+    try:
+        # MCP3008 채널 0번에서 아날로그 값 읽기
+        adc = MCP3008(channel=0)
+        value = int(adc.value * 1023)
+        adc.close()
+        return value
+    except Exception as e:
+        print(f"❌ [오류] 연기 센서에서 값을 읽어오지 못했습니다: {e}")
+        return read_smoke_level(simulate=True)
 
 
 def is_smoke_detected(value=None):
