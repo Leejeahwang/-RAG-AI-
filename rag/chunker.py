@@ -123,19 +123,18 @@ def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
         if len(body_content) < 20:
             continue
             
-        # 중복 문장 제거 (자연어 특성상 완벽하진 않지만 대략적인 문맥 중복 제거)
-        # 30자 이상의 긴 문장이 이전에 등장했다면 해당 청크에서 제거 시도
-        filtered_lines = []
-        for line in content_lines:
-            s_line = line.strip()
-            if len(s_line) > 30 and s_line in seen_sentences:
-                continue
-            if len(s_line) > 30:
-                seen_sentences.add(s_line)
-            filtered_lines.append(line)
+        # 중복 문장 제거 로직 비활성화 (복구된 무결성 보존을 위해)
+        # filtered_lines = []
+        # for line in content_lines:
+        #     s_line = line.strip()
+        #     if len(s_line) > 30 and s_line in seen_sentences:
+        #         continue
+        #     if len(s_line) > 30:
+        #         seen_sentences.add(s_line)
+        #     filtered_lines.append(line)
         
-        cleaned_text = "\n".join(filtered_lines).strip()
-        if len(cleaned_text.replace('#', '').strip()) < 20:
+        cleaned_text = "\n".join(content_lines).strip()
+        if len(cleaned_text.replace('#', '').strip()) < 10: # 최소 길이 완화
             continue
 
         if len(cleaned_text) > chunk_size:
@@ -164,10 +163,10 @@ def is_useful_chunk(text):
     if len(text.strip()) < 60:
         return False
         
-    # 2. 특수문자 비중 검사 (목차나 기호 중심 페이지 제거)
+    # 2. 특수문자 비중 검사 (보수적 적용: 안전 수칙은 불렛포인트가 많음)
     total_len = len(text)
     alnum_len = len(re.findall(r'[가-힣a-zA-Z0-9]', text))
-    if total_len > 0 and (alnum_len / total_len) < 0.6:  # 글자 비중이 60% 미만이면 노이즈로 간주
+    if total_len > 0 and (alnum_len / total_len) < 0.4:  # 0.6 -> 0.4로 대폭 완화
         return False
         
     # 3. 금지 키워드 검사 (발행처, 저작권, 연락처 정보 등)
