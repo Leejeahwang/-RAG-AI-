@@ -194,34 +194,31 @@ def sanitize_content_with_ai(text, filename, model=LLM_MODEL_FOR_CLEANING):
     # 너무 짧은 텍스트는 정제하지 않음
     if len(text) < 100: return text
 
-    # 청크 크기를 줄여 타임아웃 방지 및 처리 속도 향상
-    chunk_size = 1200 
-    text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    # 텍스트를 적절한 크기로 분할하여 AI 정제 (Sliding Window 적용으로 문맥 보존)
+    window_size = 4000
+    overlap = 500
+    text_chunks = []
+    for i in range(0, len(text), window_size - overlap):
+        text_chunks.append(text[i:i + window_size])
+        if i + window_size >= len(text):
+            break
+    
     processed_text = []
 
     print(f"    [AI 매뉴얼 고도화] {len(text_chunks)}개 블록 처리 중... (파일: {filename})")
     
     for idx, chunk in enumerate(text_chunks):
         prompt = f"""
-        당신은 문서 정제 및 데이터 구조화 전문가입니다. 제공된 텍스트는 안전 매뉴얼에서 추출된 데이터입니다.
-        이 데이터를 RAG(검색 증강 생성) 시스템이 답변을 생성하는 데 최적화된 형태로 재구성하세요.
+        당신은 문서 정제 전문가입니다. 아래 텍스트를 마크다운 형식으로 재구성하세요.
+        
+        [지침]
+        1. 100% 전사: 모든 안전 수칙, 대응 절차, 수치를 생략하거나 요약하지 말고 그대로 옮기세요.
+        2. 구조화: 핵심 제목은 '#', 소주제는 '##'을 사용하세요.
+        3. 가독성: 흩어진 글자를 붙이고 맞춤법을 교정하세요. 행동 지침은 '*' 불렛포인트를 사용하세요.
+        4. 순수 본문 출력: AI의 코멘트나 서론/결론 없이 오직 정제된 본문만 출력하세요.
 
-        [수행 미션]
-        1. **중복 제거**: 반복되는 제목, 목차(Contents) 항목, 페이지마다 나오는 로고 텍스트는 즉시 삭제하세요.
-        2. **서론/결론 배제**: "문서 정제 전문가로서...", "원본 데이터가 손상되어...", "재구성했습니다" 등 AI의 코멘트나 설명은 **절대** 포함하지 마세요.
-        3. **순수 본문 출력**: 오직 정제된 본문 마크다운만 출력하십시오. 인사말이나 맺음말은 노이즈입니다.
-        4. **문장 정규화**: 흩어진 글자를 붙이고, 맞춤법과 띄어쓰기를 완벽하게 교정하세요.
-        5. **구조화**: 핵심 제목은 '#'로, 소주제는 '##'로 표시하여 계층 구조를 만드세요.
-        4. **가독성**: 긴 문장은 명확하게 나누고, 행동 지침은 '*' 불렛포인트를 사용하여 설명문 형태로 다듬으세요.
-        5. **내용 유지**: 수치(예: 119, 4분), 대응 절차, 금지 사항 등 기술적 안전 정보는 **절대로** 생략하거나 변경하지 마세요.
-
-        [원본 파일명]
-        {filename}
-
-        [처리할 데이터 ({idx+1}/{len(text_chunks)})]
+        [데이터]
         {chunk}
-
-        [정제된 최종 마크다운 결과물]
         """
         
         success = False
@@ -234,9 +231,10 @@ def sanitize_content_with_ai(text, filename, model=LLM_MODEL_FOR_CLEANING):
                         "prompt": prompt,
                         "stream": False,
                         "options": {
-                            "temperature": 0.1, 
-                            "num_predict": 2000, 
-                            "top_p": 0.9
+                            "temperature": 0.1,
+                            "top_p": 0.9,
+                            "num_predict": 4096,
+                            "stop": ["---", "제공하신", "원본 데이터"]
                         }
                     },
                     timeout=180 # 3분 타임아웃

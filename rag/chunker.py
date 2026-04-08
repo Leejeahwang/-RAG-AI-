@@ -112,6 +112,8 @@ def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
 
     # 너무 긴 청크는 재귀적으로 분할 (글자 수 기준)
     final_chunks = []
+    seen_sentences = set() # 동일 문서 내 중복 문장 방지 (Sliding Window 대응)
+    
     for item in chunks:
         # 본문 알맹이만 추출 (헤더 제외)
         content_lines = item["text"].split("\n")
@@ -120,10 +122,25 @@ def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
         # 알맹이가 너무 짧은(20자 미만) '껍데기 제목 청크'는 버림
         if len(body_content) < 20:
             continue
+            
+        # 중복 문장 제거 (자연어 특성상 완벽하진 않지만 대략적인 문맥 중복 제거)
+        # 30자 이상의 긴 문장이 이전에 등장했다면 해당 청크에서 제거 시도
+        filtered_lines = []
+        for line in content_lines:
+            s_line = line.strip()
+            if len(s_line) > 30 and s_line in seen_sentences:
+                continue
+            if len(s_line) > 30:
+                seen_sentences.add(s_line)
+            filtered_lines.append(line)
+        
+        cleaned_text = "\n".join(filtered_lines).strip()
+        if len(cleaned_text.replace('#', '').strip()) < 20:
+            continue
 
-        if len(item["text"]) > chunk_size:
+        if len(cleaned_text) > chunk_size:
             # 보수적으로 문장 단위 분할 시도
-            sub_parts = re.split(r'(?<=\. )', item["text"])
+            sub_parts = re.split(r'(?<=\. )', cleaned_text)
             temp_sub = ""
             for p in sub_parts:
                 if len(temp_sub) + len(p) > chunk_size:
@@ -134,7 +151,7 @@ def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
             if temp_sub:
                 final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{temp_sub.strip()}")
         else:
-            final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{item['text']}")
+            final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{cleaned_text}")
             
     return final_chunks
 
