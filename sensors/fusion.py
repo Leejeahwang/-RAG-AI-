@@ -36,17 +36,19 @@ def calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected_by_camera=
 
     count = len(triggered_sensors)
 
-    # 위험도 등급 산정
+    # 위험도 등급 산정 (교차 검증)
     if count == 0 and not fire_detected_by_camera:
         level = 0
     elif count == 1 and not fire_detected_by_camera:
-        level = 1  # 주의
-    elif count == 1 and fire_detected_by_camera:
-        level = 3  # 위험 (센서 1개 + 카메라 확인)
+        level = 1  # 주의 (센서 1개 단독)
+    elif count == 0 and fire_detected_by_camera:
+        level = 2  # 경고 (카메라 단독 감지 - 센서 교차 검증 대기)
     elif count >= 2 and not fire_detected_by_camera:
-        level = 2  # 경고
+        level = 3  # 위험 (센서 복합 감지)
+    elif count == 1 and fire_detected_by_camera:
+        level = 4  # 긴급 (카메라 + 센서 1개 = 진짜 화재 확정!)
     elif count >= 2 and fire_detected_by_camera:
-        level = 4  # 긴급
+        level = 5  # 재난 (카메라 + 다중 센서 = 심각한 화재 확정!)
     else:
         level = 1
 

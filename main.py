@@ -17,7 +17,10 @@ import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import cv2
 import config
+from vision import cctv_service, fire_detector
+from sensors import fusion
 from sensors.temperature import read_temperature, is_temperature_abnormal
 from sensors.smoke import read_smoke_level, is_smoke_detected
 from sensors.gas import read_gas_level, is_gas_detected
@@ -120,46 +123,49 @@ class EdgeSaver:
 
     def start_sensor_monitoring(self):
         """백그라운드에서 센서 데이터를 주기적으로 검사합니다."""
+        
+        # 0. 백그라운드 카메라 수집 스레드 가동
+        if not cctv_service.camera_running:
+            cctv_service.camera_running = True
+        threading.Thread(target=cctv_service.camera_worker_thread, daemon=True).start()
+
         def monitor():
-            print("[모니터링] 🌡️ 복합 센서(온도, 가스, 연기) 백그라운드 감시 시작 (3초 주기)...")
-            alarm_handled = {"temperature": False, "gas": False, "smoke": False}
+            print("[모니터링] 🌡️ 복합 센서 + 📷 카메라(Vision AI) 교차 감시 시작 (3초 주기)...")
+            alarm_handled = False
+            
             while self._monitor_running:
+                # 1. 센서 데이터 및 프레임 획득
                 temp_data = read_temperature(simulate=True)
                 gas_val = read_gas_level(simulate=True)
                 smoke_val = read_smoke_level(simulate=True)
+                frame = cctv_service.latest_frame
                 
-                print(f"  > [센서] 온도: {temp_data['temperature']}°C / 습도: {temp_data['humidity']}% | 가스: {gas_val} | 연기: {smoke_val}")
+                fire_detected = False
+                if frame is not None:
+                    tmp_path = os.path.join(cctv_service.CAPTURE_DIR, "live_temp_main.jpg")
+                    if not os.path.exists(cctv_service.CAPTURE_DIR):
+                        os.makedirs(cctv_service.CAPTURE_DIR)
+                    cv2.imwrite(tmp_path, frame)
+                    analysis = fire_detector.detect_fire(tmp_path)
+                    fire_detected = analysis.get('fire_detected', False)
                 
-                # 1. 가스 감지
-                if is_gas_detected(gas_val):
-                    if not alarm_handled["gas"]:
-                        trigger_alarm(3, f"유독 가스 감지! 수치: {gas_val}")
-                        print(f"\n🚨 [위험 감지] 가스 유출 의심 (수치 {gas_val})! RAG 시스템 개입 시작...")
-                        prompt = f"경고: 공장 내에 가스 누출이 감지되었습니다. (가스 수치: {gas_val}). 산업용 공장 가스 누출 비상 대응 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
-                        self._trigger_rag_and_tts(prompt, f"가스 농도 {gas_val}")
-                        alarm_handled["gas"] = True
-                else: alarm_handled["gas"] = False
+                print(f"  > [센서] 온도: {temp_data['temperature']}°C | 가스: {gas_val} | 연기: {smoke_val} | 📷화재: {'O' if fire_detected else 'X'}")
                 
-                # 2. 연기 감지
-                if is_smoke_detected(smoke_val):
-                    if not alarm_handled["smoke"]:
-                        trigger_alarm(3, f"짙은 연기 감지! 수치: {smoke_val}")
-                        print(f"\n🚨 [위험 감지] 연기 감지 (수치 {smoke_val})! RAG 시스템 개입 시작...")
-                        prompt = f"경고: 공장 내 짙은 연기가 발생하고 있습니다. (연기 수치: {smoke_val}). 산업용 공장 연기 발생 비상 매뉴얼에 따른 즉각적인 대응 요령은 무엇입니까?"
-                        self._trigger_rag_and_tts(prompt, f"연기 농도 {smoke_val}")
-                        alarm_handled["smoke"] = True
-                else: alarm_handled["smoke"] = False
-
-                # 3. 온도 감지 (화재)
-                if is_temperature_abnormal(temp_data):
-                    if not alarm_handled["temperature"]:
-                        trigger_alarm(3, f"고온 감지! 수치: {temp_data['temperature']}°C")
-                        print(f"\n🚨 [위험 감지] 고온 감지 (수치 {temp_data['temperature']}°C)! RAG 시스템 개입 시작...")
-                        prompt = f"경고: 공장 전기/기계실의 온도가 {temp_data['temperature']}도로 화재가 의심됩니다. 산업용 화재 비상 대응 매뉴얼에 따른 즉각적인 초기 대응 요령은 무엇입니까?"
-                        self._trigger_rag_and_tts(prompt, f"온도 {temp_data['temperature']}°C")
-                        alarm_handled["temperature"] = True
-                else: alarm_handled["temperature"] = False
-
+                # 2. 통합 위험도 교차 검증 평가
+                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
+                level = risk['level']
+                
+                # 3. 긴급 상황 발동 (Level 4 이상)
+                if level >= 4:
+                    if not alarm_handled:
+                        trigger_alarm(level, f"[SYSTEM] 융합 재난 감지! (LV.{level} - {risk['details']})")
+                        print(f"\n🚨 [위험 격상] {risk['label'].upper()} 상황 판정! AI 긴급 개입 시작...")
+                        prompt = f"경고: 공장 내 센서와 CCTV 융합 교차 검증 결과, 심각한 화재 재난 위험(LV.{level})이 확정 감지되었습니다. (원인: {risk['details']}). 이 위급 상황에 맞는 뼈대가 되는 핵심 대피 지시 사항을 방송용으로 가장 짧고 강하게 생성해줘."
+                        self._trigger_rag_and_tts(prompt, risk['details'])
+                        alarm_handled = True
+                else: 
+                    alarm_handled = False
+                
                 time.sleep(3)
 
         self._monitor_running = True
@@ -235,6 +241,10 @@ class EdgeSaver:
     def cleanup(self):
         """시스템 종료 시 자원 해제"""
         print("\n[시스템] 자원을 해제하는 중...")
+        try:
+            cctv_service.camera_running = False
+        except:
+            pass
         try:
             if self.stt_stream:
                 self.stt_stream.stop_stream()
