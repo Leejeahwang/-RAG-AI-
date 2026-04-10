@@ -38,7 +38,8 @@ def generate_ai_title(text, filename, model="gemma4:e2b"):
                 "model": model,
                 "prompt": prompt,
                 "stream": False
-            }
+            },
+            timeout=60
         )
         ai_title = response.json().get("response", "").strip()
         # 불필요한 따옴표나 마크다운 기호 제거
@@ -48,109 +49,120 @@ def generate_ai_title(text, filename, model="gemma4:e2b"):
         print(f"  [오류] AI 타이틀 추출 실패 ({filename}): {e}")
         return filename
 
-# --- 2. 마크다운 구조 인식형 스마트 분할기 (Structural Chunking) ---
-def markdown_aware_chunking(text, title, chunk_size=800, overlap=150):
+# --- 1.5 AI 기반 문맥 분할 지점 식별 (Semantic Splitting) ---
+def get_semantic_splits(text, model="qwen3.5:4b"):
     """
-    마크다운 헤더(#, ##, ###)를 인식하여 의미 단위로 분할합니다.
-    각 청크 상단에 문서 구조(Breadcrumbs)를 삽입하여 문맥을 보존합니다.
+    AI를 사용하여 텍스트 내에서 문맥이 전환되는 지점을 식별하고 [SPLIT] 마커를 삽입합니다.
     """
-    # 헤더 기준으로 분할 (헤더 자체도 보존)
+    if len(text) < 400: # 너무 짧으면 굳이 AI를 쓰지 않음
+        return text
+
+    prompt = f"""
+당신은 재난 안전 가이드 편집자입니다. 아래 텍스트에서 주제가 바뀌거나 다른 유형의 행동 요령이 시작되는 지점을 찾아내어 '[SPLIT]' 마커를 삽입하세요.
+
+### 규칙:
+1. 단순히 문장이 끝난다고 나누지 마세요. 전체적인 **주제나 카테고리(예: 예방법 -> 행동요령 -> 사후지도)**가 바뀌는 핵심 지점에만 '[SPLIT]'을 넣으세요.
+2. 관련 있는 행동 지침들은 하나의 덩어리로 유지하여 문맥을 보존하세요.
+3. 각 덩어리가 약 400~600자 내외가 되도록 흐름을 조절하세요.
+4. 텍스트를 수정하거나 요약하지 말고, 원본 텍스트 사이에 '[SPLIT]' 마커만 삽입하세요.
+
+### 원본 텍스트:
+{text}
+"""
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=90
+        )
+        final_result = response.json().get("response", "").strip()
+        
+        # --- [추가] AI 거절 멘트 검역 (Safety Guard) ---
+        blacklist = [
+            "제공해주신 텍스트", "내용이 포함되어 있지", "정제할 수 없습니다", 
+            "가이드 내용을 제공해 주시기 바랍니다", "텍스트가 없습니다"
+        ]
+        if any(bad in final_result for bad in blacklist):
+            return "" # 빈 문자열 반환 (나중에 폐기됨)
+            
+        return final_result
+    except Exception:
+        return text
+
+# --- 2. 마크다운 구조 인식형 스마트 분할기 (Structural + Semantic Chunking) ---
+def markdown_aware_chunking(text, title, chunk_size=600, overlap=100):
+    """
+    마크다운 헤더와 AI 문맥 분석을 결합하여 지능적으로 분할합니다.
+    """
+    # 1. 헤더 기준으로 대분류
     sections = re.split(r'(^#{1,4} .+)', text, flags=re.MULTILINE)
     
-    chunks = []
+    pre_chunks = []
     current_breadcrumbs = [title]
     current_content = ""
     
-    # 헤더 정규화: '### # 1.' -> '### 1.'
     def normalize_header(h):
         return re.sub(r'^(#+)\s*#+\s*', r'\1 ', h).strip()
 
     for part in sections:
         if not part.strip(): continue
-        
-        # 헤더 발견 시
         if part.startswith('#'):
             normalized_part = normalize_header(part)
-            # 레벨 계산 (### -> 3)
-            level_match = re.match(r'^(#+)', normalized_part)
-            level = len(level_match.group()) if level_match else 1
-            
-            # 브레드크럼 갱신 (레벨에 맞춰 하위 스택 조정)
+            level = len(re.match(r'^(#+)', normalized_part).group())
             header_text = normalized_part.lstrip('#').strip()
             
-            # 이전 내용 저장 후 초기화 (내용이 있을 경우)
             if current_content.strip():
-                breadcrumb_str = " > ".join(current_breadcrumbs)
-                chunks.append({
-                    "breadcrumb": breadcrumb_str,
-                    "text": current_content.strip()
-                })
+                pre_chunks.append({"breadcrumb": " > ".join(current_breadcrumbs), "text": current_content.strip()})
             
-            # 레벨에 따라 브레드크럼 스택 조정
-            if level == 1:
-                current_breadcrumbs = [title, header_text]
+            if level == 1: current_breadcrumbs = [title, header_text]
             else:
                 current_breadcrumbs = current_breadcrumbs[:level]
-                while len(current_breadcrumbs) < level:
-                    current_breadcrumbs.append("...") # 중간 단계 누락 시 채우기
-                if len(current_breadcrumbs) == level:
-                    current_breadcrumbs.append(header_text)
-                else:
-                    current_breadcrumbs[level] = header_text
-            
+                while len(current_breadcrumbs) < level: current_breadcrumbs.append("...")
+                if len(current_breadcrumbs) == level: current_breadcrumbs.append(header_text)
+                else: current_breadcrumbs[level] = header_text
             current_content = normalized_part + "\n"
         else:
             current_content += part
             
-    # 마지막 남은 부분 처리
     if current_content.strip():
-        breadcrumb_str = " > ".join(current_breadcrumbs)
-        chunks.append({
-            "breadcrumb": breadcrumb_str,
-            "text": current_content.strip()
-        })
+        pre_chunks.append({"breadcrumb": " > ".join(current_breadcrumbs), "text": current_content.strip()})
 
-    # 너무 긴 청크는 재귀적으로 분할 (글자 수 기준)
+    # 2. 대분류된 섹션 내에서 AI 시맨틱 분할 수행
     final_chunks = []
-    seen_sentences = set() # 동일 문서 내 중복 문장 방지 (Sliding Window 대응)
-    
-    for item in chunks:
-        # 본문 알맹이만 추출 (헤더 제외)
-        content_lines = item["text"].split("\n")
-        body_content = "\n".join([line for line in content_lines if not line.strip().startswith('#')]).strip()
+    for item in pre_chunks:
+        # 본문 알맹이 추출
+        lines = item["text"].split("\n")
+        header = lines[0] if lines[0].startswith('#') else ""
+        body = "\n".join(lines[1:]) if header else item["text"]
         
-        # 알맹이가 너무 짧은(20자 미만) '껍데기 제목 청크'는 버림
-        if len(body_content) < 20:
-            continue
-            
-        # 중복 문장 제거 로직 비활성화 (복구된 무결성 보존을 위해)
-        # filtered_lines = []
-        # for line in content_lines:
-        #     s_line = line.strip()
-        #     if len(s_line) > 30 and s_line in seen_sentences:
-        #         continue
-        #     if len(s_line) > 30:
-        #         seen_sentences.add(s_line)
-        #     filtered_lines.append(line)
-        
-        cleaned_text = "\n".join(content_lines).strip()
-        if len(cleaned_text.replace('#', '').strip()) < 10: # 최소 길이 완화
-            continue
-
-        if len(cleaned_text) > chunk_size:
-            # 보수적으로 문장 단위 분할 시도
-            sub_parts = re.split(r'(?<=\. )', cleaned_text)
-            temp_sub = ""
-            for p in sub_parts:
-                if len(temp_sub) + len(p) > chunk_size:
-                    final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{temp_sub.strip()}")
-                    temp_sub = p
-                else:
-                    temp_sub += p
-            if temp_sub:
-                final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{temp_sub.strip()}")
+        if len(body) > chunk_size * 0.8:
+            print(f"    [AI 시맨틱 분할] {item['breadcrumb']} 처리 중...")
+            semantic_text = get_semantic_splits(body)
+            # AI가 삽입한 [SPLIT] 마커 기준으로 쪼갬
+            sub_parts = semantic_text.split("[SPLIT]")
         else:
-            final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{cleaned_text}")
+            sub_parts = [body]
+
+        # 3. 물리적 상한선(Safety Guard) 적용
+        for p in sub_parts:
+            p = p.strip()
+            if not p or len(p) < 20: continue
+            
+            # 여전히 너무 길면 강제 분할 (단, 표 구조(|)가 중간에 있으면 자르지 않음)
+            if len(p) > chunk_size and "|" not in p:
+                force_parts = re.split(r'(\n\n|\. )', p)
+                tmp = ""
+                for fp in force_parts:
+                    if len(tmp) + len(fp) > chunk_size:
+                        final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{header}\n{tmp.strip()}".strip())
+                        tmp = fp
+                    else:
+                        tmp += fp
+                if tmp:
+                    final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{header}\n{tmp.strip()}".strip())
+            else:
+                # 표가 포함되어 있거나 길이가 적절하면 그대로 추가
+                final_chunks.append(f"### [위치: {item['breadcrumb']}]\n\n{header}\n{p.strip()}".strip())
             
     return final_chunks
 
@@ -166,11 +178,10 @@ def is_useful_chunk(text):
     # 2. 특수문자 비중 검사 (보수적 적용: 안전 수칙은 불렛포인트가 많음)
     total_len = len(text)
     alnum_len = len(re.findall(r'[가-힣a-zA-Z0-9]', text))
-    if total_len > 0 and (alnum_len / total_len) < 0.4:  # 0.6 -> 0.4로 대폭 완화
+    if total_len > 0 and (alnum_len / total_len) < 0.4:
         return False
         
     # 3. 금지 키워드 검사 (발행처, 저작권, 연락처 정보 등)
-    # RAG 검색 시 행동 요령보다는 메타데이터가 검색되는 것을 방지
     noise_keywords = [
         '발행처', '발행일', '발행인', '내용감수', '편집디자인', 
         '저작권', '무단 전재', '전화번호', '팩스번호', '이메일',
@@ -181,11 +192,18 @@ def is_useful_chunk(text):
     for kw in noise_keywords:
         if kw in text:
             match_count += 1
-            
-    # 노이즈 키워드가 2개 이상 발견되면 필터링
     if match_count >= 2:
         return False
         
+    # 4. 외계어(Garbage Hangul) 검사
+    # 현대 한국어 문서에서 거의 쓰이지 않는 깨진 글자들(뀀, 엀, 탅 등)이 많은지 확인
+    suspicious_chars = re.findall(r'[가-힣]', text)
+    if suspicious_chars:
+        garbage_pattern = r'[뀀엀탅탂랮랭킴씀좻업엉곀엇퉧업퉱뒴뒇뒇듇뒼곓럂톳쀄겳쐀얭탇귗짌쀀겼퀀츀봀났탆냀킻찀럃듈듈]'
+        garbage_matches = re.findall(garbage_pattern, text)
+        if len(garbage_matches) / len(suspicious_chars) > 0.05: # 외계어 비중 5% 초과 시 제거
+            return False
+
     return True
 
 # --- 3. 메인 프로세스 ---

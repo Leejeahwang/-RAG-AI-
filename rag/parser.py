@@ -92,8 +92,9 @@ def extract_text_with_hwp(file_path):
             # UTF-16LE 인코딩으로 변환 (HWP 기본 텍스트 인코딩)
             try:
                 decoded = data.decode('utf-16le', errors='ignore')
-                # 바이너리 값인 태그들 제거 (HWP 제어 문자들)
-                cleaned = re.sub(r'[\x00-\x1f]', ' ', decoded)
+                # HWP 제어 문자 및 불필요한 바이너리 태그 제거 보강
+                cleaned = re.sub(r'[\x00-\x1f]', '', decoded) # 제어문자 제거
+                cleaned = re.sub(r'[\x7f-\xff]', '', cleaned) # 확장 아스키 노이즈 제거
                 full_text.append(cleaned)
             except Exception as e:
                 print(f"      [경고] {section_node} 디코딩 실패: {e}")
@@ -106,185 +107,176 @@ def extract_text_with_hwp(file_path):
         return None
 
 def extract_text_with_pdf(file_path):
+    """
+    좌표 기반 정밀 전사 엔진: 글자의 X, Y 위치를 분석하여 표 구조를 복원하고,
+    손상된 영역(판독불가)만 고해상도 OCR로 타겟 스캔합니다.
+    """
     try:
         doc = fitz.open(file_path)
-        full_text = ""
+        full_text = []
+        
         for page in doc:
-            full_text += page.get_text()
+            # 1. 좌표 기반 데이터 획득
+            page_dict = page.get_text("dict")
+            lines_data = []
+            
+            for b in page_dict["blocks"]:
+                if "lines" in b:
+                    for l in b["lines"]:
+                        # 라인의 Y좌표(중심값)를 기준으로 그룹화하기 위해 저장
+                        y_pos = (l["bbox"][1] + l["bbox"][3]) / 2
+                        current_line_text = []
+                        for s in l["spans"]:
+                            text = s["text"].strip()
+                            if not text: continue
+                            
+                            # [판독불가] 의심 구간 탐지: 특수문자가 너무 많거나 깨진 패턴
+                            if re.search(r'[^\x00-\x7F가-힣\s]{2,}', text) or len(re.findall(r'[?.!@#$%^&*()]', text)) > len(text)*0.3:
+                                # 해당 구역만 고해상도 레이저 OCR 가동
+                                bbox = s["bbox"]
+                                text = laser_ocr_scan(page, bbox)
+                            
+                            current_line_text.append(text)
+                        
+                        if current_line_text:
+                            lines_data.append({"y": y_pos, "text": " ".join(current_line_text)})
+            
+            # 2. Y좌표 순으로 정렬 후 같은 행(오차 3pt 이내)끼리 병합
+            lines_data.sort(key=lambda x: x["y"])
+            merged_page_text = []
+            if lines_data:
+                current_row = lines_data[0]["text"]
+                last_y = lines_data[0]["y"]
+                
+                for i in range(1, len(lines_data)):
+                    if abs(lines_data[i]["y"] - last_y) < 5: # 5pt로 상향하여 병합율 극대화
+                        current_row += " " + lines_data[i]["text"]
+                    else:
+                        merged_page_text.append(current_row)
+                        current_row = lines_data[i]["text"]
+                        last_y = lines_data[i]["y"]
+                merged_page_text.append(current_row)
+            
+            full_text.append("\n".join(merged_page_text))
+            
         doc.close()
         
-        # 텍스트가 너무 적거나 형식이 깨진 경우 이미지 기반 PDF로 간주하고 OCR 시도
-        if len(full_text.strip()) < 100:
-            print(f"    [알림] '{os.path.basename(file_path)}'에서 디지털 텍스트가 부족하거나 형식이 깨졌습니다. OCR을 시도합니다.")
+        # --- [추가] 텍스트 밀도 자가 진단 ---
+        final_raw_text = "\n\n--- PAGE BREAK ---\n\n".join(full_text)
+        # 유의미한 글자수 체크 (공백, 기호 제외)
+        meaningful_chars = re.sub(r'[\s\-]+', '', final_raw_text)
+        
+        if len(meaningful_chars) < 50:
+            print(f"    [품질 경고] 텍스트 밀도 부족({len(meaningful_chars)}자). OCR 강제 모드 전환...")
             return extract_text_with_ocr(file_path)
             
-        return full_text
+        return final_raw_text
+        
     except Exception as e:
-        print(f"    [PDF 오류] '{os.path.basename(file_path)}' 분석 실패: {e}. OCR로 전환합니다.")
+        print(f"    [PDF 정밀분석 오류] {e}. OCR 전체 스캔으로 전환합니다.")
         return extract_text_with_ocr(file_path)
 
 def extract_text_with_ocr(file_path):
+    """PDF 또는 이미지를 전체 페이지 OCR 스캔하여 텍스트를 추출합니다."""
     try:
         reader = get_ocr_reader()
-        ext = os.path.splitext(file_path)[1].lower()
         full_text = []
-
+        
+        ext = os.path.splitext(file_path)[1].lower()
         if ext == '.pdf':
             doc = fitz.open(file_path)
-            print(f"    [OCR] PDF {len(doc)}페이지 변환 및 분석 중...")
-            for i, page in enumerate(doc):
-                # 고해상도 이미지 변환 (300 DPI)
+            for page in doc:
+                # 고해상도로 렌더링 (300 DPI 수준)
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                img_data = pix.tobytes("png")
-                
-                # EasyOCR은 numpy array 또는 파일 경로를 받음
-                img = Image.open(io.BytesIO(img_data))
-                img_np = np.array(img)
-                
-                results = reader.readtext(img_np, detail=0)
-                page_text = " ".join(results)
-                full_text.append(page_text)
-                print(f"      - {i+1}페이지 완료")
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                results = reader.readtext(np.array(img), detail=0)
+                full_text.append("\n".join(results))
             doc.close()
         else:
-            # 일반 이미지 파일 (.png, .jpg 등)
+            # 단일 이미지 파일
             results = reader.readtext(file_path, detail=0)
-            full_text.append(" ".join(results))
+            full_text.append("\n".join(results))
             
-        return "\n\n".join(full_text)
+        return "\n\n--- PAGE BREAK ---\n\n".join(full_text)
     except Exception as e:
-        print(f"    [OCR 오류] {e}")
-        return None
+        print(f"    [전체 OCR 오류] {e}")
+        return ""
+
+def laser_ocr_scan(page, bbox):
+    """지정된 영역(bbox)만 고해상도로 도려내어 OCR을 수행합니다."""
+    try:
+        # 3배율(약 216 DPI 이상) 고해상도 렌더링
+        matrix = fitz.Matrix(3, 3)
+        pix = page.get_pixmap(matrix=matrix, clip=bbox)
+        img_data = pix.tobytes("png")
+        img = Image.open(io.BytesIO(img_data))
+        
+        reader = get_ocr_reader()
+        results = reader.readtext(np.array(img), detail=0)
+        return " ".join(results) if results else "[판독불가]"
+    except:
+        return "[판독불가]"
 
 # --- 2. 텍스트 정제 함수 ---
 def clean_noise(text):
     if not text: return ""
     
     # 1. 제어 문자 및 비가시 문자 완벽 제거 (Whitelist 방식)
-    # 한글, 영문, 숫자, 공백, 주요 문장 부호(\n 포함)만 남김
-    safe_pattern = re.compile(r'[^가-힣a-zA-Z0-9\s.,!?()\[\]\-"\':;·•➊-➓▶●■※○-◎◇◈\n\-_]')
-    text = safe_pattern.sub('', text)
-    
-    # 2. 비정상적인 공백 조합 정규화 (예: "화 재" -> "화재")
-    # 두 글자 사이의 단일 공백이 한글인 경우 결합 시도 (heuristic)
-    text = re.sub(r'([가-힣])\s([가-힣])', r'\1\2', text)
-    # 한 번 더 실행하여 3글자 이상도 처리
-    text = re.sub(r'([가-힣])\s([가-힣])', r'\1\2', text)
-
-    # 3. 문서 레이아웃 기호 및 반복 문자 제거 (. . . , ---, ━━━ 등)
-    text = re.sub(r'\.{2,}', ' ', text)
-    text = re.sub(r'·{2,}', ' ', text)
-    text = re.sub(r'-{3,}', ' ', text)
-    text = re.sub(r'={3,}', ' ', text)
-    text = re.sub(r'[━─|｜│]{1,}', ' ', text)
-    
-    # 4. 페이지 번호 단독 행 제거 (예: "\n 12 \n")
+    # 4. 페이지 번호 단독 행 제거 보강
     text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
     
-    # 5. 불필요한 줄바꿈 정리
+    # 5. 불필요한 줄바꿈 및 다중 공백 정리
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # 6. 알려진 환각 단어 및 외계어 블랙리스트 제거 (강력 소독)
+    toxic_hallucinations = [
+        '쌀알', '대꽉츄', '뀀엀', '탅', '듈법', '봀SUM', '눀7AJ', '쀄', '녔', '띲', '먚',
+        '닀', '곽', '쳎', '뙠', '뺣', '푙', '삦', '삪', '껃', '묀', '끨', '슏', '뼀', '푟',
+        '삷', '삩', '꽛', '솭', '붹', '얹', '뒬', '뷅', '탊', '뷆', '듊', '겼', '쎔', '찄', '푴'
+    ]
+    for toxic in toxic_hallucinations:
+        text = text.replace(toxic, '[판독불가]')
+    
+    # 7. 기괴한 한글 조합 (쌀+외계어, 닀+외계어 등) 정규식 소독
+    # '쌀'로 시작하면서 비정상적인 받침이 붙은 경우나 단독 외계어 파편들
+    text = re.sub(r'쌀[가-힣]+', '[판독불가]', text)
+    text = re.sub(r'[가-힣]*[닀곽쳎뙠뺣푙삦삪껃묀끨슏뼀푟삷삩꽛솭붹얹뒬뷅탊뷆듊겼쎔찄푴][가-힣]*', '[판독불가]', text)
+    
+    # 8. 비정상적인 조합 (한글+영문+숫자 혼재된 깨진 바이너리 패턴) 추가 소독
+    # 예: Pt닀B, HmB1B1 등 (길이가 3자 이상이면서 한글과 영숫자가 섞인 경우)
+    noise_pattern = re.compile(r'\b(?=[^ \n]*[가-힣])(?=[^ \n]*[a-zA-Z0-9])[^ \n]{3,}\b')
+    text = noise_pattern.sub('[판독불가]', text)
     
     return text.strip()
 
 # --- 2.2 AI 기반 텍스트 최적화 ---
-def sanitize_content_with_ai(text, filename, model=LLM_MODEL_FOR_CLEANING):
-    if not text: return ""
-    
-    # 너무 짧은 텍스트는 정제하지 않음
-    if len(text) < 100: return text
-
-    # 텍스트를 적절한 크기로 분할하여 AI 정제 (Sliding Window 적용으로 문맥 보존)
-    window_size = 4000
-    overlap = 500
-    text_chunks = []
-    for i in range(0, len(text), window_size - overlap):
-        text_chunks.append(text[i:i + window_size])
-        if i + window_size >= len(text):
-            break
-    
-    processed_text = []
-
-    print(f"    [AI 매뉴얼 고도화] {len(text_chunks)}개 블록 처리 중... (파일: {filename})")
-    
-    for idx, chunk in enumerate(text_chunks):
-        prompt = f"""
-        당신은 '초정밀 텍스트 전사 전문가'입니다. 아래 제공된 [데이터]를 글자 하나 빠짐없이 마크다운으로 옮기세요.
-        
-        [절대 규칙]
-        1. 100% 무조건 전사: 모든 안전 수칙, 대응 절차, 수치, 단어 하나도 생략하거나 요약하지 마세요. 
-        2. 자의적 판단 금지: 데이터가 혼재되어 보이거나 손상되어 보여도 절대 '재구성'하거나 '정리'하지 마세요. 있는 그대로만 출력하세요.
-        3. 변명 금지: "제공해주신 데이터는...", "내용이 손상되어..."와 같은 모든 AI의 메타 코멘트를 '절대' 입력하지 마세요.
-        4. 순수 본문만 출력: 서론, 결론, 인사말 없이 오직 마크다운으로 변환된 본문만 출력하세요. 만약 데이터가 정말 비어있다면 공백만 반환하세요.
-        5. 가독성: OCR 오류로 흩어진 글자가 있다면 문맥에 맞게 한글 단어로만 결합하세요.
-
-        [데이터]
-        {chunk}
-        """
-        
-        success = False
-        for retry in range(3): # 최대 3번 재시도
-            try:
-                response = requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.1,
-                            "top_p": 0.9,
-                            "num_predict": 4096,
-                            "stop": ["---", "제공하신", "원본 데이터"]
-                        }
-                    },
-                    timeout=180 # 3분 타임아웃
-                )
-                cleaned = response.json().get("response", "").strip()
-                
-                if cleaned and len(cleaned) > (len(chunk) * 0.2):
-                    processed_text.append(cleaned)
-                    success = True
-                    break
-                else:
-                    print(f"      [경고] {idx+1}번 블록 결과 미흡, 재시도 중... ({retry+1}/3)")
-            except Exception as e:
-                print(f"      [경고] {idx+1}번 블록 타임아웃/오류, 재시도 중... ({retry+1}/3): {e}")
-        
-        if not success:
-            print(f"      [실패] {idx+1}번 블록 최종 실패. 원본 데이터를 유지합니다.")
-            processed_text.append(chunk)
-
-    return "\n\n".join(processed_text)
-
-def looks_broken(text):
-    if not text: return False
-    total_len = len(text)
-    garbage_len = len(re.findall(r'[^가-힣a-zA-Z0-9\s.,!?()\[\]\-"\':;]', text))
-    return (garbage_len / total_len) > 0.3  # 5% -> 30%로 완화
-
-# --- 2.5 Ollama 기반 필터링 ---
-def is_valuable_manual(text, filename, model=LLM_MODEL_FOR_CLEANING):
-    # --- [건너뜀 방지 1] 파일명 기반 키워드 검사 ---
-    safe_keywords = ['매뉴얼', '요령', '가이드', '지침', '안전', '수칙', '대비']
-    if any(kw in filename for kw in safe_keywords):
-        return True, "FILENAME_KEYWORD_PASS"
-
-    sample_text = text[:1500]
-    # --- [건너뜀 방지 2] 프롬프트 개선: 표지/저작권 정보 언급 ---
-    prompt = f"""
-    당신은 재난 안전 전문 가이드 분류기입니다. 아래 텍스트가 실질적인 '매뉴얼/가이드북'인지 판별하세요.
-    주의: 문서의 앞부분에는 발행처 정보, 저작권, 연락처 등 '표지 정보'가 포함될 수 있으며 이는 정상적인 매뉴얼의 일부입니다.
-    텍스트의 제목이나 맥락이 안전 수칙이나 행동 지침을 담고 있다면 PASS를 출력하세요.
-    단순한 '홍보 포스터', '개인정보 이용약관', 또는 '단순 공지사항'인 경우에만 FILTER를 출력하세요.
-
-    [파일명]
-    {filename}
-    [내용 (문서 앞부분)]
-    {sample_text}
-
-    결과만 출력하세요 (PASS 또는 FILTER):
+def sanitize_content_with_ai(text, cache_path, model="gemma4:e2b"):
     """
+    AI를 사용하여 텍스트의 구조를 복원합니다. 
+    사용자 요청사항 반영: 표 내부 줄바꿈 '한줄'로 병합, 마크다운 헤더 부여.
+    """
+    if not text: return ""
+    if os.path.exists(cache_path):
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    print(f"      [지능형 구조 복원] AI가 표 재조립 및 제목 부여 중...")
+    
+    # 속도를 위해 4,000자씩 청크로 나누어 처리 (컨텍스트 유지를 위해 페이지 단위 권장)
+    prompt = f"""
+당신은 재난 안전 가이드 전문 편집자입니다. 아래 텍스트를 RAG 시스템에 최적화된 마크다운 형식으로 정제하세요.
+
+### 지침:
+1. **표 구조 복원**: 계단식으로 뭉개진 표 데이터를 논리적인 '마크다운 테이블' 또는 '불렛 리스트'로 재구성하세요.
+2. **한 줄 밀착**: 표의 한 칸(셀) 안에서 여러 줄로 나뉜 텍스트는 반드시 **하나의 문장**으로 병합하세요.
+3. **지능형 헤더**: 문서의 파트 구분(예: 구분, 상황, 유형, 행동요령 등)에 마크다운 헤더(#, ##)를 부여하세요.
+4. **불필요한 노이즈 제거**: [판독불가] 단어는 문맥상 유추가 가능하면 수정하고, 불가능하면 삭제하세요.
+5. **밀도 최적화**: 불필요한 빈 줄을 최소화하여 정보 밀도를 높이세요.
+
+### 텍스트:
+{text}
+"""
     try:
         response = requests.post(
             "http://localhost:11434/api/generate",
@@ -292,12 +284,49 @@ def is_valuable_manual(text, filename, model=LLM_MODEL_FOR_CLEANING):
                 "model": model,
                 "prompt": prompt,
                 "stream": False
-            }
+            },
+            timeout=180
+        )
+        final_result = response.json().get("response", "").strip()
+        
+        # --- [추가] AI 거절 멘트 검역 (Safety Guard) ---
+        blacklist = [
+            "제공해주신 텍스트", "내용이 포함되어 있지", "정제할 수 없습니다", 
+            "가이드 내용을 제공해 주시기 바랍니다", "텍스트가 없습니다"
+        ]
+        if any(bad in final_result for bad in blacklist):
+            print(f"      [검역 통과 실패] AI가 내용을 찾지 못함. 해당 구간 폐기.")
+            return "" # 빈 문자열 반환 (나중에 청킹 단계에서 자연스럽게 제외됨)
+
+        # 최종 결과 저장
+        with open(cache_path, "w", encoding="utf-8") as f:
+            f.write(final_result)
+        return final_result
+        
+    except Exception as e:
+        print(f"      [AI 복원 오류] {e}. 정규식 결과로 대체합니다.")
+        return text.strip()
+
+def is_valuable_manual(text, filename, model=LLM_MODEL_FOR_CLEANING):
+    safe_keywords = ['매뉴얼', '요령', '가이드', '지침', '안전', '수칙', '대비']
+    if any(kw in filename for kw in safe_keywords):
+        return True, "FILENAME_KEYWORD_PASS"
+
+    sample_text = text[:1500]
+    prompt = f"""
+    당신은 재난 안전 전문 가이드 분류기입니다. 아래 텍스트가 실질적인 '매뉴얼/가이드북'인지 판별하세요.
+    결과만 출력하세요 (PASS 또는 FILTER):
+    [파일명]: {filename}
+    [내용]: {sample_text}
+    """
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False}
         )
         result = response.json().get("response", "").strip().upper()
         return "PASS" in result, result
-    except Exception as e:
-        print(f"  [오류] Ollama 필터링 실패: {e}")
+    except Exception:
         return True, "SYSTEM_DEFAULT_PASS"
 
 def is_valid_manual(text):
@@ -305,83 +334,71 @@ def is_valid_manual(text):
         return False, "내용 너무 짧음 (<500자)"
     return True, "유효한 길이"
 
-# --- 3. 파서 실행 ---
-print("[정보] 문서 파서 초기화 중...")
+# --- 3. 파서 실행부 (메인 실행 시에만 가동) ---
+if __name__ == "__main__":
+    print("[정보] 문서 파서 초기화 중...")
 
-# 데이터 파일은 data/ 디렉토리, 스크립트는 rag/에 위치
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
 
-file_list = glob.glob(os.path.join(project_root, "data", "raw_documents/*"))
-target_files = {}
+    file_list = glob.glob(os.path.join(project_root, "data", "raw_documents/*"))
+    target_files = {}
 
-for file in file_list:
-    base_name, ext = os.path.splitext(file)
-    ext = ext.lower()
-    if ext not in ['.hwp', '.pdf', '.png', '.jpg', '.jpeg']:
-        continue
-    
-    if base_name not in target_files:
-        target_files[base_name] = []
-    target_files[base_name].append(ext)
+    for file in file_list:
+        base_name, ext = os.path.splitext(file)
+        ext = ext.lower()
+        if ext not in ['.hwp', '.pdf', '.png', '.jpg', '.jpeg']:
+            continue
+        if base_name not in target_files:
+            target_files[base_name] = []
+        target_files[base_name].append(ext)
 
-# 우선순위: HWP > PDF
-final_targets = []
-for base_name, exts in target_files.items():
-    if '.hwp' in exts:
-        final_targets.append(base_name + '.hwp')
-    elif '.pdf' in exts:
-        final_targets.append(base_name + '.pdf')
+    final_targets = []
+    for base_name, exts in target_files.items():
+        if '.hwp' in exts:
+            final_targets.append(base_name + '.hwp')
+        elif '.pdf' in exts:
+            final_targets.append(base_name + '.pdf')
 
-print(f"[정보] {len(file_list)}개 파일 발견. {len(final_targets)}개의 고유 대상 처리 중.\n")
+    print(f"[정보] {len(file_list)}개 파일 발견. {len(final_targets)}개의 고유 대상 처리 중.\n")
 
-all_documents = []
+    all_documents = []
 
-for file in final_targets:
-    basename = os.path.basename(file)
-    print(f"[처리 중] {basename}")
-    
-    ext = os.path.splitext(file)[1].lower()
-    raw_text = ""
-    
-    if ext == '.hwp':
-        raw_text = extract_text_with_hwp(file)
-    elif ext == '.pdf':
-        raw_text = extract_text_with_pdf(file)
-    elif ext in ['.png', '.jpg', '.jpeg']:
-        raw_text = extract_text_with_ocr(file)
+    for file in final_targets:
+        basename = os.path.basename(file)
+        print(f"[처리 중] {basename}")
         
-    if raw_text:
-        clean_data = clean_noise(raw_text)
-        is_valid, reason = is_valid_manual(clean_data)
+        ext = os.path.splitext(file)[1].lower()
+        raw_text = ""
         
-        if is_valid:
-            # 파일명을 함께 전달하여 키워드 기반 필터링 우회 적용
-            ai_pass, ai_reason = is_valuable_manual(clean_data, basename)
+        if ext == '.hwp':
+            raw_text = extract_text_with_hwp(file)
+        elif ext == '.pdf':
+            raw_text = extract_text_with_pdf(file)
+        elif ext in ['.png', '.jpg', '.jpeg']:
+            raw_text = extract_text_with_ocr(file)
             
-            if ai_pass:
-                final_content = clean_data
-                # AI 마크다운 정제 실행
-                if USE_AI_REFINEMENT:
-                    final_content = sanitize_content_with_ai(clean_data, basename)
-                
-                all_documents.append({
-                    "source": basename,
-                    "content": final_content
-                })
-                print(f"  [통과] 수락됨: {len(final_content)} 자")
+        if raw_text:
+            clean_data = clean_noise(raw_text)
+            is_valid, reason = is_valid_manual(clean_data)
+            
+            if is_valid:
+                ai_pass, ai_reason = is_valuable_manual(clean_data, basename)
+                if ai_pass:
+                    final_content = clean_data
+                    if USE_AI_REFINEMENT:
+                        final_content = sanitize_content_with_ai(clean_data, basename)
+                    all_documents.append({"source": basename, "content": final_content})
+                    print(f"  [통과] 수락됨: {len(final_content)} 자")
+                else:
+                    print(f"  [건너뜀] 부적절한 내용으로 필터링됨")
             else:
-                print(f"  [건너뜀] 부적절한 내용으로 필터링됨")
+                print(f"  [건너뜀] {reason}")
         else:
-            print(f"  [건너뜀] {reason}")
-    else:
-        print("  [건너뜀] 텍스트 추출 실패")
+            print("  [건너뜀] 텍스트 추출 실패")
 
-# 작업 종료
-release_ocr_reader()
-
-save_path = os.path.join(project_root, "data", "parsed_manuals.json")
-with open(save_path, 'w', encoding='utf-8') as f:
-    json.dump(all_documents, f, ensure_ascii=False, indent=4)
-
-print(f"\n[정보] 파서 종료. {len(all_documents)}개의 매뉴얼이 '{save_path}'에 저장되었습니다.")
+    release_ocr_reader()
+    save_path = os.path.join(project_root, "data", "parsed_manuals.json")
+    with open(save_path, 'w', encoding='utf-8') as f:
+        json.dump(all_documents, f, ensure_ascii=False, indent=4)
+    print(f"\n[정보] 파서 종료. {len(all_documents)}개의 매뉴얼이 '{save_path}'에 저장되었습니다.")
