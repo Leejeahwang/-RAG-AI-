@@ -15,11 +15,12 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
+# 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
+    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
+    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
+    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
 ]
 
 model = None
