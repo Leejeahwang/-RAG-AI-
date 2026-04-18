@@ -13,7 +13,13 @@ def build_vectorstore(chunks=None):
     """청크를 벡터DB에 저장하거나, 기존 DB를 로드합니다."""
     import shutil
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    embeddings = OllamaEmbeddings(model=config.EMBEDDING_MODEL, base_url=ollama_host)
+    
+    # 초경량 임베딩 모델 설정 (속도 최상)
+    embeddings = OllamaEmbeddings(
+        model=config.EMBEDDING_MODEL, 
+        base_url=ollama_host,
+        timeout=120  # 라즈베리파이 초기 로딩 대기 시간 확보
+    )
     
     db_path = config.VECTORDB_DIR
     db_exists = os.path.exists(db_path) and os.listdir(db_path)

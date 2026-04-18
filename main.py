@@ -125,8 +125,20 @@ class EdgeSaver:
             self.main_llm = load_llm()
             self.qa = build_qa_chain(retriever, llm=self.main_llm, use_simple_prompt=True)
 
-            # [최적화] 음성 엔진(TTS/STT)은 실제 필요 시점에 로드하도록 지연시킵니다 (Lazy Loading).
-            
+            # [최적화] 음성 엔진(TTS/STT) 백그라운드 선제 로딩 (Warming-up)
+            def warm_up():
+                try:
+                    # 속성을 호출하는 것만으로도 지연 로딩이 트리거되어 백그라운드에서 로딩됩니다.
+                    _ = self.tts
+                    _ = self.stt_model
+                    _ = self.stt_stream
+                    print("\n[시스템] ✅ 모든 음성 엔진 준비 완료 (백그라운드 로드 성공)")
+                except Exception as e:
+                    print(f"\n[시스템] ⚠️ 백그라운드 워밍업 중 오류: {e}")
+
+            warm_thread = threading.Thread(target=warm_up, daemon=True)
+            warm_thread.start()
+
             # 백그라운드 카메라 서비스 가동
             if not cctv_service.camera_running:
                 cctv_service.camera_running = True

@@ -6,13 +6,13 @@
 """
 
 # ── LLM 모델 설정 ──
-LLM_MODEL = "batiai/gemma4-e2b:q4"
-EMBEDDING_MODEL = "bge-m3"
+LLM_MODEL = "qwen2.5:1.5b"                 # 엣지 환경 최적화 (빠른 반응 속도)
+EMBEDDING_MODEL = "multilingual-e5-small"    # 라즈베리파이/노트북 통합 최적화 모델
 
 # ── STT(음성 인식) 설정 ──
 STT_ENGINE = "WHISPER"                       # "GEMMA" (통합 모달) 또는 "WHISPER" (전용)
-STT_GEMMA_MODEL = "batiai/gemma4-e2b:q4"             # STT용 멀티모달 모델
-STT_WHISPER_MODEL = "large-v3"                 # Whisper 모델 (안정성 및 정확도 종결)
+STT_GEMMA_MODEL = "qwen2.5:1.5b"             # STT용 멀티모달 모델
+STT_WHISPER_MODEL = "large-v3-turbo"           # Whisper Turbo (정확도 사수 + 속도 8배)
 
 # ── RAG 설정 ──
 VECTORDB_DIR = "chroma_db"
