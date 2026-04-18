@@ -105,10 +105,15 @@ class TTSHelper:
     def _sanitize_text(self, text):
         """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거"""
         if not text: return ""
-        # 콜론(:)을 쉼표(, )로 치환하여 자연스러운 뜸을 들임 (예: "119 구조 신청: ..." -> "119 구조 신청, ...")
-        text = text.replace(':', ', ')
-        text = re.sub(r'[\*#\-\|_`>]', ' ', text)
+        # 1. 마크다운 강조 기호(*)는 여백 없이 제거
+        text = text.replace('*', '')
+        # 2. 콜론(:)은 자연스러운 이음새를 위해 공백 하나로 치환 (쉼표보다 짧은 뜸)
+        text = text.replace(':', ' ')
+        # 3. 기타 마크다운 특수 기호 제거
+        text = re.sub(r'[#\-\|_`>]', ' ', text)
+        # 4. 허용되지 않은 나머지 특수문자 제거 (이모지 등)
         text = re.sub(r'[^\w\s\d.,?!\(\)\[\]]', ' ', text)
+        # 5. 연속된 공백을 하나로 압축하고 양끝 공백 제거
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
