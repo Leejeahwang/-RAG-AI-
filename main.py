@@ -37,7 +37,6 @@ from sensors.smoke import read_smoke_level, is_smoke_detected
 from sensors.gas import read_gas_level, is_gas_detected
 from alerts.alarm import trigger_alarm
 from alerts.notifier import send_alert
-from rag.pipeline import RAGPipelineManager
 from voice.tts import TTSHelper
 from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
 
@@ -81,13 +80,10 @@ class EdgeSaver:
             from rag.retriever import build_vectorstore, get_retriever
             from rag.chain import load_llm, build_qa_chain
 
-            # ── 0단계: RAG 파이프라인 동기화 ──
-            print("[시스템] 지식베이스 동기화 체크 중...")
-            try:
-                pipeline = RAGPipelineManager()
-                pipeline.sync()
-            except Exception as e:
-                print(f"⚠️ 파이프라인 동기화 건너뜐 (오류: {e})")
+            # ── 0단계: 지식베이스 준비 ──
+            # [최적화] 저사양 환경을 위해 자동 동기화(Pipeline Sync)를 생략합니다.
+            # 매뉴얼 업데이트가 필요한 경우 'python -m rag.pipeline'을 수동 실행하세요.
+            print("[시스템] 지식베이스 검색 엔진 로드 중...")
 
             # ── 1단계: RAG 데이터 및 검색 모델 로드 ──
             db = build_vectorstore()

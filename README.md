@@ -30,11 +30,45 @@ ollama pull bge-m3          # 고성능 임베딩 모델
 # 3. 추가 시스템 의존성
 # - Windows: HWP 파싱을 위해 olefile 패키지 사용 (전용 한글 프로그램 없이 동작)
 # - Linux: sudo apt install libportaudio2 (PyAudio 용)
+```
 
-# 4. 데이터 동기화 (신규 매뉴얼 추가 시)
+## 🚀 퀵 스타트 가이드 (Quick Start)
+
+본 프로젝트는 저사양 노트북부터 고성능 데스크탑까지 유연하게 대응하도록 설계되었습니다.
+
+### 1. 공통 의존성 설치
+```bash
+pip install -r requirements.txt
+```
+
+### 2. 하드웨어 환경별 PyTorch 설치 (필수)
+본인의 기기 환경에 맞는 명령어를 선택하여 실행하세요.
+
+*   **💻 저사양 노트북 / 그래픽카드 없음 (CPU-only)**
+    ```bash
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    ```
+
+*   **🎮 고사양 데스크탑 / NVIDIA GPU (CUDA 가속)**
+    ```bash
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    ```
+
+---
+
+## 🛠️ 운영 워크플로우 (Working Workflow)
+
+시스템 부하를 최소화하기 위해 지식 베이스 구축(빌드)과 실제 서비스(실행) 단계를 분리하여 운영합니다.
+
+### 📁 지식 베이스 업데이트 (빌드 단계)
+새로운 매뉴얼(`.pdf`, `.hwp`, `.txt`)을 `data/raw_documents` 폴더에 넣은 후 아래 명령어를 실행하세요. 바뀐 파일만 골라 똑똑하게 인덱싱합니다.
+```bash
 python -m rag.pipeline
+```
 
-# 5. 실행 (통합 최적화 버전)
+### 🚑 애플리케이션 실행 (서비스 단계)
+구축된 지식 베이스를 바탕으로 실시간 대응을 시작합니다. (저사양 환경에서도 빠르게 부팅됩니다.)
+```bash
 python main.py
 ```
 

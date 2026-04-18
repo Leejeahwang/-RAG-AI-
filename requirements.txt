@@ -1,4 +1,4 @@
-﻿absl-py==2.4.0
+absl-py==2.4.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
 aiosignal==1.4.0
@@ -232,9 +232,8 @@ tifffile==2025.5.10
 tokenizers==0.13.3
 tomli==2.4.0
 tomlkit==0.14.0
-torch==2.5.1+cu121
-torchaudio==2.5.1+cu121
-torchvision==0.20.1+cu121
+zipp==3.23.0
+zstandard==0.25.0
 tqdm==4.67.3
 transformers==4.27.4
 trio==0.33.0
