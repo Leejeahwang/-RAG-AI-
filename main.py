@@ -61,6 +61,11 @@ class EdgeSaver:
         self._stt_model = None
         self._pa = None
         self._stt_stream = None
+        
+        # UI 세션 및 실시간 상태 (여기에 있어야 함)
+        self.session = PromptSession()
+        self.current_risk_stats = "시스템 초기화 중..."
+        self.current_level = 0  # 단계별 발화 속도 조절을 위한 상태 저장
 
     @property
     def tts(self):
@@ -95,11 +100,6 @@ class EdgeSaver:
             from voice.stt import _open_stream
             self._stt_stream = _open_stream(self.pa)
         return self._stt_stream
-        
-        # UI 세션 및 실시간 상태
-        self.session = PromptSession()
-        self.current_risk_stats = "시스템 초기화 중..."
-        self.current_level = 0  # 단계별 발화 속도 조절을 위한 상태 저장
 
     def initialize(self):
         """시스템 초기화: 밸런스 RAG 엔진 + 비전 AI + 음성 엔진 로드"""
