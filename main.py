@@ -56,11 +56,45 @@ class EdgeSaver:
         self._monitor_running = False
         self._monitor_thread = None
         
-        # 음성 자원
-        self.tts = None
-        self.stt_model = None
-        self.pa = None
-        self.stt_stream = None
+        # 음성 자원 (지연 로드용)
+        self._tts = None
+        self._stt_model = None
+        self._pa = None
+        self._stt_stream = None
+
+    @property
+    def tts(self):
+        """TTS 엔진 지연 로딩"""
+        if self._tts is None:
+            print("[시스템] 🔊 음성 출력(TTS) 엔진 로드 중...")
+            from voice.tts import TTSHelper
+            self._tts = TTSHelper()
+        return self._tts
+
+    @property
+    def stt_model(self):
+        """STT 모델 지연 로딩"""
+        if self._stt_model is None:
+            print("[시스템] 🎤 음성 인식(STT) 모델 로드 중...")
+            from voice.stt import _load_model
+            self._stt_model = _load_model()
+        return self._stt_model
+
+    @property
+    def pa(self):
+        """PyAudio 인스턴스 지연 로딩"""
+        if self._pa is None:
+            from voice.stt import _get_pyaudio_instance
+            self._pa = _get_pyaudio_instance()
+        return self._pa
+
+    @property
+    def stt_stream(self):
+        """STT 스트림 지연 로딩"""
+        if self._stt_stream is None:
+            from voice.stt import _open_stream
+            self._stt_stream = _open_stream(self.pa)
+        return self._stt_stream
         
         # UI 세션 및 실시간 상태
         self.session = PromptSession()
@@ -91,12 +125,8 @@ class EdgeSaver:
             self.main_llm = load_llm()
             self.qa = build_qa_chain(retriever, llm=self.main_llm, use_simple_prompt=True)
 
-            # ── 2단계: 음성 처리 및 카메라 초기화 ──
-            self.tts = TTSHelper()
-            self.stt_model = _load_model()
-            self.pa = _get_pyaudio_instance()
-            self.stt_stream = _open_stream(self.pa)
-
+            # [최적화] 음성 엔진(TTS/STT)은 실제 필요 시점에 로드하도록 지연시킵니다 (Lazy Loading).
+            
             # 백그라운드 카메라 서비스 가동
             if not cctv_service.camera_running:
                 cctv_service.camera_running = True

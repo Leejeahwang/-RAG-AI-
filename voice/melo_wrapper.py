@@ -92,7 +92,16 @@ class MeloEngine:
             start_t = time.time()
             try:
                 # MeloTTS는 실제 언어 코드(KR, EN, JP 등)를 사용함
-                self._model_cache[melo_lang] = self.TTS(language=melo_lang, device=self.device)
+                model = self.TTS(language=melo_lang, device=self.device)
+                
+                # 화자 ID 캐싱 (발화 시마다 연산하는 것을 방지)
+                speaker_ids = dict(model.hps.data.spk2id)
+                default_spk_id = speaker_ids.get(melo_lang, list(speaker_ids.values())[0])
+                
+                self._model_cache[melo_lang] = {
+                    'model': model,
+                    'speaker_id': default_spk_id
+                }
                 print(f"[MeloTTS] {melo_lang} 모델 로드 완료 ({time.time() - start_t:.2f}s)")
             except Exception as e:
                 print(f"[MeloTTS] {melo_lang} 모델 로드 실패: {e}")
@@ -102,22 +111,16 @@ class MeloEngine:
 
     def speak_to_file(self, text, output_path, lang='ko', speed=1.0):
         """텍스트를 음성으로 변환하여 파일로 저장합니다."""
-        model = self.get_model(lang)
-        if not model:
+        cached_item = self.get_model(lang)
+        if not cached_item:
             return False
         
         try:
-            # MeloTTS 한국어 모델의 경우 speaker_ids['KR'] 사용
-            melo_lang = lang.upper()
-            if melo_lang == 'KO': melo_lang = 'KR'
-            
-            # HParams 객체를 딕셔너리로 변환하여 .get() 사용 가능하게 함
-            speaker_ids = dict(model.hps.data.spk2id)
-            # 해당 언어의 기본 화자 선택
-            target_spk_id = speaker_ids.get(melo_lang, list(speaker_ids.values())[0])
+            model = cached_item['model']
+            speaker_id = cached_item['speaker_id']
             
             # quiet=True를 전달하여 'Text split to sentences' 및 tqdm 로그를 억제합니다.
-            model.tts_to_file(text, target_spk_id, output_path, speed=speed, quiet=True)
+            model.tts_to_file(text, speaker_id, output_path, speed=speed, quiet=True)
             return True
         except Exception as e:
             print(f"[MeloTTS] 합성 중 오류 발생: {e}")
