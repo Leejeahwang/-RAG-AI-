@@ -18,10 +18,18 @@ def read_temperature(simulate=False, pin=4):
         pin (int): DHT11이 연결된 라즈베리파이 BCM GPIO 핀 번호 (기본값: GPIO4)
     """
     if simulate:
+        # 가끔(약 10% 확률) 60도 이상 화재 상황 시뮬레이션
+        if random.random() < 0.1:
+            return {
+                "temperature": round(random.uniform(65.0, 85.0), 1),
+                "humidity": round(random.uniform(10.0, 30.0), 1),
+            }
+        # 평상시 상태
         return {
             "temperature": round(random.uniform(20.0, 30.0), 1),
             "humidity": round(random.uniform(40.0, 60.0), 1),
         }
+
     try:
         import Adafruit_DHT
     except ImportError:
