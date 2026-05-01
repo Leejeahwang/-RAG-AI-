@@ -43,31 +43,63 @@ def cleanup_old_captures(days=3):
     if deleted_count > 0:
         print(f"🧹 [청소 완료] {days}일 이상 지난 과거 캡처 파일 {deleted_count}개를 자동 삭제했습니다.")
 
+import subprocess
+import numpy as np
+
 def camera_worker_thread():
     global latest_frame, camera_running
     
+    # 1. 먼저 일반 OpenCV 방식으로 시도
     cap = cv2.VideoCapture(0)
+    use_rpicam = False
     
-    if not cap.isOpened():
-        print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
-        camera_running = False
-        return
+    if cap.isOpened():
+        # 프레임이 실제로 들어오는지 테스트
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            print("⚠️ [경고] 기본 카메라 장치에서 빈 화면이 들어옵니다. (라즈베리파이 5 종특)")
+            use_rpicam = True
+            cap.release()
+    else:
+        print("⚠️ [경고] 기본 카메라를 열 수 없습니다.")
+        use_rpicam = True
+
+    if use_rpicam:
+        print("🔄 [시스템] 라즈베리파이 전용 rpicam-jpeg 캡처 모드로 전환합니다.")
         
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다.")
     
     while camera_running:
-        ret, frame = cap.read()
-        if ret:
-            h, w = frame.shape[:2]
-            target_w = 640
-            target_h = int(h * (target_w / w))
-            resized_frame = cv2.resize(frame, (target_w, target_h))
-            
-            latest_frame = resized_frame
+        if not use_rpicam:
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                h, w = frame.shape[:2]
+                target_w = 640
+                target_h = int(h * (target_w / w))
+                latest_frame = cv2.resize(frame, (target_w, target_h))
+            else:
+                time.sleep(0.1)
         else:
-            time.sleep(0.1)
+            # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (파일 IO 없이)
+            try:
+                # -t 1: 1ms 대기, -n: 프리뷰 없음, -o -: 표준 출력으로 내보냄, --width 640
+                cmd = ["rpicam-jpeg", "-t", "1", "-n", "-o", "-", "--width", "640", "--height", "480"]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                
+                if result.returncode == 0 and result.stdout:
+                    # JPEG 바이트를 OpenCV 이미지로 변환
+                    image_array = np.frombuffer(result.stdout, dtype=np.uint8)
+                    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        latest_frame = frame
+            except Exception as e:
+                print(f"❌ [에러] rpicam 캡처 실패: {e}")
             
-    cap.release()
+            # CPU 과부하 방지 (이미 subprocess 자체가 시간이 약간 걸림)
+            time.sleep(0.5)
+            
+    if not use_rpicam and cap is not None:
+        cap.release()
 
 def start_cctv_service(scan_interval_sec=5):
     global latest_frame, camera_running
