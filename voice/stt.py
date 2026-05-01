@@ -93,6 +93,12 @@ def _find_best_device(pa: pyaudio.PyAudio):
 
 def _open_stream(pa: pyaudio.PyAudio) -> pyaudio.Stream:
     global STREAM_CHANNELS, STREAM_FORMAT, STREAM_DEVICE, SAMPLE_RATE
+    
+    # 물리적 마이크가 없을 때 PyAudio가 강제 종료(Segfault)되는 것을 막기 위한 방어 로직
+    valid_inputs = [i for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get("maxInputChannels", 0) > 0]
+    if not valid_inputs:
+        raise RuntimeError("물리적 마이크 장치가 감지되지 않았습니다.")
+
     device_idx, max_channels = _find_best_device(pa)
     STREAM_DEVICE = device_idx
     
