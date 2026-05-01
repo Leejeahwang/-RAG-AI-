@@ -153,6 +153,7 @@ class EdgeSaver:
                 frame = cctv_service.latest_frame
                 
                 fire_detected = False
+                cam_status = "X"
                 if frame is not None:
                     tmp_path = os.path.join(cctv_service.CAPTURE_DIR, "live_temp_main.jpg")
                     if not os.path.exists(cctv_service.CAPTURE_DIR):
@@ -160,8 +161,11 @@ class EdgeSaver:
                     cv2.imwrite(tmp_path, frame)
                     analysis = fire_detector.detect_fire(tmp_path)
                     fire_detected = analysis.get('fire_detected', False)
+                    cam_status = "🔥" if fire_detected else "X"
+                else:
+                    cam_status = "⚠️오류(화면없음)"
                 
-                print(f"  > [센서] 온도: {temp_data['temperature']}°C | 가스: {gas_val} | 연기: {smoke_val} | 📷화재: {'O' if fire_detected else 'X'}")
+                print(f"  > [센서] 온도: {temp_data['temperature']}°C | 가스: {gas_val} | 연기: {smoke_val} | 📷화재: {cam_status}")
                 
                 # 2. 통합 위험도 교차 검증 평가
                 risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
