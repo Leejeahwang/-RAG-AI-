@@ -16,9 +16,9 @@ psutil
 # --- RAG & Data Engine ---
 langchain
 langchain-community
-langchain-chroma
-langchain-ollama
-chromadb
+faiss-cpu
+sentence-transformers
+ollama
 ollama
 pypdf
 python-docx
@@ -30,5 +30,6 @@ requests
 # --- Voice Processing (STT & TTS) ---
 melotts @ git+https://github.com/myshell-ai/MeloTTS.git
 faster-whisper
+pyttsx3
 pygame
 pyaudio

@@ -81,7 +81,7 @@ class ManualParser:
                 try:
                     decoded = data.decode('utf-16le', errors='ignore')
                     cleaned = re.sub(r'[\x00-\x1f]', '', decoded)
-                    cleaned = re.sub(r'[\x7f-\xff]', '', cleaned)
+                    # [주의] [\x7f-\xff] 제거 로직은 한글을 파괴하므로 삭제함
                     full_text.append(cleaned)
                 except Exception as e:
                     print(f"      [경고] {section_node} 디코딩 실패: {e}")
@@ -283,11 +283,16 @@ class ManualParser:
         elif ext == '.pdf': raw_text = self.extract_text_with_pdf(file_path)
         elif ext in ['.png', '.jpg', '.jpeg']: raw_text = self.extract_text_with_ocr(file_path)
         elif ext == '.txt':
+            # [수정] UTF-8과 CP949를 순차적으로 시도하여 한글 깨짐 방지
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     raw_text = f.read()
-            except Exception as e:
-                print(f"  [오류] 텍스트 파일 읽기 실패: {e}")
+            except UnicodeDecodeError:
+                try:
+                    with open(file_path, 'r', encoding='cp949') as f:
+                        raw_text = f.read()
+                except Exception as e:
+                    print(f"  [오류] 텍스트 파일(CP949) 읽기 실패: {e}")
         
         if not raw_text or len(raw_text) < 500:
             print(f"  [건너뜀] 유효하지 않은 내용 (길이 부족 등)")

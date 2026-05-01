@@ -96,7 +96,7 @@ python main.py
 │   ├── parser.py                #   문서 파싱 (PDF, HWP, TXT) 및 Poison Pill 필터 (무결성 확보)
 │   ├── chunker.py               #   시맨틱 분할 및 LaTeX 기호 원천 차단 엔진
 │   ├── loader.py                #   가공된 JSON 데이터 로딩
-│   ├── retriever.py             #   ChromaDB 기반 벡터 검색
+│   ├── native_retriever.py      #   FAISS & 의도 기반 2단계 리랭킹 엔진 (v4)
 │   └── chain.py                 #   QA 체인 및 프롬프트 최적화
 │
 ├── voice/                       # 음성 모듈 (종화)
@@ -111,8 +111,10 @@ python main.py
 ├── data/                        # 데이터 저장소
 │   ├── raw_documents/           #   원본 매뉴얼 보관 (PDF, HWP, TXT)
 │   ├── chunked_manuals.json     #   최종 정제된 지식 베이스 데이터
-│   ├── preview_chunks.md        #   [Auto] 100% 평문화된 지식 베이스 미리보기
-│   └── pipeline_state.json      #   증분 동기화 상태 기록 파일
+│   ├── pipeline_state.json      #   증분 동기화 상태 기록 파일
+│   └── preview_chunks.md        #   [Auto] 100% 평문화된 지식 베이스 미리보기
+│
+├── faiss_db/                    # 초경량/고속 벡터 데이터베이스 (FAISS)
 │
 ├── alerts/                      # 경보 모듈 (재황)
 │   ├── alarm.py                 #   부저/LED 경보 출력

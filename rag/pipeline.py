@@ -5,13 +5,13 @@ import shutil
 import time
 from rag.parser import ManualParser
 from rag.chunker import ManualChunker
-from rag.retriever import build_vectorstore
+from rag.native_retriever import rag_manager
 import config
 
 class RAGPipelineManager:
     """
-    RAG 파이프라인 통합 매니저.
-    문서 파싱, 청킹, 벡터DB 인덱싱 과정을 자동화하고 증분 업데이트를 관리합니다.
+    RAG 파이프라인 통합 매니저 (v35: Native FAISS 대응)
+    문서 파싱, 청킹, FAISS 인덱싱 과정을 자동화하고 증분 업데이트를 관리합니다.
     """
     def __init__(self):
         self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,7 +57,7 @@ class RAGPipelineManager:
 
     def sync(self, force=False):
         """증분 동기화를 수행합니다."""
-        print("\n[Pipeline] 증분 동기화 시작 중...")
+        print("\n[Pipeline] FAISS 증분 동기화 시작 중...")
         state = self._load_state()
         processed_files = state["processed_files"]
         
@@ -104,7 +104,6 @@ class RAGPipelineManager:
                 print(f"  [격리] '{filename}' 문서를 filtered_documents 폴더로 이동합니다.")
                 dest_path = os.path.join(self.filtered_dir, filename)
                 try:
-                    # 파일 이동 (중복 이름 대비 timestamp 추가)
                     if os.path.exists(dest_path):
                         dest_path = os.path.join(self.filtered_dir, f"{int(time.time())}_{filename}")
                     shutil.move(path, dest_path)
@@ -122,17 +121,14 @@ class RAGPipelineManager:
             with open(self.chunked_file, "w", encoding="utf-8") as f:
                 json.dump(chunks, f, ensure_ascii=False, indent=4)
             
-            # 5. 벡터 DB 갱신
-            print("[Pipeline] 벡터 DB 업데이트 중...")
-            # ChromaDB를 완전히 새로 구축하기 위해 기존 폴더 삭제 (retriever logic 대응)
-            db_path = config.VECTORDB_DIR
-            if os.path.exists(db_path):
-                shutil.rmtree(db_path)
-            
-            # build_vectorstore 호출 시 파일에서 로드하게 하거나 청크를 직접 넘김
+            # 5. Native FAISS 인덱스 갱신
+            print("[Pipeline] Native FAISS 인덱스 업데이트 중...")
             from rag.loader import load_and_split
-            all_langchain_chunks = load_and_split() # 파일을 다시 읽어서 Document로 변환
-            build_vectorstore(chunks=all_langchain_chunks)
+            all_langchain_chunks = load_and_split() 
+            
+            # FAISS 인덱싱 실행
+            rag_manager.load_resources()
+            rag_manager.build_index(all_langchain_chunks)
             
             self._save_state(state)
             
@@ -148,6 +144,28 @@ class RAGPipelineManager:
             
         return False
 
+    def reindex(self):
+        """기존 청크 데이터를 활용하여 FAISS 인덱스만 다시 구축합니다."""
+        print("\n[Pipeline] 기존 청크 데이터를 이용한 FAISS 재색인 시작...")
+        
+        print(f"[Pipeline] 데이터를 통합 로딩 중...")
+        from rag.loader import load_and_split
+        all_chunks = load_and_split()
+        
+        print(f"[Pipeline] {len(all_chunks)}개의 통합 청크 준비 완료.")
+        
+        # FAISS 인덱싱 실행
+        rag_manager.load_resources()
+        rag_manager.build_index(all_chunks)
+        
+        print("[Pipeline] 재색인이 완료되었습니다.")
+        return True
+
 if __name__ == "__main__":
+    import sys
     manager = RAGPipelineManager()
-    manager.sync()
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--reindex":
+        manager.reindex()
+    else:
+        manager.sync()

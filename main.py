@@ -29,6 +29,11 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("torch").setLevel(logging.ERROR)
 
+# [v30] Native Stack Imports
+from voice.tts import TTSHelper  # [v46] 다시 표준 TTSHelper(pyttsx3)로 복구
+# from voice.piper_helper import PiperTTSHelper # [DELETE]
+from rag.native_retriever import rag_manager
+
 import config
 from vision import cctv_service, fire_detector
 from sensors import fusion
@@ -51,7 +56,7 @@ class EdgeSaver:
     """엣지 세이버 통합 애플리케이션 (Prompt-Toolkit 하단 툴바 UI 적용)"""
 
     def __init__(self):
-        self.qa = None
+        self.main_llm = None
         self._initialized = False
         self._monitor_running = False
         self._monitor_thread = None
@@ -72,8 +77,7 @@ class EdgeSaver:
         """TTS 엔진 지연 로딩"""
         if self._tts is None:
             print("[시스템] 🔊 음성 출력(TTS) 엔진 로드 중...")
-            from voice.tts import TTSHelper
-            self._tts = TTSHelper()
+            self._tts = TTSHelper()  # [v46] 다시 표준 TTSHelper(pyttsx3)로 복구
         return self._tts
 
     @property
@@ -108,36 +112,39 @@ class EdgeSaver:
         print("=" * 55 + "\n")
 
         try:
-            config.LLM_MODEL = "qwen2.5:1.5b"
-            config.EMBEDDING_MODEL = "bge-m3"
-
-            from rag.retriever import build_vectorstore, get_retriever
-            from rag.chain import load_llm, build_qa_chain
-
             # ── 0단계: 지식베이스 준비 ──
-            # [최적화] 저사양 환경을 위해 자동 동기화(Pipeline Sync)를 생략합니다.
-            # 매뉴얼 업데이트가 필요한 경우 'python -m rag.pipeline'을 수동 실행하세요.
             print("[시스템] 지식베이스 검색 엔진 로드 중...")
 
-            # ── 1단계: RAG 데이터 및 검색 모델 로드 ──
-            db = build_vectorstore()
-            retriever = get_retriever(db, llm=None, top_k=3)
-            self.main_llm = load_llm()
-            self.qa = build_qa_chain(retriever, llm=self.main_llm, use_simple_prompt=True)
+            # ── 1단계: Native RAG 데이터 로드 [v30] ──
+            from rag.native_retriever import rag_manager
+            from rag.loader import load_and_split
+            
+            rag_manager.load_resources()
+            if not rag_manager.index:
+                chunks = load_and_split()
+                rag_manager.build_index(chunks)
+            
+            # ── 2단계: 음성 엔진 및 보조 모듈 로드 ──
+            import contextlib
+            import io
 
-            # [최적화] 음성 엔진(TTS/STT) 백그라운드 선제 로딩 (Warming-up)
-            def warm_up():
-                try:
-                    # 속성을 호출하는 것만으로도 지연 로딩이 트리거되어 백그라운드에서 로딩됩니다.
-                    _ = self.tts
-                    _ = self.stt_model
-                    _ = self.stt_stream
-                    print("\n[시스템] ✅ 모든 음성 엔진 준비 완료 (백그라운드 로드 성공)")
-                except Exception as e:
-                    print(f"\n[시스템] ⚠️ 백그라운드 워밍업 중 오류: {e}")
+            # TTS 엔진 로드
+            print("[시스템] 🔊 음성 출력(TTS) 엔진 준비 중...", end=" ", flush=True)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                _ = self.tts
+            print("완료")
 
-            warm_thread = threading.Thread(target=warm_up, daemon=True)
-            warm_thread.start()
+            # STT 엔진 로드
+            print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                _ = self.stt_model
+                _ = self.stt_stream
+            print("완료")
+
+            print("[시스템] 🔊 음성 출력(TTS) 모델 예열 중...", end=" ", flush=True)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.tts.warmup()
+            print("완료")
 
             # 백그라운드 카메라 서비스 가동
             if not cctv_service.camera_running:
@@ -147,13 +154,14 @@ class EdgeSaver:
             self._initialized = True
             print("\n🚀 시스템 모든 모듈 초기화 완료!\n")
 
-        except Exception as e:
-            print(f"\n❌ 초기화 실패: {e}")
+        except Exception:
+            import traceback
+            print("\n❌ 시스템 가동 중 치명적 오류 발생:")
+            traceback.print_exc()
             sys.exit(1)
 
     def _get_bottom_toolbar(self):
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
-        # UI 안정성을 위해 아이콘 제거
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
 
     def _trigger_rag_alert(self, prompt, sensor_info):
@@ -164,16 +172,16 @@ class EdgeSaver:
         
         try:
             self.tts.stop()
-            retriever = self.qa["retriever"]
-            llm = self.qa["llm"]
-            prompt_template = self.qa["prompt"]
-            format_docs_fn = self.qa["format_docs"]
+            from rag.chain import call_ollama_native, SYSTEM_PROMPT
+            from rag.native_retriever import rag_manager
             
-            source_docs = retriever.invoke(prompt)
-            context_text = format_docs_fn(source_docs)
-            formatted_prompt = prompt_template.format(context=context_text, question=prompt)
+            source_docs = rag_manager.search(prompt)
+            context_text = "\n\n".join([d.get('page_content', '') for d in source_docs])
+            formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=prompt)
             
-            ai_response = llm.invoke(formatted_prompt)
+            ai_response = ""
+            for token in call_ollama_native(formatted_prompt):
+                ai_response += token
             
             print("\n" + "=" * 55)
             print("🔊 [AI 긴급 피난 안내]")
@@ -269,14 +277,21 @@ class EdgeSaver:
                     print("\n[분석] 대응 지침 생성 중...")
                     start_t = time.time()
                     
-                    retriever = self.qa["retriever"]
-                    llm = self.qa["llm"]
-                    prompt_template = self.qa["prompt"]
-                    format_docs_fn = self.qa["format_docs"]
+                    from rag.native_retriever import rag_manager
+                    source_docs = rag_manager.search(query)
                     
-                    source_docs = retriever.invoke(query)
-                    context_text = format_docs_fn(source_docs)
-                    formatted_prompt = prompt_template.format(context=context_text, question=query)
+                    # LLM 앵무새 증후군 방지: 컨텍스트 내의 메타데이터 헤더([위치:], [출처:]) 텍스트 강제 삭제
+                    cleaned_chunks = []
+                    for doc in source_docs:
+                        lines = doc.get('page_content', '').split('\n')
+                        clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
+                        cleaned_chunks.append("\n".join(clean_lines))
+                    context_text = "\n\n".join(cleaned_chunks)
+                    
+                    from rag.chain import SYSTEM_PROMPT
+                    formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
+                    
+                    llm = self.main_llm
                     
                     # 위험 단계에 따른 발화 속도 계산 (4단계: 1.2x, 5단계: 1.3x)
                     speed = 1.0
@@ -285,17 +300,40 @@ class EdgeSaver:
                     
                     print("-" * 55)
                     sentence_buffer = ""
-                    for token in llm.stream(formatted_prompt):
-                        print(token, end="", flush=True)
-                        sentence_buffer += token
-                        if any(p in token for p in ".!?\n"):
-                            self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-                            sentence_buffer = ""
-                    if sentence_buffer: self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                    self._is_generating = True # [v28] 가용 자원 집중 시작
+                    
+                    try:
+                        from rag.chain import call_ollama_native
+                        # [v35] 직접 스트리밍 호출
+                        for token in call_ollama_native(formatted_prompt):
+                            print(token, end="", flush=True)
+                            sentence_buffer += token
+                            
+                            is_split_point = any(p in token for p in ".!?\n")
+                            if is_split_point and "." in token:
+                                if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
+                                    is_split_point = False
+                            
+                            # [v28] 번개 분할: 첫 구절은 25자만 넘어도 즉시 음성 출력
+                            if not is_split_point:
+                                if "," in token and len(sentence_buffer) > 15:
+                                    is_split_point = True
+                                elif len(sentence_buffer) > 25 and " " in token:
+                                    is_split_point = True
+                            
+                            if is_split_point:
+                                self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                                sentence_buffer = ""
+                    finally:
+                        self._is_generating = False # [v28] 감시 모드 다시 활성화
+                    
+                    if sentence_buffer.strip():
+                        self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
                     
                     print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
                     if source_docs:
-                        print(f"[참고 문헌] {set(os.path.basename(d.metadata['source']) for d in source_docs)}")
+                        sources = set(d.get('source', 'unknown_manual') for d in source_docs)
+                        print(f"[참고 문헌] {sources}")
                     print("-" * 55)
 
                 except KeyboardInterrupt: break

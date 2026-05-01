@@ -16,6 +16,7 @@ import sys
 # Windows에서 심볼릭 링크 권한 에러(WinError 1314) 방지
 if platform.system() == "Windows":
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # [추가] 다운로드 로그가 UI를 해치는 것 방지
 import io
 import wave
 import base64
@@ -30,9 +31,12 @@ MACHINE = platform.machine().lower()
 IS_PI = "arm" in MACHINE or "aarch64" in MACHINE
 
 # Whisper 전용 설정
+import torch
 MODEL_SIZE  = config.STT_WHISPER_MODEL
-DEVICE_TYPE = "cpu"       # 실행 장치 (cpu 또는 cuda)
-COMPUTE     = "int8"      # 연산 정밀도
+DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
+COMPUTE     = "float16" if DEVICE_TYPE == "cuda" else "int8"
+
+print(f"[STT] 가속 장치 초기화: {DEVICE_TYPE.upper()} (연산: {COMPUTE})")
 
 # 오디오 사양
 SAMPLE_RATE  = 44100      # 기본 샘플링 레이트 (X-PRO 등은 44100 우선)
@@ -159,7 +163,16 @@ def _load_model():
     print(f"[STT] 'WHISPER' 백업 모드 가동 중 ({MODEL_SIZE})...", end=" ", flush=True)
     try:
         from faster_whisper import WhisperModel
-        model = WhisperModel(MODEL_SIZE, device=DEVICE_TYPE, compute_type=COMPUTE)
+        # [최적화] 모델을 로컬 'models' 폴더에 저장하여 관리
+        model_path = os.path.join(os.getcwd(), "models")
+        os.makedirs(model_path, exist_ok=True)
+        
+        # 모델 명칭 강제 매핑 (large-v3-turbo가 1.6G로 오해받지 않도록)
+        actual_model = MODEL_SIZE
+        if "turbo" in MODEL_SIZE.lower():
+            actual_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
+            
+        model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE, download_root=model_path)
         print("완료")
         return model
     except ImportError:

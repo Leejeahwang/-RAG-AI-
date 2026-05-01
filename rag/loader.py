@@ -35,22 +35,45 @@ def load_and_split():
             all_chunks.append(doc)
         print(f"✅ JSON 데이터 로드 완료: {len(data)}개 청크 수집")
 
-    # 2. 추가 TXT 파일 로드 (새로 추가된 매뉴얼 등)
+    # 2. 추가 TXT 파일 로드 (가장 견고한 수동 인코딩 시도 방식)
     txt_files = glob.glob(os.path.join(data_dir, "**/*.txt"), recursive=True)
     if txt_files:
         print(f"📄 추가 텍스트 문서 {len(txt_files)}개를 감지했습니다.")
-        # DirectoryLoader를 통해 모든 txt 파일 로드
-        loader = DirectoryLoader(data_dir, glob="**/*.txt", loader_cls=TextLoader,
-                                 loader_kwargs={"encoding": "utf-8"})
-        documents = loader.load()
-
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
             chunk_overlap=config.CHUNK_OVERLAP,
         )
-        txt_chunks = splitter.split_documents(documents)
-        all_chunks.extend(txt_chunks)
-        print(f"✅ 텍스트 데이터 분할 완료: {len(txt_chunks)}개 청크 추가")
+
+        for txt_path in txt_files:
+            content = ""
+            # 1순위: UTF-8 시도
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                # 2순위: CP949(EUC-KR) 시도
+                try:
+                    with open(txt_path, "r", encoding="cp949") as f:
+                        content = f.read()
+                except Exception as e:
+                    print(f"⚠️ 파일 로드 실패 ({txt_path}): {e}")
+                    continue
+            
+            if content:
+                doc = Document(
+                    page_content=content,
+                    metadata={"source": os.path.basename(txt_path)}
+                )
+                txt_chunks = splitter.split_documents([doc])
+                
+                # [품질 향상] 각 청크 상단에 출처 정보를 주입하여 컨텍스트 보존
+                for chunk in txt_chunks:
+                    source_name = chunk.metadata.get("source", "알 수 없는 매뉴얼")
+                    chunk.page_content = f"### [출처: {source_name}]\n\n" + chunk.page_content
+                
+                all_chunks.extend(txt_chunks)
+        
+        print(f"✅ 텍스트 데이터 통합 완료: {len(all_chunks) - (len(data) if 'data' in locals() else 0)}개 청크 추가")
 
     if not all_chunks:
         print(f"⚠️ {data_dir}/ 폴더에 로드할 수 있는 지식이 없습니다.")

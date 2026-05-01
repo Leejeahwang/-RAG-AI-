@@ -17,4 +17,5 @@ backups/
 scratch/
 chroma_db_speed/
 
-# 주: data/raw_documents/ 및 chroma_db/는 이제 Git 추적 대상에 포함됩니다.
+models/
+chroma_db/

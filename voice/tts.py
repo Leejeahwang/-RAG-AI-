@@ -6,58 +6,54 @@ import threading
 import time
 import tempfile
 import pygame
+import pyttsx3
+import config
 from voice.melo_wrapper import MeloEngine
 
 class TTSHelper:
     """
-    TTSHelper: MeloTTS 기반 고품질 다국어 음성 합성 모듈
+    TTSHelper: 다중 엔진 지원 지능형 음성 합성 모듈
     ======================================================================
-    - MeloEngine을 사용하여 딥러닝 기반의 자연스러운 음성 생성
-    - Pygame Mixer를 사용하여 오디오 재생 및 중단 제어
-    - 대기열(Queue) 방식을 통해 문장 단위의 실시간 스트리밍 재생 지원
+    - [PYTTSX3]: 즉각적인 반응 속도 (SAPI5 기반, 오프라인 전용)
+    - [MELO]: 고품질 딥러닝 음성 (MeloTTS 기반, 가속기 권장)
+    - 대기열(Queue) 방식을 통해 문장 단위의 실시간 발화 지원
     """
-    def __init__(self, rate=1.0, volume=1.0):
-        self._rate = rate
+    def __init__(self, rate=None, volume=1.0):
+        self._engine_type = getattr(config, 'TTS_ENGINE', 'PYTTSX3')
+        self._rate = rate if rate else getattr(config, 'TTS_RATE', 190)
         self._volume = volume
         
-        # MeloTTS 엔진 로드 (최초 호출 시 모델 다운로드 발생 가능)
-        self._engine = MeloEngine()
-        
-        # 오디오 재생기 엔진 초기화
-        try:
-            pygame.mixer.init()
-        except Exception as e:
-            print(f"[TTS] 오디오 장치 초기화 실패: {e}")
-
         # 큐 및 스레드 설정
         self._queue = queue.Queue()
         self._stop_event = threading.Event()
         self._is_speaking = False
         
+        # 엔진별 초기화
+        self._melo_engine = None
+        self._sapi_engine = None
+        
+        if self._engine_type == "MELO":
+            self._melo_engine = MeloEngine()
+            try: pygame.mixer.init()
+            except: pass
+        
         self._worker_thread = threading.Thread(target=self._worker, daemon=True)
         self._worker_thread.start()
         
-        # 임시 파일 저장소
+        # 임시 파일 저장소 (MeloTTS 전용)
         self._temp_dir = os.path.join(tempfile.gettempdir(), "edge_saver_tts")
         os.makedirs(self._temp_dir, exist_ok=True)
         
-        print(f"[TTS] MeloTTS 최적화 엔진 준비 완료 (속도: {self._rate}x).")
+        print(f"[TTS] {self._engine_type} 엔진 준비 완료 (속도: {self._rate}).")
 
     def _worker(self):
-        """백그라운드에서 큐를 감시하며 순차적으로 음성을 합성하고 재생합니다."""
+        """백그라운드에서 큐를 처리하며 음성을 생성합니다."""
         while not self._stop_event.is_set():
             try:
-                # 큐에서 작업 가져오기 (timeout을 주어 주기적으로 stop_event 확인)
                 item = self._queue.get(timeout=0.2)
                 if item is None: break
                 
-                # 큐 아이템 파싱 (text, lang, speed)
-                if len(item) == 3:
-                    text, lang, speed = item
-                else:
-                    text, lang = item
-                    speed = self._rate # 기본값 사용
-                
+                text, lang, speed = item if len(item) == 3 else (*item, 1.0)
                 text = self._sanitize_text(text)
                 if not text:
                     self._queue.task_done()
@@ -65,56 +61,74 @@ class TTSHelper:
                 
                 self._is_speaking = True
                 
-                # 임시 결과 파일 경로
-                temp_file = os.path.join(self._temp_dir, f"melo_{int(time.time()*1000)}.wav")
-                
-                # 1. 고품질 음성 합성 (MeloTTS)
-                success = self._engine.speak_to_file(text, temp_file, lang=lang, speed=speed)
-                
-                if success and os.path.exists(temp_file):
-                    # 2. 오디오 출력 (Pygame)
+                if self._engine_type == "PYTTSX3":
+                    # [v17 - 일회용 엔진 전략] 
+                    # 문구별로 엔진을 새로 생성하여 스레드 교착 및 상태 고착을 원천 봉쇄합니다.
                     try:
-                        pygame.mixer.music.load(temp_file)
-                        pygame.mixer.music.set_volume(self._volume)
-                        pygame.mixer.music.play()
+                        temp_engine = pyttsx3.init()
+                        # 위험 수치에 따른 동적 속도 조절 반영
+                        current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                        temp_engine.setProperty('rate', current_rate)
+                        temp_engine.setProperty('volume', self._volume)
                         
-                        # 재생 완료될 때까지 대기
-                        while pygame.mixer.music.get_busy():
-                            if self._stop_event.is_set():
-                                pygame.mixer.music.stop()
-                                break
-                            time.sleep(0.05)
+                        temp_engine.say(text)
+                        temp_engine.runAndWait()
                         
-                        pygame.mixer.music.unload()
-                    except Exception as e:
-                        print(f"[TTS] 재생 오류: {e}")
-                    
-                    # 사용 완료된 임시 파일 삭제
-                    try: os.remove(temp_file)
-                    except: pass
+                        # [자원 해제] 명시적 중단 및 소멸
+                        temp_engine.stop()
+                        del temp_engine
+                    except Exception as sapi_ex:
+                        pass
+                else:
+                    # 2. 고품질 합성 엔진 (MeloTTS)
+                    # 2. 고품질 합성 엔진 (MeloTTS)
+                    temp_file = os.path.join(self._temp_dir, f"melo_{int(time.time()*1000)}.wav")
+                    if self._melo_engine.speak_to_file(text, temp_file, lang=lang, speed=speed):
+                        try:
+                            pygame.mixer.music.load(temp_file)
+                            pygame.mixer.music.play()
+                            while pygame.mixer.music.get_busy():
+                                if self._stop_event.is_set():
+                                    pygame.mixer.music.stop()
+                                    break
+                                time.sleep(0.05)
+                            pygame.mixer.music.unload()
+                            os.remove(temp_file)
+                        except: pass
                 
                 self._is_speaking = False
                 self._queue.task_done()
                 
-            except queue.Empty:
-                continue
+            except queue.Empty: continue
             except Exception as e:
-                # 무한 루프 방지 및 에러 로깅
+                print(f"[TTS] 워커 에러: {e}")
                 time.sleep(1)
 
     def _sanitize_text(self, text):
-        """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거"""
+        """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거 및 발음 최적화"""
         if not text: return ""
-        # 1. 마크다운 강조 기호(*)는 여백 없이 제거
+        
+        # [품질 향상] 목록 번호 발음 최적화: "1." -> "1번", "2." -> "2번"
+        # 묵음 현상을 방지하고 더 자연스러운 안내를 제공합니다.
+        text = re.sub(r'(\d+)\.\b', r'\1번', text)
+        
+        # 1. 마크다운 강조 기호(*) 및 기타 기호 제거
         text = text.replace('*', '')
-        # 2. 콜론(:)은 자연스러운 이음새를 위해 공백 하나로 치환 (쉼표보다 짧은 뜸)
-        text = text.replace(':', ' ')
+        text = text.replace('#', ' ')
+        
+        # 2. 콜론(:) 및 대시(-) 처리 (자연스러운 쉼표나 공백으로 치환)
+        text = text.replace(':', ', ')
+        text = text.replace('-', ' ')
+        
         # 3. 기타 마크다운 특수 기호 제거
-        text = re.sub(r'[#\-\|_`>]', ' ', text)
+        text = re.sub(r'[\|_`>]', ' ', text)
+        
         # 4. 허용되지 않은 나머지 특수문자 제거 (이모지 등)
         text = re.sub(r'[^\w\s\d.,?!\(\)\[\]]', ' ', text)
+        
         # 5. 연속된 공백을 하나로 압축하고 양끝 공백 제거
         text = re.sub(r'\s+', ' ', text).strip()
+        
         return text
 
     def speak(self, text, lang='ko', speed=None):
@@ -127,6 +141,16 @@ class TTSHelper:
         """비동기 방식으로 호환성 유지"""
         self.speak(text, lang, speed)
 
+    def warmup(self):
+        """음성 엔진 초기 지연 방지를 위한 모델 예열"""
+        if self._engine_type == "MELO" and self._melo_engine:
+            # 딥러닝 기반 모델은 미리 메모리에 로드
+            self._melo_engine.get_model('ko')
+            self._melo_engine.get_model('en')
+        elif self._engine_type == "PYTTSX3":
+            # SAPI 엔진은 가벼운 빈 문장으로 초기화 확인
+            self.speak_async(" ")
+
     def stop(self):
         """현재 진행 중인 재생을 즉시 멈추고 대기열을 비웁니다."""
         # 1. 대기열 비우기
@@ -137,9 +161,11 @@ class TTSHelper:
             except queue.Empty:
                 break
         
-        # 2. 현재 재생 중인 음악 중단
+        # 2. 현재 재생 중인 음성 중단 (엔진별 처리)
         try:
-            if pygame.mixer.get_init():
+            if self._engine_type == "PYTTSX3" and self._sapi_engine:
+                self._sapi_engine.stop()
+            elif pygame.mixer.get_init():
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()
         except:

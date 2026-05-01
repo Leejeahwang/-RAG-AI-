@@ -1,49 +1,51 @@
-"""
-🔥 엣지 세이버 (Edge Saver) — 전역 설정
+import os
 
-화재 감시 시스템의 모든 설정값을 한 곳에서 관리합니다.
-모델을 바꾸거나 센서 임계값을 조정할 때 이 파일만 수정하면 됩니다.
-"""
+# ── 시스템 전역 설정 ──
+APP_NAME = "엣지 세이버 (Edge Saver)"
+DEBUG = True
 
-# ── LLM 모델 설정 ──
-LLM_MODEL = "qwen2.5:1.5b"                 # 엣지 환경 최적화 (빠른 반응 속도)
-EMBEDDING_MODEL = "multilingual-e5-small"    # 라즈베리파이/노트북 통합 최적화 모델
+# ── LLM & STT 모델 설정 ──
+# [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
+LLM_MODEL = "qwen2.5:1.5b"
+STT_ENGINE = "WHISPER"
+STT_GEMMA_MODEL = "qwen2.5:1.5b"
+STT_WHISPER_MODEL = "large-v3-turbo"
+NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
+OLLAMA_BASE_URL = "http://localhost:11434"
 
-# ── STT(음성 인식) 설정 ──
-STT_ENGINE = "WHISPER"                       # "GEMMA" (통합 모달) 또는 "WHISPER" (전용)
-STT_GEMMA_MODEL = "qwen2.5:1.5b"             # STT용 멀티모달 모델
-STT_WHISPER_MODEL = "large-v3-turbo"           # Whisper Turbo (정확도 사수 + 속도 8배)
+# ── TTS(음성 출력) 설정 ──
+# [v47] Piper 공식 한국어 모델 부재로 인해, 즉각적인 오프라인 반응이 가능한 SAPI5 기반으로 임시 롤백
+TTS_ENGINE = "PYTTSX3"
+TTS_RATE = 190  # SAPI5(pyttsx3)의 부드러운 표준 속도 (기본 150~200)
+PIPER_MODEL = "models/piper/piper-kss-korean.onnx"
+PIPER_CONFIG = "models/piper/piper-kss-korean.onnx.json"
 
 # ── RAG 설정 ──
 VECTORDB_DIR = "chroma_db"
-DATA_DIR = "data"                          # 매뉴얼 데이터 폴더
-CHUNK_SIZE = 600                           # 청킹 크기 (자) - 표 데이터 보존을 위해 상향
-CHUNK_OVERLAP = 100                         # 청크 오버랩
+FAISS_INDEX_DIR = "faiss_db"
+DATA_DIR = "data"
+CHUNK_SIZE = 600
+CHUNK_OVERLAP = 100
 
 # ── 센서 임계값 설정 ──
 SENSOR_THRESHOLDS = {
-    "smoke_mq2": 300,           # MQ-2 연기감지 아날로그 값 기준
-    "gas_mq135": 400,           # MQ-135 가스감지 아날로그 값 기준
-    "temperature_high": 60,     # 이상 고온 (°C)
-    "temperature_low": -10,     # 이상 저온 (°C)
-    "humidity_low": 15,         # 이상 저습도 (%)
+    "smoke_mq2": 300,
+    "gas_mq135": 400,
+    "temperature_high": 60,
+    "temperature_low": -10,
+    "humidity_low": 15,
 }
 
 # ── 위험도 Level 기준 ──
-# Level 1(주의) ~ Level 5(재난)
 RISK_LEVELS = {
-    1: "주의",   # 단일 센서 미세 반응
-    2: "경고",   # 단일 센서 임계값 초과
-    3: "위험",   # 복수 센서 반응 + 카메라 연기 확인
-    4: "긴급",   # 복수 센서 + 카메라 불꽃 확인
-    5: "재난",   # 다수 구역 동시 반응
+    1: "주의",
+    2: "경고",
+    3: "위험",
+    4: "긴급",
+    5: "재난",
 }
 
 # ── 카메라 설정 ──
-CAMERA_INDEX = 0                           # 카메라 장치 인덱스 (0 = 기본)
-CAPTURE_WIDTH = 640                        # 캡처 이미지 최대 너비 (px)
-CAPTURE_PATH = "temp_capture.jpg"          # 임시 캡처 저장 경로
-
-# ── 알림 설정 ──
-ALERT_BUZZER_PIN = 18                      # GPIO 핀 번호 (부저)
-ALERT_LED_PIN = 23                         # GPIO 핀 번호 (경고 LED)
+CAMERA_INDEX = 0
+CAPTURE_WIDTH = 640
+CAPTURE_PATH = "temp_capture.jpg"
