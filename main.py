@@ -66,13 +66,22 @@ class EdgeSaver:
             self.qa = build_qa_chain(retriever)
 
             # --- 음성 엔진 추가 초기화 ---
-            print("[시스템] + 음성 출력(TTS) 엔진 준비 중...")
-            self.tts = TTSHelper()
+            try:
+                print("[시스템] + 음성 출력(TTS) 엔진 준비 중...")
+                self.tts = TTSHelper()
+            except Exception as e:
+                print(f"   ⚠️ TTS 초기화 실패 (스피커 없음 등): {e}")
+                self.tts = None
 
-            print("[시스템] + 음성 인식(STT) 엔진 준비 중...")
-            self.stt_model = _load_model()
-            self.pa = _get_pyaudio_instance()
-            self.stt_stream = _open_stream(self.pa)
+            try:
+                print("[시스템] + 음성 인식(STT) 엔진 준비 중...")
+                self.stt_model = _load_model()
+                self.pa = _get_pyaudio_instance()
+                self.stt_stream = _open_stream(self.pa)
+            except Exception as e:
+                print(f"   ⚠️ STT 마이크 초기화 실패 (마이크 없음 등): {e}")
+                self.stt_stream = None
+                self.pa = None
 
             self._initialized = True
             print("\n✅ 시스템 모든 모듈 초기화 완료!\n")
@@ -115,8 +124,11 @@ class EdgeSaver:
             
             send_alert(zone="A구역 센서노드_01", risk_level=3, sensor_details=sensor_info, ai_guidance=ai_response)
             
-            print("   📢 [음성 경보] TTS 비상 피난 방송을 시작합니다...")
-            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            if self.tts:
+                print("   📢 [음성 경보] TTS 비상 피난 방송을 시작합니다...")
+                self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            else:
+                print("   📢 (스피커가 연결되어 있지 않아 음성 경보는 생략됩니다)")
             
         except Exception as e:
             print(f"\n❌ RAG 생성 실패: {e}\n")
@@ -202,6 +214,9 @@ class EdgeSaver:
                 # 음성 인식 모드 진입
                 lang = 'ko'
                 if query == "" or query.lower() in ['v', 'voice', '음성']:
+                    if self.stt_stream is None:
+                        print("\n⚠️ 마이크가 연결되어 있지 않아 텍스트 모드만 지원됩니다. 다시 질문을 입력해 주세요.")
+                        continue
                     print("\n🎤 음성 인식 모드입니다. 바로 말씀해 주세요.")
                     query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream, use_wake_word=False)
                     
@@ -228,7 +243,8 @@ class EdgeSaver:
                 print("=" * 55 + "\n")
 
                 # TTS 음성 출력 (감지된 언어에 맞게 출력)
-                self.tts.speak_async(answer, lang=lang)
+                if self.tts:
+                    self.tts.speak_async(answer, lang=lang)
 
             except KeyboardInterrupt:
                 print("\n\n사용자에 의해 시스템이 중단되었습니다.")
