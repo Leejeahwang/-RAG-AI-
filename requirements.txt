@@ -19,7 +19,6 @@ langchain-community
 faiss-cpu
 sentence-transformers
 ollama
-ollama
 pypdf
 python-docx
 python-pptx
@@ -28,7 +27,6 @@ beautifulsoup4
 requests
 
 # --- Voice Processing (STT & TTS) ---
-melotts @ git+https://github.com/myshell-ai/MeloTTS.git
 faster-whisper
 pyttsx3
 pygame
