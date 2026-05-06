@@ -1,0 +1,5 @@
+path: c:/Users/admin/OneDrive/Desktop/SW_RAG/-RAG-AI-/vision/dataset
+train: .
+val: .
+nc: 2
+names: ['fire', 'smoke']

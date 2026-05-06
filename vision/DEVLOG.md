@@ -5,6 +5,24 @@
 
 ---
 
+## 📅 2026-05-02
+
+### 🚀 진행 내용
+- `main` 브랜치의 원본 모델(`fire_smoke.pt`)을 기반으로 FP16, INT8 양자화(Quantization) 모델 생성 및 테스트 파이프라인 구축
+- `ultralytics` 기반의 INT8 Export 스크립트(`export_int8.py`) 작성 및 캘리브레이션용 데이터셋(77장) 연동
+- 라즈베리파이 CPU 아키텍처에 최적화된 **OpenVINO INT8** 포맷 채택 (용량 6MB -> 3.4MB로 43% 압축 성공)
+- Base, FP16, INT8 세 가지 포맷의 디스크 용량, 평균 추론 시간, 감지 신뢰도를 자동 측정하는 벤치마킹 툴(`benchmark.py`) 자체 개발
+
+### 💥 발생한 문제 (Issue)
+- `ultralytics`를 활용해 TFLite 포맷으로 INT8 변환 시도 중, 파이썬 최신 버전(3.14.3)과 `tensorflow` 패키지 버전 호환성 문제로 인해 설치(AutoUpdate) 실패 에러 발생
+- NCNN 포맷의 경우 현재 `ultralytics` 버전에서 `int8=True` 인자를 공식 지원하지 않아 Export 에러 발생
+
+### 💡 해결 및 배운 점 (Solution/TIL)
+- 텐서플로우 의존성을 탈피하고 CPU 추론에 강점이 있는 **Intel OpenVINO** 포맷으로 우회하여 INT8 변환 성공 (`nncf` 및 `openvino` 패키지 활용)
+- 캘리브레이션 시 100장 미만의 데이터라도 대표성을 띤 이미지를 주입하면, 양자화로 인한 정확도 손실 대신 오히려 가중치 영점 조절이 잘 되어 신뢰도(Confidence)가 대폭 상승(34% -> 58%)하는 유의미한 현상을 벤치마크 결과로 증명함
+
+---
+
 ## 📅 2026-04-01
 
 ### 🚀 진행 내용
