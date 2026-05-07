@@ -12,27 +12,42 @@ import pyaudio
 import platform
 import os
 import sys
-from faster_whisper import WhisperModel
+
+# Windows에서 심볼릭 링크 권한 에러(WinError 1314) 방지
+if platform.system() == "Windows":
+    os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # [추가] 다운로드 로그가 UI를 해치는 것 방지
+import io
+import wave
+import base64
+# import ollama  # Gemma STT 미사용으로 주석 처리
+import config
 
 # ------------------------------------------------
-# 시스템 설정
+# 시스템 설정 (config.py 연동)
 # ------------------------------------------------
 IS_WINDOWS = platform.system() == "Windows"
 MACHINE = platform.machine().lower()
 IS_PI = "arm" in MACHINE or "aarch64" in MACHINE
 
-MODEL_SIZE  = "base"      # 모델 크기 (base, small, medium 등)
-DEVICE_TYPE = "cpu"       # 실행 장치 (cpu 또는 cuda)
-COMPUTE     = "int8"      # 연산 정밀도
+# Whisper 전용 설정
+import torch
+MODEL_SIZE  = config.STT_WHISPER_MODEL
+DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
+COMPUTE     = "float16" if DEVICE_TYPE == "cuda" else "int8"
+
+print(f"[STT] 가속 장치 초기화: {DEVICE_TYPE.upper()} (연산: {COMPUTE})")
+
+# 오디오 사양
 SAMPLE_RATE  = 44100      # 기본 샘플링 레이트 (X-PRO 등은 44100 우선)
-WHISPER_RATE = 16000      # Whisper 모델용 샘플링 레이트
+WHISPER_RATE = 16000      # 모델용 샘플링 레이트 (16kHz 표준)
 CHUNK_SEC    = 0.5        # 처리 단위 (초)
 
 STREAM_CHANNELS = 1
 STREAM_FORMAT   = pyaudio.paInt16
 STREAM_DEVICE   = None
 
-SILENCE_THRESHOLD = 0.01  # 무음 감지 임계값 (예민하게 조정)
+SILENCE_THRESHOLD = 0.001  # 감도 극대화 (0.005 -> 0.001)
 WAKE_WORDS      = ["세이버", "에이버", "세이 버", "세이바", "saver"] # 호출어
 SILENCE_TIMEOUT = 1.8     # 무음 종료 대기 시간 (약간 늘림)
 
@@ -93,12 +108,6 @@ def _find_best_device(pa: pyaudio.PyAudio):
 
 def _open_stream(pa: pyaudio.PyAudio) -> pyaudio.Stream:
     global STREAM_CHANNELS, STREAM_FORMAT, STREAM_DEVICE, SAMPLE_RATE
-    
-    # 물리적 마이크가 없을 때 PyAudio가 강제 종료(Segfault)되는 것을 막기 위한 방어 로직
-    valid_inputs = [i for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get("maxInputChannels", 0) > 0]
-    if not valid_inputs:
-        raise RuntimeError("물리적 마이크 장치가 감지되지 않았습니다.")
-
     device_idx, max_channels = _find_best_device(pa)
     STREAM_DEVICE = device_idx
     
@@ -131,31 +140,108 @@ def _open_stream(pa: pyaudio.PyAudio) -> pyaudio.Stream:
 # ------------------------------------------------
 # 오디오 처리 로직
 # ------------------------------------------------
-def _load_model() -> WhisperModel:
-    print(f"[STT] 플랫폼: {platform.system()}")
-    print(f"[STT] faster-whisper 모델 로드 중 ({MODEL_SIZE})...", end=" ", flush=True)
-    model = WhisperModel(MODEL_SIZE, device=DEVICE_TYPE, compute_type=COMPUTE)
-    print("완료")
-    return model
+def _numpy_to_wav(audio_np: np.ndarray) -> bytes:
+    """Numpy 오디오 데이터를 WAV 바이너리로 변환 (Ollama 전용)"""
+    # -1.0 ~ 1.0 -> Int16 변환
+    audio_int16 = (audio_np * 32767).astype(np.int16)
+    
+    with io.BytesIO() as wav_io:
+        with wave.open(wav_io, 'wb') as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2) # 16-bit
+            wav_file.setframerate(WHISPER_RATE)
+            wav_file.writeframes(audio_int16.tobytes())
+        return wav_io.getvalue()
 
-def _transcribe(model: WhisperModel, audio_np: np.ndarray) -> tuple[str, str]:
-    """오디오 데이터를 텍스트로 변환 및 언어 감지"""
+def _load_model():
+    """설정에 따라 STT 엔진 모델 로드 (Gemma 모드시 로드 스킵)"""
+    if config.STT_ENGINE == "GEMMA":
+        print(f"[STT] 'GEMMA' 통합 모드 사용 (Ollama: {config.STT_GEMMA_MODEL})")
+        return None # Gemma는 API를 통해 로컬 Ollama 서버와 통신하므로 로컬 로드 불요
+        
+    print(f"[STT] 플랫폼: {platform.system()}")
+    print(f"[STT] 'WHISPER' 백업 모드 가동 중 ({MODEL_SIZE})...", end=" ", flush=True)
+    try:
+        from faster_whisper import WhisperModel
+        # [최적화] 모델을 로컬 'models' 폴더에 저장하여 관리
+        model_path = os.path.join(os.getcwd(), "models")
+        os.makedirs(model_path, exist_ok=True)
+        
+        # 모델 명칭 강제 매핑 (large-v3-turbo가 1.6G로 오해받지 않도록)
+        actual_model = MODEL_SIZE
+        if "turbo" in MODEL_SIZE.lower():
+            actual_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
+            
+        model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE, download_root=model_path)
+        print("완료")
+        return model
+    except ImportError:
+        print("실패 (라이브러리 없음)")
+        return None
+
+def _transcribe(model, audio_np: np.ndarray) -> tuple[str, str]:
+    """설정된 엔진에 따라 오디오를 텍스트로 변환"""
+    # 1. 소프트웨어 게인 증폭 (소리가 매우 작은 사용자 환경을 위해 15배 증폭)
+    audio_np = audio_np * 15.0
+    
+    # 볼륨 정문화 (Normalization 및 클리핑 방지)
     max_val = np.abs(audio_np).max()
     if max_val > 0.01:
         audio_np = audio_np / max_val * 0.9
-        
-    # language=None으로 설정하여 자동 언어 감지 활성
+
+    """
+    # [사용자 요청으로 주석 처리] 1. Gemma 4 네이티브 STT 모드
+    if config.STT_ENGINE == "GEMMA":
+        try:
+            wav_bytes = _numpy_to_wav(audio_np)
+            
+            # [DEBUG] 실제로 보낸 소리를 파일로 저장하여 확인 (사용자용)
+            with open("debug_stt.wav", "wb") as f:
+                f.write(wav_bytes)
+
+            response = ollama.chat(
+                model=config.STT_GEMMA_MODEL,
+                messages=[{
+                    'role': 'user',
+                    'content': 'Transcribe the provided audio to text accurately.',
+                    'audio': [wav_bytes] 
+                }]
+            )
+            text = response['message']['content'].strip()
+            
+            if "provide the audio" in text.lower() or not text:
+                response = ollama.chat(
+                    model=config.STT_GEMMA_MODEL,
+                    messages=[{
+                        'role': 'user',
+                        'content': 'Transcribe the provided audio to text accurately.',
+                        'images': [wav_bytes] 
+                    }]
+                )
+                text = response['message']['content'].strip()
+
+            print(f" [DEBUG Gemma STT] >> '{text}'")
+            return text, "ko"
+        except Exception as e:
+            print(f"[STT] Gemma 인식 오류: {e}")
+            return "", "ko"
+    """
+
+    # 2. Whisper 백업 모드
+    if model is None: return "", "ko"
+    
     segments, info = model.transcribe(
         audio_np, 
-        language=None, 
-        beam_size=1, # 5 -> 1로 변경하여 속도 향상
-        initial_prompt="안녕하세요.",
+        language="ko", # 한국어로 강제 고정하여 인식률 향상
+        beam_size=5,
+        initial_prompt="아파트 화재, 대응방법, 소화기 사용법, 대피 요령, 비상벨, 소방 대피, 긴급 상황.",
         vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 500},
+        vad_parameters={"min_silence_duration_ms": 700}, # 무음 감지 기준 상향하여 잘림 방지
+        condition_on_previous_text=False, # 이전 문맥 무시하여 환각 방지
+        temperature=0.0 # 무작위성 제거
     )
     text = " ".join(seg.text.strip() for seg in segments).strip()
     
-    # [언어 감사 정책] 감지 확률이 너무 낮으면(60% 미만) 잡음으로 간주
     if info.language_probability < 0.6:
         return "", "ko"
         
@@ -283,8 +369,8 @@ def run_realtime():
         stream.stop_stream(); stream.close(); pa.terminate()
         print("[STT] 종료되었습니다.")
 
-def listen_once(model=None, pa=None, stream=None, use_wake_word=True) -> str:
-    """음성 인식 수행 (선택적으로 호출어 대기 가능)"""
+def listen_once(model=None, pa=None, stream=None, use_wake_word=True, allowed_langs=['ko', 'en', 'ja', 'zh']) -> str:
+    """음성 인식 수행 (선택적으로 호출어 대기 가능 및 언어 필터링 지원)"""
     if model is None: model = _load_model()
     close_pa = False
     if pa is None: pa = _get_pyaudio_instance(); close_pa = True
@@ -308,10 +394,10 @@ def listen_once(model=None, pa=None, stream=None, use_wake_word=True) -> str:
         is_active = False
         silence_count = 0
         
+        pre_buffer = [] # 첫 단어 잘림 방지용 예비 버퍼
         while True:
-            chunk = _record_chunk(stream, 0.5)
+            chunk = _record_chunk(stream, 0.2) # 0.5 -> 0.2로 세분화하여 반응성 향상
             
-            # [게이지 출력] 실시간 음량 시각화 (사용자 요청 사항)
             rms_val = np.sqrt(np.mean(chunk**2)) * 32768
             peak_val = np.abs(chunk).max() * 32768
             bar_len = int(min(rms_val / 500, 30))
@@ -319,18 +405,26 @@ def listen_once(model=None, pa=None, stream=None, use_wake_word=True) -> str:
             print(f"[Mic Level: {bar}] Peak: {int(peak_val):<5}", end="\r")
 
             rms = np.abs(chunk).mean()
-            if rms >= (SILENCE_THRESHOLD * 0.5):
-                is_active = True
+            if rms >= (SILENCE_THRESHOLD * 0.4): # 민감도 살짝 상향
+                if not is_active:
+                    is_active = True
+                    # 침묵 구간의 마지막 0.6초(3개 청크)를 합쳐서 첫 단어 복원
+                    question_buffer.extend(pre_buffer[-3:]) 
+                
                 question_buffer.append(chunk)
                 silence_count = 0
             else:
                 if is_active:
                     question_buffer.append(chunk)
                     silence_count += 1
-                    if silence_count >= int(SILENCE_TIMEOUT / 0.5): break
+                    if silence_count >= int(SILENCE_TIMEOUT / 0.2): break
                 else:
+                    # 아직 말을 안 할 때는 예비 버퍼에 지속 저장 (최대 5개 유지)
+                    pre_buffer.append(chunk)
+                    if len(pre_buffer) > 5: pre_buffer.pop(0)
+                    
                     silence_count += 1
-                    if silence_count > 20: return "", "" # 장시간 침묵 시 빈 값 세트 반환
+                    if silence_count > 50: return "", "" 
 
         if not question_buffer:
             print(" " * 60, end="\r") # 게이지 지우기
@@ -342,10 +436,10 @@ def listen_once(model=None, pa=None, stream=None, use_wake_word=True) -> str:
         
         # [환각 및 오판 방지 정책]
         # 1. 2글자 미만 무시
-        # 2. 지정된 언어(ko, en, ja, zh)가 아니면 소음으로 간주 (it, es 등 환각 방지)
-        allowed_langs = ['ko', 'en', 'ja', 'zh']
-        if len(question.strip()) < 2 or lang not in allowed_langs:
+        # 2. 지정된 언어(allowed_langs)가 아니면 소음으로 간주
+        if len(question.strip()) < 2 or (allowed_langs and lang not in allowed_langs):
             return "", "" # 무시하고 다시 대기
+
             
     finally:
         if close_stream: stream.stop_stream(); stream.close()

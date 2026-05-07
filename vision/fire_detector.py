@@ -23,7 +23,7 @@ POSSIBLE_MODELS = [
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.10  # 40% 이상의 확신이 있을 때만 화재로 간주
+CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
 try:
     # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.

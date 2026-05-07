@@ -9,34 +9,20 @@ import random
 import config
 
 
-def read_gas_level(simulate=False):
+def read_gas_level(simulate=True):
     """
     가스 센서 값을 읽어옵니다.
 
-    Args:
-        simulate: True면 시뮬레이션 값 반환, False면 실제 GPIO 읽기
-
     Returns:
         int: 가스 농도 (아날로그 0~1023)
+
+    TODO (재황님):
+        Phase 3에서 MQ-135 + MCP3008 ADC 연동
     """
     if simulate:
         return random.randint(100, 200)
 
-    try:
-        from gpiozero import MCP3008
-    except ImportError:
-        print("⚠️ [경고] gpiozero 라이브러리가 없습니다.")
-        return read_gas_level(simulate=True)
-
-    try:
-        # MQ-135는 보통 다른 채널(예: 채널 1)에서 읽기
-        adc = MCP3008(channel=1)
-        value = int(adc.value * 1023)
-        adc.close()
-        return value
-    except Exception as e:
-        print(f"❌ [오류] 가스 센서에서 값을 읽어오지 못했습니다: {e}")
-        return read_gas_level(simulate=True)
+    raise NotImplementedError("GPIO 연동은 라즈베리파이에서 구현 예정")
 
 
 def is_gas_detected(value=None):

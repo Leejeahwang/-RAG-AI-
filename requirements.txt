@@ -1,13 +1,36 @@
+# --- Core AI & Framework ---
+torch
+torchaudio
+torchvision
+numpy
+pillow
+python-dotenv
+prompt-toolkit
+colorama
+
+# --- Vision & Sensors (Area strictly preserved) ---
+ultralytics
+opencv-python
+psutil
+paho-mqtt
+roboflow
+
+# --- RAG & Data Engine ---
 langchain
 langchain-community
-langchain-core
-langchain-classic
 langchain-text-splitters
-chromadb
-opencv-python
-paho-mqtt
-numpy
-pyaudio
-pyttsx3
+faiss-cpu
+sentence-transformers
+ollama
+pypdf
+python-docx
+python-pptx
+olefile
+beautifulsoup4
+requests
+
+# --- Voice Processing (STT & TTS) ---
 faster-whisper
-roboflow
+pyttsx3
+pygame
+pyaudio
