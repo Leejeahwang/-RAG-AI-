@@ -138,8 +138,12 @@ class EdgeSaver:
             print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 _ = self.stt_model
-                _ = self.stt_stream
-            print("완료")
+                stream = self.stt_stream
+            
+            if stream is None:
+                print("⚠️  (마이크 없음 - 텍스트 전용 모드)")
+            else:
+                print("완료")
 
             print("[시스템] 🔊 음성 출력(TTS) 모델 예열 중...", end=" ", flush=True)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
