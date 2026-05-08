@@ -32,9 +32,9 @@ def call_ollama_native(prompt):
         "options": {
             "temperature": 0.1,
             "repeat_penalty": 1.2,
-            "num_predict": 512,       # 답변이 중간에 길게 잘리지 않도록 토큰 허용치 2배 증가
-            "num_ctx": 2048,          # 검색된 문서가 충분히 다 들어갈 수 있도록 문맥 길이 확장
-            "num_thread": 8
+            "num_predict": 300,       # [최적화] 빠른 답변 생성을 위해 출력 길이 제한
+            "num_ctx": 1024,          # [최적화] CPU 연산 부하를 줄이기 위해 문맥 길이 축소
+            "num_thread": 4           # 라즈베리파이 5 코어 수에 맞춤
         }
     }
     
