@@ -39,7 +39,8 @@ def call_ollama_native(prompt):
     }
     
     try:
-        with requests.post(url, json=payload, stream=True, timeout=60) as response:
+        # 라즈베리파이 환경을 고려하여 타임아웃을 300초(5분)로 연장
+        with requests.post(url, json=payload, stream=True, timeout=300) as response:
             if response.status_code != 200:
                 yield f"[시스템 에러] Ollama 서버 응답 실패 ({response.status_code})"
                 return
