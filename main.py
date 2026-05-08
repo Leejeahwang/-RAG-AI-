@@ -135,15 +135,18 @@ class EdgeSaver:
             print("완료")
 
             # STT 엔진 로드
-            print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                _ = self.stt_model
-                stream = self.stt_stream
-            
-            if stream is None:
-                print("⚠️  (마이크 없음 - 텍스트 전용 모드)")
+            if getattr(config, 'STT_ENABLED', True):
+                print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    _ = self.stt_model
+                    stream = self.stt_stream
+                
+                if stream is None:
+                    print("⚠️  (마이크 미감지 - 텍스트 전용 모드)")
+                else:
+                    print("완료")
             else:
-                print("완료")
+                print("[시스템] 🎤 음성 인식(STT) 기능이 비활성화되었습니다. (텍스트 모드)")
 
             print("[시스템] 🔊 음성 출력(TTS) 모델 예열 중...", end=" ", flush=True)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -271,6 +274,9 @@ class EdgeSaver:
                     if self.tts: self.tts.stop()
                     
                     if query == "" or query.lower() in ['v', 'voice']:
+                        if not getattr(config, 'STT_ENABLED', True) or self.stt_stream is None:
+                            print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
+                            continue
                         print("\n🎤 말씀해 주세요...")
                         query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream)
                         if not query: continue

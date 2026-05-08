@@ -77,6 +77,22 @@ SILENCE_TIMEOUT = 1.8     # 무음 종료 대기 시간 (약간 늘림)
 # 장치 및 스트림 관리
 # ------------------------------------------------
 def _get_pyaudio_instance():
+    # 1. 설정에서 비활성화된 경우 즉시 반환
+    if not getattr(config, 'STT_ENABLED', True):
+        return None
+        
+    # 2. 리눅스에서 실제 사운드 카드가 있는지 확인 (세그멘테이션 오류 방지)
+    if platform.system() == "Linux":
+        try:
+            if os.path.exists("/proc/asound/cards"):
+                with open("/proc/asound/cards", "r") as f:
+                    cards = f.read().strip()
+                    if "no soundcards" in cards or not cards:
+                        print("⚠️ [STT] 시스템에 감지된 사운드 카드가 없어 음성 인식을 비활성화합니다.")
+                        return None
+        except:
+            pass
+
     try:
         with no_alsa_error():
             return pyaudio.PyAudio()
