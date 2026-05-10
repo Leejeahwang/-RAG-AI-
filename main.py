@@ -109,6 +109,7 @@ class EdgeSaver:
     def _trigger_rag_and_tts(self, prompt, sensor_info):
         """RAG로 대응 지침 생성 및 TTS 음성 방송"""
         print(f"   > 질의 생성: {prompt}")
+        cctv_service.camera_paused = True
         try:
             if self.tts:
                 self.tts.stop()
@@ -132,6 +133,8 @@ class EdgeSaver:
             
         except Exception as e:
             print(f"\n❌ RAG 생성 실패: {e}\n")
+        finally:
+            cctv_service.camera_paused = False
 
     def start_sensor_monitoring(self):
         """백그라운드에서 센서 데이터를 주기적으로 검사합니다."""
@@ -237,18 +240,22 @@ class EdgeSaver:
                     break
                 
                 print("\n[검색] 대응 지침 생성 중...")
-                result = self.qa.invoke(query)
-                answer = result['result']
-
-                print("\n" + "=" * 55)
-                print("🚨 [대응 지침]")
-                print("=" * 55)
-                print(f"\n{answer}\n")
-                print("=" * 55 + "\n")
-
-                # TTS 음성 출력 (감지된 언어에 맞게 출력)
-                if self.tts:
-                    self.tts.speak_async(answer, lang=lang)
+                cctv_service.camera_paused = True
+                try:
+                    result = self.qa.invoke(query)
+                    answer = result['result']
+    
+                    print("\n" + "=" * 55)
+                    print("🚨 [대응 지침]")
+                    print("=" * 55)
+                    print(f"\n{answer}\n")
+                    print("=" * 55 + "\n")
+    
+                    # TTS 음성 출력 (감지된 언어에 맞게 출력)
+                    if self.tts:
+                        self.tts.speak_async(answer, lang=lang)
+                finally:
+                    cctv_service.camera_paused = False
 
             except KeyboardInterrupt:
                 print("\n\n사용자에 의해 시스템이 중단되었습니다.")

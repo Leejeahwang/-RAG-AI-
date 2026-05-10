@@ -18,6 +18,7 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 
 latest_frame = None
 camera_running = True
+camera_paused = False
 DEBUG_MODE = True
 
 def cleanup_old_captures(days=3):
@@ -70,6 +71,10 @@ def camera_worker_thread():
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다.")
     
     while camera_running:
+        if camera_paused:
+            time.sleep(0.5)
+            continue
+            
         if not use_rpicam:
             ret, frame = cap.read()
             if ret and frame is not None:
