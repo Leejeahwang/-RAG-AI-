@@ -179,7 +179,10 @@ class EdgeSaver:
                     if not alarm_handled:
                         trigger_alarm(level, f"[SYSTEM] 융합 재난 감지! (LV.{level} - {risk['details']})")
                         print(f"\n🚨 [위험 격상] {risk['label'].upper()} 상황 판정! AI 긴급 개입 시작...")
-                        prompt = f"경고: 공장 내 센서와 CCTV 융합 교차 검증 결과, 심각한 화재 재난 위험(LV.{level})이 확정 감지되었습니다. (원인: {risk['details']}). 이 위급 상황에 맞는 뼈대가 되는 핵심 대피 지시 사항을 방송용으로 가장 짧고 강하게 생성해줘."
+                        
+                        # AI 연산 부담을 줄이고 빠른 답변을 유도하기 위해 프롬프트를 아주 짧고 간결하게 수정
+                        prompt = f"화재 감지! (원인: {risk['details']}). 대피 방송 문구를 무조건 딱 1문장으로 아주 짧게 만들어."
+                        
                         self._trigger_rag_and_tts(prompt, risk['details'])
                         alarm_handled = True
                 else: 
