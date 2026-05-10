@@ -181,7 +181,7 @@ class EdgeSaver:
                         print(f"\n🚨 [위험 격상] {risk['label'].upper()} 상황 판정! AI 긴급 개입 시작...")
                         
                         # AI 연산 부담을 줄이고 빠른 답변을 유도하기 위해 프롬프트를 아주 짧고 간결하게 수정
-                        prompt = f"화재 감지! (원인: {risk['details']}). 대피 방송 문구를 무조건 딱 1문장으로 아주 짧게 만들어."
+                        prompt = f"A구역 화재 발생 (원인: {risk['details']}). 대책 필요."
                         
                         self._trigger_rag_and_tts(prompt, risk['details'])
                         alarm_handled = True
