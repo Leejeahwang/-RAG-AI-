@@ -21,17 +21,24 @@ SYSTEM_PROMPT = """너는 재난 대응 전문가인 '엣지 세이버'야.
 
 답변:"""
 
-def call_ollama_native(prompt):
-    """requests를 사용하여 Ollama에 직접 스트리밍 요청을 보냅니다."""
-    url = f"{config.OLLAMA_BASE_URL}/api/generate"
+def call_ollama_native(prompt, system_prompt="", context="", question=""):
+    """requests를 사용하여 Ollama에 직접 스트리밍 요청을 보냅니다. (Chat API 사용)"""
+    url = f"{config.OLLAMA_BASE_URL}/api/chat"
+    
+    # SYSTEM_PROMPT에서 분리하여 Chat API 규격에 맞게 메시지 구성
+    messages = [
+        {"role": "system", "content": "제공된 [참고 매뉴얼]을 바탕으로 질문에 대해 충실하게 답변해.\n\n[수칙]\n1. (필수) 매뉴얼에 있는 [출처], [위치] 메타데이터나 불필요한 마크다운 기호(###, ---)는 출력하지 마.\n2. 긴급한 '대피/대처' 질문에는 핵심 결론부터 짧고 강하게 답변해.\n3. 모든 답변은 음성으로 읽기 좋게 문장형(-습니다, -에요)으로 작성해."},
+        {"role": "user", "content": f"[참고 매뉴얼]\n{prompt}\n\n위 매뉴얼을 바탕으로 다음 질문에 대답해줘.\n질문: {question}"}
+    ]
+
     payload = {
         "model": config.LLM_MODEL,
-        "prompt": prompt,
+        "messages": messages,
         "stream": True,
-        "keep_alive": "24h",  # 한 번 메모리에 올린 모델을 24시간 동안 내리지 않음 (최초 로딩 이후 지연 시간 완전 제거)
+        "keep_alive": "24h",
         "options": {
-            "temperature": 0.1,       # 0.0일 때 특정 소형 모델이 멈추는 현상 방지
-            "repeat_penalty": 1.05,   # 1.2가 소형 모델에게 너무 가혹하여 입을 닫아버리는 현상(EOS) 방지
+            "temperature": 0.1,
+            "repeat_penalty": 1.05,
             "num_predict": 300,
             "num_ctx": 2048,
             "num_thread": 4,
@@ -49,7 +56,8 @@ def call_ollama_native(prompt):
             for line in response.iter_lines():
                 if line:
                     chunk = json.loads(line.decode("utf-8"))
-                    token = chunk.get("response", "")
+                    # Chat API는 response 대신 message.content 안에 토큰이 들어있습니다.
+                    token = chunk.get("message", {}).get("content", "")
                     if token:
                         yield token
                     if chunk.get("done", False):

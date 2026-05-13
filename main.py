@@ -316,8 +316,8 @@ class EdgeSaver:
                     
                     try:
                         from rag.chain import call_ollama_native
-                        # [v35] 직접 스트리밍 호출
-                        for token in call_ollama_native(formatted_prompt):
+                        # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
+                        for token in call_ollama_native(prompt=context_text, question=query):
                             print(token, end="", flush=True)
                             sentence_buffer += token
                             
