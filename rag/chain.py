@@ -30,12 +30,12 @@ def call_ollama_native(prompt):
         "stream": True,
         "keep_alive": "24h",  # 한 번 메모리에 올린 모델을 24시간 동안 내리지 않음 (최초 로딩 이후 지연 시간 완전 제거)
         "options": {
-            "temperature": 0.0,       # 샘플링 연산 최소화 및 답변 일관성(품질) 극대화
-            "repeat_penalty": 1.2,
+            "temperature": 0.1,       # 0.0일 때 특정 소형 모델이 멈추는 현상 방지
+            "repeat_penalty": 1.05,   # 1.2가 소형 모델에게 너무 가혹하여 입을 닫아버리는 현상(EOS) 방지
             "num_predict": 300,
-            "num_ctx": 2048,          # 6개의 지식이 온전히 들어가 품질을 유지하도록 다시 확장
+            "num_ctx": 2048,
             "num_thread": 4,
-            "use_mlock": True         # 라즈베리파이 SD카드 스와핑(병목) 방지
+            "use_mlock": True
         }
     }
     
