@@ -165,7 +165,7 @@ class NativeRAGManager:
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
         
-        return super_final_docs[:3] # [최적화] 라즈베리파이 속도 향상을 위해 컨텍스트 제공량을 6개에서 3개로 축소
+        return super_final_docs[:2] # [최적화] 라즈베리파이 초고속 응답을 위해 컨텍스트를 2개로 제한
 
 # 싱글톤 인스턴스 제공
 rag_manager = NativeRAGManager()

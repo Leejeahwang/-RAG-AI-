@@ -6,7 +6,7 @@ DEBUG = True
 
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
-LLM_MODEL = "qwen2.5:1.5b"
+LLM_MODEL = "qwen2.5:0.5b"  # [최적화] 라즈베리파이 초고속 응답을 위해 0.5b 모델로 변경
 STT_ENABLED = True  # [v48] 음성 인식(STT) 사용 여부 (라즈베리파이 충돌 시 False로 설정)
 STT_ENGINE = "WHISPER"
 STT_GEMMA_MODEL = "qwen2.5:1.5b"
