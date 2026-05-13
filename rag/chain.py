@@ -34,7 +34,8 @@ def call_ollama_native(prompt):
             "repeat_penalty": 1.2,
             "num_predict": 300,
             "num_ctx": 2048,          # 6개의 지식이 온전히 들어가 품질을 유지하도록 다시 확장
-            "num_thread": 4
+            "num_thread": 4,
+            "use_mlock": True         # 라즈베리파이 SD카드 스와핑(병목) 방지
         }
     }
     
