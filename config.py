@@ -6,7 +6,7 @@ DEBUG = True
 
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
-LLM_MODEL = "qwen3.5:0.8b"
+LLM_MODEL = "qwen2.5:1.5b"  # 공식 Instruct 모델 사용 (추론 모델의 Thinking 오버헤드 방지)
 STT_ENABLED = False  # [v48] 라즈베리파이 오디오 드라이버(ALSA) 세그멘테이션 오류 방지를 위해 비활성화
 STT_ENGINE = "WHISPER"
 STT_GEMMA_MODEL = "qwen2.5:1.5b"
