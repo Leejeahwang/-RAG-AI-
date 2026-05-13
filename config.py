@@ -6,13 +6,13 @@ DEBUG = True
 
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
-LLM_MODEL = "qwen2.5:0.5b"  # [최적화] 라즈베리파이 초고속 응답을 위해 0.5b 모델로 변경
+LLM_MODEL = "qwen2.5:1.5b"
 STT_ENABLED = True  # [v48] 음성 인식(STT) 사용 여부 (라즈베리파이 충돌 시 False로 설정)
 STT_ENGINE = "WHISPER"
 STT_GEMMA_MODEL = "qwen2.5:1.5b"
 STT_WHISPER_MODEL = "large-v3-turbo"
 NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
-OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
 
 # ── TTS(음성 출력) 설정 ──
 # [v47] Piper 공식 한국어 모델 부재로 인해, 즉각적인 오프라인 반응이 가능한 SAPI5 기반으로 임시 롤백
