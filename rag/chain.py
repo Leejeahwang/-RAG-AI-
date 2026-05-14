@@ -47,8 +47,8 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
         "keep_alive": "24h",
         "options": {
             "temperature": 0.1,
-            "repeat_penalty": 1.05,
-            "num_predict": 300,
+            "repeat_penalty": 1.15,   # [Option A 적용] 무한 반복 앵무새 버그를 억제하기 위해 페널티 재강화
+            "num_predict": 800,       # [길이 제한 해제] 긴 매뉴얼 답변이 잘리지 않도록 300자에서 800자로 대폭 확장
             "num_ctx": 2048,
             "num_thread": 4,
             "use_mlock": True
