@@ -179,15 +179,23 @@ class EdgeSaver:
         
         try:
             self.tts.stop()
-            from rag.chain import call_ollama_native, SYSTEM_PROMPT
+            from rag.chain import call_ollama_native
             from rag.native_retriever import rag_manager
             
+            # 위험 상황에 맞는 매뉴얼 검색
             source_docs = rag_manager.search(prompt)
-            context_text = "\n\n".join([d.get('page_content', '') for d in source_docs])
-            formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=prompt)
+            
+            # 메타데이터 헤더 삭제 (앵무새 방지)
+            cleaned_chunks = []
+            for doc in source_docs:
+                lines = doc.get('page_content', '').split('\n')
+                clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
+                cleaned_chunks.append("\n".join(clean_lines))
+            context_text = "\n\n".join(cleaned_chunks)
             
             ai_response = ""
-            for token in call_ollama_native(formatted_prompt):
+            # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
+            for token in call_ollama_native(prompt=context_text, question=prompt):
                 ai_response += token
             
             print("\n" + "=" * 55)
