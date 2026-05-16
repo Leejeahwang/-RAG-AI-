@@ -20,22 +20,18 @@ TEST_IMAGE = test_images[0]
 
 # 모델 경로 정의
 MODELS = {
-    "Base (FP32)": os.path.join(MODELS_DIR, "fire_smoke.pt"),
-    "FP16 (ONNX)": os.path.join(MODELS_DIR, "fire_smoke.onnx"),
+    "YOLOv8 (FP32)": os.path.join(MODELS_DIR, "fire_smoke.pt"),
+    "YOLOv8 (INT8)": os.path.join(MODELS_DIR, "fire_smoke_int8_openvino_model"),
+    "YOLOv10m (FP32)": os.path.join(MODELS_DIR, "YOLOv10-FireSmoke-M.pt"),
+    "YOLOv10m (INT8)": os.path.join(MODELS_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"),
 }
 
-# INT8 openvino 경로 탐색 (ultralytics export 결과물 경로 매칭)
-int8_candidates = [
-    os.path.join(MODELS_DIR, "fire_smoke_openvino_model"),
-    os.path.join(MODELS_DIR, "fire_smoke_int8_openvino_model"),
-]
-for cand in int8_candidates:
-    if os.path.exists(cand):
-        MODELS["INT8 (TFLite)"] = cand
-        break
-
-if "INT8 (TFLite)" not in MODELS:
-    print("⚠️ INT8 모델 파일을 찾을 수 없습니다. (아직 생성되지 않았거나 경로가 다름)")
+# 이름이 다르게 생성될 수 있는 양자화 폴더 경로 보정
+for name, path in list(MODELS.items()):
+    if "openvino" in path and not os.path.exists(path):
+        alt_path = path.replace("_int8_openvino_model", "_openvino_model")
+        if os.path.exists(alt_path):
+            MODELS[name] = alt_path
 
 print(f"\n🚀 [엣지 세이버 벤치마크] 테스트 시작")
 print(f"테스트 이미지: {os.path.basename(TEST_IMAGE)}")
@@ -92,9 +88,9 @@ for name, path in MODELS.items():
 print("\n" + "=" * 50)
 print("📊 벤치마크 최종 결과")
 print("=" * 50)
-print(f"{'모델 형식':<15} | {'용량(MB)':<8} | {'속도(ms)':<10} | {'신뢰도(%)'}")
+print(f"{'모델 형식':<18} | {'용량(MB)':<8} | {'속도(ms)':<10} | {'신뢰도(%)'}")
 print("-" * 50)
 for r in results:
-    print(f"{r['Model']:<15} | {r['Size']:<8} | {r['Latency']:<10} | {r['Confidence']}")
+    print(f"{r['Model']:<18} | {r['Size']:<8} | {r['Latency']:<10} | {r['Confidence']}")
 print("=" * 50)
 print("\n✅ 벤치마킹이 완료되었습니다. 이 결과를 바탕으로 benchmark_results.md를 작성합니다.")

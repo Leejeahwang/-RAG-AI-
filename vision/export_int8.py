@@ -2,7 +2,7 @@ import os
 from ultralytics import YOLO
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "fire_smoke.pt")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "YOLOv10-FireSmoke-M.pt")
 DATA_YAML = os.path.join(BASE_DIR, "dataset", "data.yaml")
 
 def export_to_int8():

@@ -17,6 +17,9 @@ MODEL_DIR = os.path.join(BASE_DIR, "models")
 
 # 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # 최신 타겟 (라즈베리파이 최적화 INT8)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # 최신 타겟 원본
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 구형 INT8
     os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
     os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
