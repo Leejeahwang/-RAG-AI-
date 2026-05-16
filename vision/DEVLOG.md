@@ -5,6 +5,25 @@
 
 ---
 
+## 📅 2026-05-15
+
+### 🚀 진행 내용
+- 타겟 디바이스인 **라즈베리파이 5**에 `feature/vision-Quantization` 브랜치를 이식하여 실전 벤치마크 테스트 수행
+- `Raspberry Pi Connect`를 이용해 원격 웹 브라우저 환경에서 SSH 터미널 조작 및 테스트 실행
+- **벤치마크 결과:** 인텔 기반 PC 환경과 달리 ARM 아키텍처에서는 **INT8(OpenVINO) 포맷이 119ms를 기록하며 가장 압도적인 추론 속도(원본 대비 약 2.5배)**를 보임을 증명함
+- 해당 라즈베리파이 전용 테스트 결과를 `raspberry_pi_benchmark_results.md` 파일로 정리 및 보관
+
+### 💥 발생한 문제 (Issue)
+- 라즈베리파이에서 가상환경 세팅 중 `pip install` 시 `[Errno 28] No space left on device` (SD카드 용량 부족) 에러 발생
+- 원인 분석 결과, `ultralytics`가 설치될 때 파이토치가 라즈베리파이에 불필요한 기가바이트(GB) 단위의 대용량 GPU/CUDA 패키지(`nvidia-cudnn`, `nvidia-cublas` 등)를 한꺼번에 다운로드하여 캐시를 꽉 채워버림
+
+### 💡 해결 및 배운 점 (Solution/TIL)
+- `rm -rf ~/.cache/pip` 명령어로 차버린 캐시 공간을 다시 확보함
+- 파이토치 설치 시 `--index-url https://download.pytorch.org/whl/cpu` 옵션을 붙여 **CPU 전용 버전으로 강제 설치**하도록 유도하여 대용량 CUDA 다운로드 문제를 깔끔하게 해결함
+- 엣지 디바이스(라즈베리파이 등)에 무거운 AI 패키지를 이식할 때는 GPU 호환 버전이 아닌 CPU 전용 빌드 휠(whl)을 명시적으로 지정해야 낭비를 막을 수 있다는 것을 배움
+
+---
+
 ## 📅 2026-05-02
 
 ### 🚀 진행 내용
