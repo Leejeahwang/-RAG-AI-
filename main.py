@@ -171,7 +171,7 @@ class EdgeSaver:
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
 
-    def _trigger_rag_alert(self, prompt, sensor_info):
+    def _trigger_rag_alert(self, prompt, sensor_info, zone_id):
         """위급 상황 시 콘솔 출력 (patch_stdout이 대화 본문을 자동으로 보호함)"""
         print("\n" + "!" * 55)
         print("🚨 [긴급 개입] AI가 현장 상황을 분석하여 대응 지시를 내립니다.")
@@ -191,7 +191,15 @@ class EdgeSaver:
                 lines = doc.get('page_content', '').split('\n')
                 clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
                 cleaned_chunks.append("\n".join(clean_lines))
-            context_text = "\n\n".join(cleaned_chunks)
+            
+            # [평면도 주입] 선택된 Zone의 평면도를 컨텍스트 맨 위(1순위)에 강제 주입
+            layout_text = ""
+            layout_path = os.path.join("data", f"zone_{zone_id}_layout.txt")
+            if os.path.exists(layout_path):
+                with open(layout_path, "r", encoding="utf-8") as f:
+                    layout_text = f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
+                    
+            context_text = layout_text + "\n\n".join(cleaned_chunks)
             
             ai_response = ""
             # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
@@ -204,7 +212,7 @@ class EdgeSaver:
             print(f"{ai_response}")
             print("=" * 55 + "\n")
             
-            send_alert(zone="관리구역_01", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
+            send_alert(zone=f"관리구역_{zone_id}", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
             self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
             
         except Exception as e:
@@ -242,8 +250,13 @@ class EdgeSaver:
                     print("!" * 55 + "\033[0m")
                     
                     trigger_alarm(level, risk['details'])
-                    prompt = f"화재 위험 지수 4단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
-                    self._trigger_rag_alert(prompt, risk['details'])
+                    
+                    import random
+                    zone_id = random.choice(["A", "B", "C"])
+                    
+                    # 프롬프트에 [공장 X구역]을 명시하여 native_retriever.py의 LOCATION_MAP 필터링을 강제 트리거
+                    prompt = f"[공장 {zone_id}구역] 화재 위험 지수 4단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
+                    self._trigger_rag_alert(prompt, risk['details'], zone_id)
                     alarm_handled = True
                 elif level < 1:
                     alarm_handled = False
