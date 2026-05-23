@@ -137,6 +137,7 @@ class RuntimeState:
 
         self._stt_enabled: bool = False
         self._stt_queue: "queue.Queue[STTMessage]" = queue.Queue(maxsize=16)
+        self._stt_dropped: bool = False
 
         self._theme: str = "dark"
         self._zone: str = "A구역 센서노드_01"
@@ -328,6 +329,16 @@ class RuntimeState:
         except queue.Empty:
             return None
 
+    def set_stt_dropped(self) -> None:
+        with self._lock:
+            self._stt_dropped = True
+
+    def pop_stt_dropped(self) -> bool:
+        with self._lock:
+            val = self._stt_dropped
+            self._stt_dropped = False
+            return val
+
     # ── theme / zone ──
     def set_theme(self, theme: str) -> None:
         with self._lock:
@@ -373,3 +384,4 @@ def detect_lang(text: str) -> str:
     if re.search(r"[a-zA-Z]", text):
         return "en"
     return "ko"
+
