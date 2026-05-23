@@ -19,3 +19,11 @@ _archive/
 # 임시 캡처 파일
 temp_capture.jpg
 captured_frame.jpg
+
+# 모델 가중치 및 변환 결과물
+vision/models/*.pt
+vision/models/*.onnx
+vision/models/*.ncnn
+vision/models/*.tflite
+vision/models/*_openvino_model/
+vision/dataset.cache

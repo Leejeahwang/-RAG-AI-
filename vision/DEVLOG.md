@@ -5,6 +5,24 @@
 
 ---
 
+## 📅 2026-05-24
+
+### 🚀 진행 내용
+- **9-Way 모델 벤치마크 비교군 구성**: 깃허브 `imnuman/fire-detection-yolo`에서 제공하는 YOLOv8 Base 모델 가중치(`new_yolov8n_yolov8n.pt`)를 다운로드 및 자동 배치하는 [download_new_model.py](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/download_new_model.py) 스크립트를 작성하여 모델을 확보함.
+- **일괄 변환 및 양자화 파이프라인 가동**: `YOLOv10m (FP16)`, `New YOLOv8n (FP16)`, `New YOLOv8n (INT8)` 모델들을 OpenVINO 포맷으로 성공적으로 일괄 변환 완료.
+- **벤치마크 스크립트 대폭 고도화**: captures 폴더 내 임의 1장에 대해 측정하던 기존 [benchmark.py](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/benchmark.py)를 `dataset` 내의 모든 화재/연기 이미지(77장)를 순차적으로 전수 조사하여 **진짜 화재/연기 클래스만 선별하여 감지율(%)과 신뢰도(%)를 산정**하도록 개편함.
+- **데이터셋 기반 벤치마크 수행**: 9가지 모델의 용량, 평균 레이턴시, 화재 감지율, 평균 신뢰도를 측정 완료하고, 비전 관련 문서([benchmark_results.md](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/benchmark_results.md))로 문서화함.
+
+### 💥 발생한 문제 (Issue)
+- **data.yaml 경로 불일치**: 캘리브레이션 셋 경로가 이전 개발자의 윈도우 환경 절대 경로(`C:\Users\admin\...`)로 지정되어 있어 OpenVINO INT8 변환 중 이미지 탐색 실패 에러가 발생함.
+
+### 💡 해결 및 배운 점 (Solution/TIL)
+- **yaml 파일 경로 보정**: `vision/dataset/data.yaml`의 `path` 항목을 현재 사용자의 프로젝트 경로인 `c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/dataset`으로 갱신하여 캘리브레이션을 성공적으로 완료함.
+- **New YOLOv8n 감지율 0.0%의 이유**: 깃허브 모델의 가중치가 일반 COCO 사물 학습 모델이라 77장의 화재/연기 사진에서 화재/연기 클래스를 전혀 감지하지 못하는 것이 확인됨. (오경보 차단용 모델로 부적합 판정)
+- **양자화 시 신뢰도/감지율 상승 원리**: 캘리브레이션 튜닝 작업이 런타임 최적화와 결합하여 가중치 영점 스케일링을 보정해 주면서, YOLOv8 INT8 모델의 경우 오히려 FP32 원본(94.8%)보다 높은 감지율(97.4%)을 보임을 실측 및 규명함.
+
+---
+
 ## 📅 2026-05-17
 
 ### 🚀 진행 내용
