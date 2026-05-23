@@ -8,8 +8,6 @@ import time
 import cv2
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as stc
-
 from gui.state import (
     RUNTIME, GAUGE_COLORS, CAM_WIDTH, ALERT_THRESHOLD, STALE_THRESHOLD,
     REFRESH_CAMERA, REFRESH_SENSORS, REFRESH_GAUGE, REFRESH_AI,
@@ -177,16 +175,61 @@ div[data-testid="stButton"] button { background:var(--card-2); color:var(--text)
     font-weight:700; transition:all .2s ease; }
 div[data-testid="stButton"] button:hover { border-color:var(--accent); color:var(--accent); }
 [data-testid="stImage"] img { border-radius:var(--radius-sm); }
+
+/* 마커는 DOM에만 존재, 시각적으로 안 보이게 */
+.es-zone-card-marker, .es-emerg-marker {
+    display:block; width:0; height:0; overflow:hidden;
+    position:absolute; opacity:0; pointer-events:none; }
+
+/* Task1: 구역 카드 — column의 stVerticalBlock 내부에서 button을 카드 위에 깔기 */
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker) {
+    position:relative !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker) > div:nth-child(2) {
+    position:absolute !important;
+    top:0 !important; right:0 !important; bottom:0 !important; left:0 !important;
+    margin:0 !important; padding:0 !important; z-index:10 !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker) > div:nth-child(2) [data-testid="stButton"],
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker) > div:nth-child(2) [data-testid="stButton"] > div {
+    width:100% !important; height:100% !important; margin:0 !important; padding:0 !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker) > div:nth-child(2) button {
+    width:100% !important; height:100% !important; min-height:0 !important;
+    background:transparent !important; border:none !important; box-shadow:none !important;
+    cursor:pointer !important; opacity:0 !important; padding:0 !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-zone-card-marker):hover .es-zone-card-wrap > div {
+    border-color:var(--accent) !important;
+    box-shadow:0 0 0 2px var(--accent), var(--shadow-strong) !important;
+    transition:all .2s ease; }
+
+/* Task3: 위급상황 배너 — st.container의 stVerticalBlock 전체를 빨간 배경 박스로 */
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-emerg-marker) {
+    background:linear-gradient(90deg,#dc2626,#b91c1c) !important;
+    border-radius:10px !important; padding:2px 8px !important;
+    margin-bottom:8px !important;
+    box-shadow:0 0 18px rgba(220,38,38,0.55) !important;
+    animation:edgepulse 1.2s infinite !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-emerg-marker) [data-testid="stHorizontalBlock"] {
+    background:transparent !important; border:none !important;
+    box-shadow:none !important; height:auto !important;
+    padding:0 !important; margin:0 !important; align-items:center !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-emerg-marker) [data-testid="stColumn"] {
+    padding:0 !important; background:transparent !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-emerg-marker) button {
+    background:rgba(0,0,0,0.35) !important; border:1px solid rgba(255,255,255,0.6) !important;
+    color:white !important; font-weight:700 !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-emerg-marker) button:hover {
+    background:rgba(0,0,0,0.55) !important; border-color:white !important; color:white !important; }
+@keyframes edgepulse {
+    0%,100% { box-shadow:0 0 0 0 rgba(220,38,38,0.7); }
+    50% { box-shadow:0 0 0 14px rgba(220,38,38,0); } }
 """
 
 
 def inject_css(theme: str = "dark") -> None:
     attr = "light" if theme == "light" else "dark"
     st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
-    stc.html(
+    st.html(
         f"<style>html,body{{margin:0;padding:0;}}</style>"
-        f"<script>window.parent.document.documentElement.setAttribute('data-theme','{attr}');</script>",
-        height=0,
+        f"<script>window.parent.document.documentElement.setAttribute('data-theme','{attr}');</script>"
     )
 
 
@@ -376,7 +419,11 @@ def render_camera_panel() -> None:
     if frame is None:
         st.info("카메라 스트리밍 연결 대기 중...")
     else:
-        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), width='stretch')
+        try:
+            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), width='stretch')
+        except Exception as e:
+            st.error("카메라 영상 표시 오류")
+            RUNTIME.add_log(f"❌ [카메라] 변환 오류: {e}")
         conf_cls = "es-conf alert" if fire.detected else "es-conf"
         st.markdown(
             f"<span class='{conf_cls}'>FIRE CONFIDENCE: {fire.confidence:.2f}</span> "
@@ -468,6 +515,10 @@ def render_ai_panel(llm_queue) -> None:
             break
         W.enqueue_query(llm_queue, msg.text, msg.lang)
 
+    # 2-1) STT 드롭 알림
+    if RUNTIME.pop_stt_dropped():
+        st.warning("음성이 처리되지 않았습니다.")
+
     # 3) 표시
     if RUNTIME.is_generating():
         cls = "es-ai-card generating"
@@ -557,41 +608,29 @@ def render_emergency_banner() -> None:
 
     active = RUNTIME.get_active_zone()
     for zone, r in danger:
-        col_msg, col_btn = st.columns([5, 1])
-        with col_msg:
-            st.markdown(
-                f"""
-                <div style="background:linear-gradient(90deg,#dc2626,#b91c1c);
-                            color:white;padding:14px 22px;border-radius:10px;
-                            font-weight:700;font-size:16px;
-                            box-shadow:0 0 18px rgba(220,38,38,0.55);
-                            animation:edgepulse 1.2s infinite;margin-bottom:8px;">
-                    🚨 위급상황 감지 — <b>{escape_html(zone)}</b>
-                    · LV{r.level} {escape_html(r.label)}
-                    <span style="opacity:0.85;font-weight:500;margin-left:8px;">
-                        ({escape_html(r.details)})
-                    </span>
-                </div>
-                <style>
-                @keyframes edgepulse {{
-                    0%,100% {{ box-shadow:0 0 0 0 rgba(220,38,38,0.7); }}
-                    50% {{ box-shadow:0 0 0 14px rgba(220,38,38,0); }}
-                }}
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
-        with col_btn:
-            if active == zone:
+        with st.container():
+            st.markdown('<span class="es-emerg-marker"></span>', unsafe_allow_html=True)
+            c_msg, c_btn = st.columns([6, 1.2])
+            with c_msg:
                 st.markdown(
-                    "<div style='color:#fca5a5;font-weight:600;text-align:center;"
-                    "padding-top:14px;'>현재 보는 중</div>",
+                    f"<div style='color:white;font-weight:700;font-size:16px;padding:2px 0;'>"
+                    f"🚨 위급상황 감지 — <b>{escape_html(zone)}</b>"
+                    f" · LV{r.level} {escape_html(r.label)}"
+                    f"<span style='opacity:0.85;font-weight:500;margin-left:8px;'>"
+                    f"({escape_html(r.details)})</span></div>",
                     unsafe_allow_html=True,
                 )
-            else:
-                if st.button(f"→ {zone}", key=f"emerg_jump_{zone}", type="primary"):
-                    RUNTIME.set_active_zone(zone)
-                    st.rerun(scope="app")
+            with c_btn:
+                if active == zone:
+                    st.markdown(
+                        "<div style='color:#fca5a5;font-weight:600;text-align:center;"
+                        "padding:8px 0;'>현재 보는 중</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    if st.button(f"→ {zone}", key=f"emerg_jump_{zone}"):
+                        st.session_state["_zone_jump"] = zone
+                        st.rerun()
 
 
 # ════════════════════════════════════════════════════════════
@@ -654,8 +693,11 @@ def render_zone_overview() -> None:
         with cols[idx % 3]:
             st.markdown(
                 f"""
+                <span class="es-zone-card-marker"></span>
+                <div class="es-zone-card-wrap">
                 <div style="border:1px solid {status_color};border-radius:10px;
-                            padding:16px;margin-bottom:8px;background:var(--card);">
+                            padding:16px;background:var(--card);
+                            transition:border-color .2s ease,box-shadow .2s ease;">
                     <div style="font-size:15px;font-weight:700;color:var(--text);">
                         {status_icon} {escape_html(zone)}{escape_html(fire_badge)}
                     </div>
@@ -669,10 +711,11 @@ def render_zone_overview() -> None:
                         🌫 {snap.smoke}
                     </div>
                 </div>
+                </div>
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("상세보기", key=f"zone_btn_{zone}"):
+            if st.button(" ", key=f"zone_card_{zone}", use_container_width=True):
                 RUNTIME.set_active_zone(zone)
                 st.rerun(scope="app")
 
