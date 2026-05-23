@@ -19,6 +19,7 @@ Streamlit session_state는 절대 만지지 않는다.
 
 from __future__ import annotations
 
+import heapq
 import itertools
 import os
 import queue
@@ -155,7 +156,9 @@ def stt_worker(stop_event: threading.Event, model, pa, stream) -> None:
             if query:
                 lang = detect_lang(query)
                 RUNTIME.add_log(f"🎤 [STT] 수신({lang}): {query}")
-                RUNTIME.push_stt(STTMessage(text=query, lang=lang, ts=time.time()))
+                if not RUNTIME.push_stt(STTMessage(text=query, lang=lang, ts=time.time())):
+                    RUNTIME.add_log("❌ [STT] 큐 가득 — 음성 입력 드롭")
+                    RUNTIME.set_stt_dropped()
         except Exception as e:
             RUNTIME.add_log(f"❌ [STT] 오류: {e}")
             stop_event.wait(0.5)
@@ -376,7 +379,16 @@ def enqueue_emergency(
     try:
         q.put_nowait(item)
     except queue.Full:
-        RUNTIME.add_log("⚠️ [LLM] 큐 가득 — 비상 요청 드롭")
+        # 일반 질의(priority 10)를 제거하고 비상 요청 강제 삽입
+        with q.mutex:
+            for i in range(len(q.queue) - 1, -1, -1):
+                if q.queue[i][0] >= LLM_PRIORITY_QUERY:
+                    q.queue.pop(i)
+                    heapq.heapify(q.queue)
+                    heapq.heappush(q.queue, item)
+                    RUNTIME.add_log("⚠️ [LLM] 일반 질의 제거 후 비상 요청 강제 삽입")
+                    return
+        RUNTIME.add_log("⚠️ [LLM] 큐 가득 (모두 비상) — 비상 요청 드롭")
 
 
 def enqueue_query(q: "queue.PriorityQueue[LLMItem]", text: str, lang: str) -> None:
