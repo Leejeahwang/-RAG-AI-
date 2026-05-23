@@ -1,242 +1,147 @@
-import streamlit as st  
-import cv2              
-import threading        
-import time             
-import sys              
-import os               
-import queue            
-import re               
+"""
+gui/dashboard.py - EDGE SAVER 메인 엔트리
+
+책임:
+    1. sys.path / cwd 설정
+    2. RAG/STT/TTS 엔진 초기화 (@st.cache_resource)
+    3. 백그라운드 워커 시작 (한 번만)
+    4. CSS 주입, 레이아웃 렌더링
+    5. shutdown 모달
+
+각 panel/fragment 실제 렌더링은 gui/components.py 가 담당.
+백그라운드 처리는 gui/workers.py 가 담당.
+공유 상태는 gui/state.py 의 RUNTIME 싱글톤.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)  
+    sys.path.insert(0, ROOT_DIR)
+os.chdir(ROOT_DIR)
 
-import config                          
-from sensors import smoke, gas, temperature, fusion 
-from vision import cctv_service, fire_detector    
-from voice import stt, tts            
-from alerts.alarm import trigger_alarm, stop_alarm 
-from alerts.notifier import send_alert 
+import streamlit as st  # noqa: E402
 
-if 'system_logs' not in st.session_state:
-    st.session_state.system_logs = []  
+from voice import stt, tts  # noqa: E402
+from alerts.alarm import stop_alarm  # noqa: E402
 
-def add_log(msg):
-    """지정된 메시지를 타임스탬프와 함께 로그 박스에 추가"""
-    timestamp = time.strftime('%H:%M:%S')
-    st.session_state.system_logs.append(f"[{timestamp}] {msg}")
-    if len(st.session_state.system_logs) > 12:  
-        st.session_state.system_logs.pop(0)
+from gui.state import RUNTIME, MQTT_MODE  # noqa: E402
+from gui import workers as W, components as C  # noqa: E402
 
-def detect_lang(text):
-    """정규표현식을 통해 한/일/영/중 언어를 판별함"""
-    if not text: return 'ko'
-    if re.search('[가-힣]', text): return 'ko'      # 한국어
-    if re.search('[ぁ-んァ-ヶ]', text): return 'ja'  # 일본어
-    if re.search('[\u4e00-\u9fff]', text): return 'zh' # 중국어
-    if re.search('[a-zA-Z]', text): return 'en'     # 영어
-    return 'ko'
 
-@st.cache_resource 
-def init_tactical_engine():
-    add_log("=" * 45)
-    add_log("🔥 EDGE SAVER 감시 시스템 기동 시작 🔥")
-    add_log("=" * 45)
+@st.cache_resource(show_spinner="🔥 EDGE SAVER 시스템 기동 중...")
+def init_engine():
+    RUNTIME.add_log("=" * 40)
+    RUNTIME.add_log("🔥 EDGE SAVER 감시 시스템 기동")
+    RUNTIME.add_log("=" * 40)
     try:
         from rag.loader import load_and_split
         from rag.retriever import build_vectorstore, get_retriever
         from rag.chain import build_qa_chain
 
-        # 단계별 로딩 로그
-        add_log("[시스템] 1/3: 소방 매뉴얼 로딩 중...")
+        RUNTIME.add_log("[시스템] 1/3 매뉴얼 로딩")
         chunks = load_and_split()
-        add_log("[시스템] 2/3: 벡터DB 구축 및 리트리버 설정...")
+        RUNTIME.add_log("[시스템] 2/3 벡터DB 구축")
         db = build_vectorstore(chunks)
         retriever = get_retriever(db)
-        add_log("[시스템] 3/3: LLM QA 체인 구성 완료...")
-        qa_chain = build_qa_chain(retriever)
+        RUNTIME.add_log("[시스템] 3/3 QA 체인 구성")
+        qa = build_qa_chain(retriever)
 
-        add_log("[시스템] + 음성 출력(TTS) 엔진 준비 중...")
+        RUNTIME.add_log("[시스템] TTS 엔진 준비")
         tts_helper = tts.TTSHelper()
-        add_log("[시스템] + 음성 인식(STT) 엔진 준비 중...")
+        RUNTIME.add_log("[시스템] STT 엔진 준비")
         stt_model = stt._load_model()
         pa = stt._get_pyaudio_instance()
         stream = stt._open_stream(pa)
 
-        add_log("\n✅ 시스템 모든 모듈 초기화 완료!\n")
-        return qa_chain, stt_model, pa, stream, tts_helper
+        RUNTIME.add_log("✅ 모든 모듈 초기화 완료")
+        return qa, (stt_model, pa, stream), tts_helper
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"CRITICAL INIT ERROR: {e}", flush=True)
-        add_log(f"❌ 초기화 실패: {e}")
-        return None, None, None, None, None
+        RUNTIME.add_log(f"❌ 초기화 실패: {e}")
+        return None, (None, None, None), None
 
 
-qa, stt_model, pa, stream, tts_helper = init_tactical_engine()
+def _on_theme_toggle() -> None:
+    cur = RUNTIME.get_theme()
+    RUNTIME.set_theme("light" if cur == "dark" else "dark")
+    st.rerun()
 
-if 'speech_queue' not in st.session_state:
-    st.session_state.speech_queue = queue.Queue()  # 음성 질문 전달 바구니
-if 'last_answer' not in st.session_state: st.session_state.last_answer = ""  # AI 답변 저장
-if 'is_first_alert' not in st.session_state: st.session_state.is_first_alert = True # 중복 알람 방지
-if 'show_shutdown_modal' not in st.session_state: st.session_state.show_shutdown_modal = False # 종료 확인창 제어
 
-def stt_background_worker(model, pa, stream):
-    """사용자가 토글을 켰을 때만 목소리를 듣고 텍스트로 변환함"""
-    while True:
-        if st.session_state.get('stt_active', False):
-            query, _ = stt.listen_once(model=model, pa=pa, stream=stream, use_wake_word=False)
-            if query:
-                st.session_state.speech_queue.put(query)
-        else:
-            time.sleep(0.5)
+def _on_shutdown_confirm(stt_bundle, tts_helper) -> None:
+    RUNTIME.add_log("🔌 시스템 안전 종료")
+    try:
+        stop_alarm()
+    except Exception as e:
+        RUNTIME.add_log(f"[종료] 알람 정지 오류: {e}")
+    W.shutdown_workers(stt_bundle, tts_helper)
 
-if 'threads_started' not in st.session_state:
-    threading.Thread(target=cctv_service.camera_worker_thread, daemon=True).start()
-    threading.Thread(target=stt_background_worker, args=(stt_model, pa, stream), daemon=True).start()
-    st.session_state.threads_started = True
 
 st.set_page_config(layout="wide", page_title="EDGE SAVER", page_icon="🛡️")
 
-# 헤더 구역: 타이틀 + 우측 상단 전원 아이콘 (⏻)
-header_left, header_right = st.columns([15, 1])
-with header_left:
-    st.markdown("## **EDGE SAVER** ")
+qa, stt_bundle, tts_helper = init_engine()
+C.inject_css(theme=RUNTIME.get_theme())
 
-with header_right:
-    if st.button("⏻", help="시스템 전원 종료"):
-        st.session_state.show_shutdown_modal = True
+if qa is None:
+    st.error("시스템 초기화 실패 — 로그를 확인하세요.")
+    st.stop()
 
-# 종료 확인 모달창 구현
-if st.session_state.show_shutdown_modal:
-    st.markdown("---")
-    st.warning("⚠️ **시스템을 완전히 종료하시겠습니까?**")
-    btn_col1, btn_col2, _ = st.columns([1, 1, 10])
-    if btn_col1.button("예 (YES)"):
-        add_log("🔌 시스템 안전 종료...")
-        stop_alarm() 
-        cctv_service.camera_running = False
-        try: stream.stop_stream(); stream.close(); pa.terminate(); tts_helper.stop()
-        except: pass
-        st.error("시스템이 종료되었습니다."); st.stop()
-    if btn_col2.button("아니요 (NO)"):
-        st.session_state.show_shutdown_modal = False
-        st.rerun()
+llm_queue = W.start_workers(qa, stt_bundle, tts_helper)
 
-st.divider()
+C.render_header(on_theme_toggle=_on_theme_toggle)
+C.render_emergency_banner()
+C.render_status_bar()
 
-# 메인 섹션 분할: 좌(영상/제어/로그) 2.1 | 우(수치/게이지/지침) 1.0
-col_left, col_right = st.columns([2.1, 1])
 
-# --- [실시간 카메라 영상] ---
-with col_left:
-    st.subheader("📷 실시간 카메라 영상")
-    frame = cctv_service.latest_frame
-    fire_detected = False
-    if frame is not None:
-        cv2.imwrite(config.CAPTURE_PATH, frame)
-        analysis = fire_detector.detect_fire(config.CAPTURE_PATH)
-        fire_detected = analysis['fire_detected']
-        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
-        if fire_detected:
-            st.error(f"🚨 [화재 탐지됨] {analysis['description']}")
+def _render_input_widgets() -> None:
+    """마이크 토글 + 텍스트 입력 박스 (test 파일과 UI 동일)."""
+    mic_on = st.toggle(
+        "🎙️ 음성 브리핑",
+        value=RUNTIME.is_stt_enabled(),
+        key="stt_toggle_widget",
+    )
+    RUNTIME.set_stt_enabled(mic_on)
+
+    with st.expander("⌨️ 텍스트 질의", expanded=False):
+        q = st.text_input("질문 입력 후 버튼 클릭", key="query_input")
+        if st.button("AI 질의 전송", key="query_send"):
+            text = q.strip()
+            if not text:
+                st.warning("질문을 입력해 주세요.")
+            elif RUNTIME.is_generating():
+                st.warning("현재 AI가 다른 작업을 처리 중입니다.")
+            else:
+                W.enqueue_query(llm_queue, text, "ko")
+                RUNTIME.add_log(f"⌨️ 텍스트 질의: {text}")
+                st.success("질의 전송 완료. AI 응답을 기다리세요.")
+
+
+if MQTT_MODE:
+    active_zone = RUNTIME.get_active_zone()
+    if active_zone is None:
+        C.render_zone_overview()
     else:
-        st.info("카메라 스트리밍 연결 대기 중...")
-
-    st.markdown("---")
-    st.session_state.stt_active = st.toggle("🎙️ 음성 브리핑", value=False)
-    
-    if st.session_state.stt_active:
-        st.success("🟢 **LIVE...**")
-    
-    st.markdown("📟 **Tactical Feed**")
-    st.code("\n".join(st.session_state.system_logs), language="bash")
-
-# --- [우측 구역: 분석 데이터 및 최종 지침] ---
-with col_right:
-    st.subheader("📊 센서 현황")
-    s_val = smoke.read_smoke_level(simulate=True)
-    g_val = gas.read_gas_level(simulate=True)
-    t_data = temperature.read_temperature(simulate=True)
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("🌡️ 온도", f"{t_data['temperature']}°C")
-    m2.metric("💨 가스", f"{g_val}")
-    m3.metric("🌫️ 연기", f"{s_val}")
-    
-    st.divider()
-    
-    # 수평 막대형 위험도 게이지
-    st.subheader("🚨 위험도 게이지")
-    risk = fusion.calculate_risk_level(s_val, g_val, t_data, fire_detected)
-    level = risk['level']
-    
-    # 위험 레벨별 색상 (진한 빨강으로 갈수록 위험)
-    gauge_colors = ["#28a745", "#a4c639", "#ffa500", "#ff4b4b", "#8b0000"]
-    current_color = gauge_colors[level-1]
-    
-    # HTML/CSS 기반 수평 게이지 구현
-    st.markdown(f"""
-        <div style="width: 100%; background-color: #e0e0e0; border-radius: 10px; margin-bottom: 5px;">
-            <div style="width: {level * 20}%; background-color: {current_color}; height: 30px; border-radius: 10px; transition: width 0.5s ease-in-out;"></div>
-        </div>
-        <p style="text-align: right; font-weight: bold; color: {current_color};">LEVEL {level} : {risk['label']}</p>
-    """, unsafe_allow_html=True)
-    
-    st.divider()
-    
-    # 🚨 자동 대응 및 비상 방송 로직 통합
-    st.subheader("🤖 AI 지침")
-    
-    if level >= 4 and st.session_state.is_first_alert:
-        current_zone = getattr(config, 'ZONE_NAME', "A구역 센서노드_01")
-        sensor_info = f"온도:{t_data['temperature']}°C / 가스:{g_val} / 연기:{s_val}"
-        
-        add_log(f"🚨 위급상황 감지! RAG 지침 생성 및 비상 방송 준비")
-        trigger_alarm(level, risk['details']) 
-        
-        try:
-            if tts_helper: tts_helper.stop() 
-            
-            if not qa:
-                raise ValueError("QA(RAG) 엔진이 초기화되지 않았습니다!")
-            
-            # RAG 지침 생성 (강력하고 구체적인 산업용 대피 프롬프트 적용)
-            prompt = f"경고: 공장 내 센서와 CCTV 융합 교차 검증 결과, 심각한 화재 재난 위험(LV.{level})이 확정 감지되었습니다. (원인: {risk['details']}). 이 위급 상황에 맞는 뼈대가 되는 핵심 대피 지시 사항을 방송용으로 가장 짧고 강하게 생성해줘."
-            res = qa.invoke(prompt)
-            ai_response = res['result']
-            st.session_state.last_answer = ai_response
-            
-            send_alert(zone=current_zone, risk_level=level, sensor_details=sensor_info, ai_guidance=ai_response)
-            
-            # 비상 방송 송출
-            add_log("📢 [음성 경보] TTS 비상 피난 방송을 시작합니다...")
-            tts_helper.speak(f"비상 상황 발생! {ai_response}", lang='ko')
-            
-            st.session_state.is_first_alert = False
-        except Exception as e:
-            add_log(f"❌ 비상 방송 시스템 오류: {e}")
-            st.session_state.is_first_alert = False # 실패하더라도 무한루프를 막기 위해 플래그 해제
-
-    elif level < 4:
-        st.session_state.is_first_alert = True # 정상 수치로 돌아오면 알람 초기화
-
-    # 음성 질의 처리
-    try:
-        query = st.session_state.speech_queue.get_nowait()
-        if query:
-            d_lang = detect_lang(query)
-            add_log(f"🎤 질의 수신({d_lang}): {query}")
-            res = qa.invoke(query)
-            st.session_state.last_answer = res['result']
-            tts_helper.speak(res['result'], lang=d_lang)
-            st.rerun()
-    except queue.Empty: pass
-
-    if st.session_state.last_answer:
-        st.info(st.session_state.last_answer)
-    else:
-        st.write("안전 상태 유지 중입니다.")
-
-time.sleep(0.5)
-st.rerun()
+        C.render_zone_nav(active_zone)
+        col_left, col_right = st.columns([1.4, 1], gap="large")
+        with col_left:
+            C.render_camera_panel()
+            _render_input_widgets()
+        with col_right:
+            C.render_sensor_mini()
+            C.render_risk_gauge()
+            C.render_log_panel()
+            C.render_ai_panel(llm_queue)
+else:
+    col_left, col_right = st.columns([1.4, 1], gap="large")
+    with col_left:
+        C.render_camera_panel()
+        _render_input_widgets()
+    with col_right:
+        C.render_sensor_mini()
+        C.render_risk_gauge()
+        C.render_log_panel()
+        C.render_ai_panel(llm_queue)
