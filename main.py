@@ -239,6 +239,13 @@ class EdgeSaver:
                     analysis = fire_detector.detect_fire(tmp_path)
                     fire_detected = analysis.get('fire_detected', False)
 
+                # [시뮬레이터 보정] 카메라가 실제 화재를 감지하면 가상 센서 수치들도 위험 임계값 이상으로 동반 급상승시켜
+                # 퓨전 엔진(fusion.py)이 Level 4/5(긴급/재난) 판정을 내리도록 트리거하여 RAG 알람 개입을 유도합니다.
+                if fire_detected:
+                    temp_data["temperature"] = 75.0  # 고온 임계값(60) 초과
+                    smoke_val = 550                  # 연기 임계값(300) 초과
+                    gas_val = 600                    # 가스 임계값(400) 초과
+
                 risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
                 level = risk['level']
                 self.current_level = level  # 레벨 업데이트
