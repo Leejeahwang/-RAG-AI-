@@ -239,7 +239,8 @@ class EdgeSaver:
                 frame = cctv_service.latest_frame
                 
                 fire_detected = False
-                if frame is not None:
+                # 카메라 하드웨어가 오프라인(더미 프레임 출력 중)인 경우에는 AI 화재 분석을 스킵하여 오발령을 원천 방지합니다.
+                if frame is not None and not getattr(cctv_service, 'camera_offline', False):
                     # 잔존 파일로 인한 오작동 방지를 위해 매번 고유한 임시 파일 생성
                     import uuid
                     tmp_path = f"live_temp_monitor_{uuid.uuid4().hex[:8]}.jpg"

@@ -21,6 +21,7 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 
 latest_frame = None
 camera_running = True
+camera_offline = False
 DEBUG_MODE = True
 
 def cleanup_old_captures(days=3):
@@ -47,7 +48,7 @@ def cleanup_old_captures(days=3):
         print(f"🧹 [청소 완료] {days}일 이상 지난 과거 캡처 파일 {deleted_count}개를 자동 삭제했습니다.")
 
 def camera_worker_thread():
-    global latest_frame, camera_running
+    global latest_frame, camera_running, camera_offline
     
     cap = cv2.VideoCapture(0)
     use_rpicam = False
@@ -61,15 +62,21 @@ def camera_worker_thread():
             if is_linux:
                 print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
                 use_rpicam = True
+                camera_offline = False
             else:
                 print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
+                camera_offline = True
+        else:
+            camera_offline = False
     else:
         print("⚠️ [경고] 기본 카메라를 열 수 없습니다.")
         if is_linux:
             print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
             use_rpicam = True
+            camera_offline = False
         else:
             print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
+            camera_offline = True
 
     if use_rpicam:
         print("🔄 [시스템] 라즈베리파이 전용 rpicam-jpeg 캡처 모드로 전환합니다.")
