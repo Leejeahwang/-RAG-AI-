@@ -76,6 +76,11 @@ class EdgeSaver:
         self.current_risk_stats = "시스템 초기화 중..."
         self.current_level = 0  # 단계별 발화 속도 조절을 위한 상태 저장
         self._interrupt_generation = False
+        
+        # 주기적 대피 방송 루프용 전역 캐시 변수
+        self._cached_evac_guidance = ""
+        self._evac_broadcast_thread = None
+        self._evac_broadcast_running = False
 
     @property
     def tts(self):
@@ -176,6 +181,30 @@ class EdgeSaver:
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
 
+    def _run_evac_broadcast(self):
+        """대피 상황이 지속되는 동안 주기적으로 대피 지침을 무한 반복 방송하는 스레드"""
+        print("\n📢 [시스템] 주기적 비상 대피 방송 스레드가 시작되었습니다.")
+        # 방송 주기 (초)
+        BROADCAST_INTERVAL = 25
+        last_play_time = 0
+        
+        while self._evac_broadcast_running and self._monitor_running:
+            try:
+                now = time.time()
+                if now - last_play_time >= BROADCAST_INTERVAL:
+                    if self._cached_evac_guidance:
+                        speed = 1.3 if self.current_level >= 5 else 1.2
+                        self.tts.stop()
+                        
+                        # 무한 대피 방송용 안내 멘트 조합
+                        broadcast_text = f"비상 대피 방송입니다. {self._cached_evac_guidance}"
+                        self.tts.speak_async(broadcast_text, lang='ko', speed=speed)
+                        last_play_time = now
+            except Exception as e:
+                print(f"⚠️ [비상 방송 에러] {e}")
+            time.sleep(1.0)
+        print("\n📢 [시스템] 비상 대피 방송 스레드가 종료되었습니다.")
+
     def _trigger_rag_alert(self, prompt, sensor_info, zone_id):
         """위급 상황 시 콘솔 출력 (patch_stdout이 대화 본문을 자동으로 보호함)"""
         print("\n" + "!" * 55)
@@ -217,8 +246,17 @@ class EdgeSaver:
             print(f"{ai_response}")
             print("=" * 55 + "\n")
             
+            # 대피 지침 전역 캐싱
+            self._cached_evac_guidance = ai_response
+            
             send_alert(zone=f"관리구역_{zone_id}", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
             self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            
+            # 주기적 비상 대피 방송 스레드 가동
+            if not self._evac_broadcast_running:
+                self._evac_broadcast_running = True
+                self._evac_broadcast_thread = threading.Thread(target=self._run_evac_broadcast, daemon=True)
+                self._evac_broadcast_thread.start()
             
         except Exception as e:
             print(f"⚠️ 긴급 RAG 생성 오류: {e}")
@@ -302,8 +340,13 @@ class EdgeSaver:
                             alarm_handled = True
                         finally:
                             self._is_generating = False
-                elif level < 2:  # 확실하게 상황이 진정(Level 1 이하)되었을 때만 핸들 플래그 해제
+                elif level < 2:  # 확실하게 상황이 진정(Level 1 이하)되었을 때만 핸들 플래그 해제 및 방송 종료
                     alarm_handled = False
+                    if self._evac_broadcast_running:
+                        print("\n📢 [시스템] 상황이 정상으로 복귀되었습니다. 비상 대피 방송을 즉시 종료합니다.")
+                        self._evac_broadcast_running = False
+                        self.tts.stop()
+                        self._cached_evac_guidance = ""
                 
             except Exception as e:
                 # 무음 크래시 방지 및 예외 디버깅 로그
@@ -425,6 +468,7 @@ class EdgeSaver:
 
     def cleanup(self):
         self._monitor_running = False
+        self._evac_broadcast_running = False
         print("\n[시스템] 자원을 해제 중...")
         try:
             cctv_service.camera_running = False
