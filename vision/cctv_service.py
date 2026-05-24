@@ -12,6 +12,7 @@ import os
 import time
 import datetime
 import threading
+import platform
 try:
     from vision.fire_detector import detect_fire
 except ImportError:
@@ -69,38 +70,58 @@ def camera_worker_thread():
     cap = cv2.VideoCapture(0)
     use_rpicam = False
     
+    is_linux = (platform.system() == 'Linux')
+    
     if cap.isOpened():
         ret, frame = cap.read()
         if not ret or frame is None:
-            print("⚠️ [경고] 기본 카메라 장치에서 빈 화면이 들어옵니다. (라즈베리파이 5 대응)")
-            use_rpicam = True
+            print("⚠️ [경고] 기본 카메라 장치에서 빈 화면이 들어옵니다.")
             cap.release()
+            if is_linux:
+                print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
+                use_rpicam = True
+            else:
+                print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
     else:
         print("⚠️ [경고] 기본 카메라를 열 수 없습니다.")
-        use_rpicam = True
+        if is_linux:
+            print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
+            use_rpicam = True
+        else:
+            print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
 
     if use_rpicam:
         print("🔄 [시스템] 라즈베리파이 전용 rpicam-jpeg 캡처 모드로 전환합니다.")
         
     print("📷 [백그라운드] 카메라 수집 스레드가 활성화되었습니다.")
     
+    rpicam_fail_count = 0
+    
     while camera_running:
         if not use_rpicam:
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                h, w = frame.shape[:2]
-                target_w = 640
-                target_h = int(h * (target_w / w))
-                resized_frame = cv2.resize(frame, (target_w, target_h))
-                latest_frame = resized_frame
-                
-                if DEBUG_MODE:
-                    cv2.imshow("CCTV_DEBUG_PREVIEW", resized_frame)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        print("\n🛑 q 키 입력 감지! 무인 감시 모드를 강제 종료합니다.")
-                        os._exit(0)
+            if cap is not None and cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    h, w = frame.shape[:2]
+                    target_w = 640
+                    target_h = int(h * (target_w / w))
+                    resized_frame = cv2.resize(frame, (target_w, target_h))
+                    latest_frame = resized_frame
+                    
+                    if DEBUG_MODE:
+                        cv2.imshow("CCTV_DEBUG_PREVIEW", resized_frame)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            print("\n🛑 q 키 입력 감지! 무인 감시 모드를 강제 종료합니다.")
+                            os._exit(0)
+                else:
+                    time.sleep(0.1)
             else:
-                time.sleep(0.1)
+                # 카메라 하드웨어가 열리지 않은 경우 더미 이미지 생성하여 시스템 루프 유지
+                dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(dummy_frame, "CAMERA OFFLINE (NO HARDWARE)", (50, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                latest_frame = dummy_frame
+                time.sleep(1.0)
         else:
             try:
                 # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (라즈베리파이 5 최적화)
@@ -112,15 +133,27 @@ def camera_worker_thread():
                     frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
                     if frame is not None:
                         latest_frame = frame
+                        rpicam_fail_count = 0  # 성공 시 카운트 리셋
                         if DEBUG_MODE:
                             cv2.imshow("CCTV_DEBUG_PREVIEW", frame)
                             if cv2.waitKey(1) & 0xFF == ord('q'):
                                 os._exit(0)
+                else:
+                    raise FileNotFoundError("rpicam-jpeg returned non-zero code or empty stdout")
             except Exception as e:
-                print(f"❌ [에러] rpicam 캡처 실패: {e}")
+                rpicam_fail_count += 1
+                if rpicam_fail_count <= 3:
+                    print(f"❌ [에러] rpicam 캡처 실패: {e}")
+                elif rpicam_fail_count == 4:
+                    print("❌ [에러] rpicam 캡처 오류가 계속되어 로그 출력을 제한하고 대기 주기를 늘립니다.")
+                
+                sleep_time = 5.0 if rpicam_fail_count > 3 else 0.5
+                time.sleep(sleep_time)
+                continue
+                
             time.sleep(0.5)
             
-    if not use_rpicam and cap is not None:
+    if not use_rpicam and cap is not None and cap.isOpened():
         cap.release()
 
 def start_cctv_service(scan_interval_sec=5):

@@ -89,9 +89,19 @@ class ManualChunker:
             # 시맨틱 분할
             body = item["text"]
             if len(body) > self.chunk_size * 0.8:
-                semantic_text = self.get_semantic_splits(body)
-                sub_parts = semantic_text.split("[SPLIT]")
-            else: sub_parts = [body]
+                try:
+                    semantic_text = self.get_semantic_splits(body)
+                except Exception as e:
+                    print(f"  [AI 분석 경고] 시맨틱 분리 에러 발생 ({e}). 폴백 청커를 사용합니다.")
+                    semantic_text = body
+                
+                if "[SPLIT]" in semantic_text:
+                    sub_parts = semantic_text.split("[SPLIT]")
+                else:
+                    # AI 분할 실패 혹은 마커 누락 시 폴백 슬라이딩 윈도우 적용
+                    sub_parts = self.fallback_split(body, chunk_size=self.chunk_size, overlap=self.overlap)
+            else: 
+                sub_parts = [body]
 
             for p in sub_parts:
                 p = p.strip()
@@ -108,6 +118,51 @@ class ManualChunker:
                     "content": f"### [위치: {item['breadcrumb']}]\n\n{p}"
                 })
         return final_chunks
+
+    def fallback_split(self, text, chunk_size=800, overlap=150):
+        """
+        AI 청킹 실패 혹은 마커 미삽입 시 작동하는 폴백 슬라이딩 윈도우 기능.
+        문단 및 문장 경계를 존중하며 안정적인 크기로 텍스트를 나눕니다.
+        """
+        paragraphs = text.split('\n')
+        chunks = []
+        current_chunk = ""
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para: continue
+            
+            # 크기 한도를 넘는 경우 분할 결정
+            if len(current_chunk) + len(para) > chunk_size:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                
+                # overlap 크기 보정 후 다음 청크 준비
+                if len(current_chunk) > overlap:
+                    current_chunk = current_chunk[-overlap:] + "\n" + para
+                else:
+                    current_chunk = para
+            else:
+                if current_chunk:
+                    current_chunk += "\n" + para
+                else:
+                    current_chunk = para
+                    
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            
+        # 최종 보정: 크기가 과도하게 큰 청크가 남아있으면 강제 분할
+        final_splits = []
+        for chunk in chunks:
+            if len(chunk) > chunk_size * 1.2:
+                start = 0
+                while start < len(chunk):
+                    end = start + chunk_size
+                    final_splits.append(chunk[start:end])
+                    start += (chunk_size - overlap)
+            else:
+                final_splits.append(chunk)
+        return final_splits
 
     @staticmethod
     def is_useful_chunk(text):
