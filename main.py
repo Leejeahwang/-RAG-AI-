@@ -17,6 +17,9 @@ import logging
 warnings.filterwarnings("ignore")
 os.environ["PYTHONWARNINGS"] = "ignore"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["OPENVINO_LOG_LEVEL"] = "0"
+os.environ["OPENVINO_WARNINGS"] = "0"
+os.environ["OV_LOGGER_LEVEL"] = "0"
 
 # Transformers 전용 로거 설정 (이미 로드되었을 가능성 대비)
 try:
@@ -28,6 +31,7 @@ except:
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 # [v30] Native Stack Imports
 from voice.tts import TTSHelper  # [v46] 다시 표준 TTSHelper(pyttsx3)로 복구
