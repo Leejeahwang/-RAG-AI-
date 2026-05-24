@@ -15,48 +15,51 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
+# 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # 최신 타겟 (라즈베리파이 최적화 INT8)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # 최신 타겟 원본
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 구형 INT8
+    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
+    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
+    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
+CONFIDENCE_THRESHOLD = 0.10  # 40% 이상의 확신이 있을 때만 화재로 간주
 
-def get_model():
-    """모델이 로드되어 있지 않으면 로드하고, 있으면 기존 모델을 반환합니다. (지연 로딩)"""
-    global model
-    if model is not None:
-        return model
-
-    try:
-        # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
-        loaded_model_path = None
-        for m_path in POSSIBLE_MODELS:
-            if os.path.exists(m_path):
-                loaded_model_path = m_path
-                break
-                
-        if loaded_model_path:
-            print(f"✅ [Vision AI] 분석용 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
-            model = YOLO(loaded_model_path)
-        else:
-            print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
-    except Exception as e:
-        print(f"❌ [에러] 모델 초기화 실패: {e}")
-    
-    return model
+try:
+    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
+    loaded_model_path = None
+    for m_path in POSSIBLE_MODELS:
+        if os.path.exists(m_path):
+            loaded_model_path = m_path
+            break
+            
+    if loaded_model_path:
+        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
+        model = YOLO(loaded_model_path)
+    else:
+        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
+except Exception as e:
+    print(f"❌ [에러] 모델 초기화 실패: {e}")
 
 def detect_fire(image_path):
     """
     이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
+
+    Args:
+        image_path: 분석할 이미지 파일 경로
+
+    Returns:
+        dict: {
+            "fire_detected": bool,
+            "confidence": float (0.0~1.0),
+            "description": str (상황 설명)
+        }
     """
-    # [지연 로딩 적용] 실제로 이미지가 들어왔을 때만 모델을 로드합니다.
-    current_model = get_model()
-    
-    if current_model is None:
+    if model is None:
         return {
             "fire_detected": False,
             "confidence": 0.0,
@@ -72,7 +75,7 @@ def detect_fire(image_path):
 
     try:
         # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
-        results = current_model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {

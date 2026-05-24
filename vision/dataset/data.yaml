@@ -1,0 +1,5 @@
+path: c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/dataset
+train: .
+val: .
+nc: 2
+names: ['fire', 'smoke']
