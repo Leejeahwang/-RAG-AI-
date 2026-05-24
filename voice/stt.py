@@ -22,28 +22,6 @@ import wave
 import base64
 # import ollama  # Gemma STT 미사용으로 주석 처리
 import config
-from contextlib import contextmanager
-
-@contextmanager
-def no_alsa_error():
-    """리눅스(라즈베리파이) 환경에서 쏟아지는 ALSA/PulseAudio 로그를 시스템 레벨에서 숨깁니다."""
-    if platform.system() == "Windows":
-        yield
-        return
-        
-    # stderr 파일 디스크립터 복사 및 /dev/null로 리다이렉트
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        old_stderr = os.dup(sys.stderr.fileno())
-        os.dup2(devnull, sys.stderr.fileno())
-        try:
-            yield
-        finally:
-            os.dup2(old_stderr, sys.stderr.fileno())
-            os.close(devnull)
-            os.close(old_stderr)
-    except:
-        yield # 실패 시 그냥 무시하고 진행
 
 # ------------------------------------------------
 # 시스템 설정 (config.py 연동)
@@ -77,28 +55,7 @@ SILENCE_TIMEOUT = 1.8     # 무음 종료 대기 시간 (약간 늘림)
 # 장치 및 스트림 관리
 # ------------------------------------------------
 def _get_pyaudio_instance():
-    # 1. 설정에서 비활성화된 경우 즉시 반환
-    if not getattr(config, 'STT_ENABLED', True):
-        return None
-        
-    # 2. 리눅스에서 실제 사운드 카드가 있는지 확인 (세그멘테이션 오류 방지)
-    if platform.system() == "Linux":
-        try:
-            if os.path.exists("/proc/asound/cards"):
-                with open("/proc/asound/cards", "r") as f:
-                    cards = f.read().strip()
-                    if "no soundcards" in cards or not cards:
-                        print("⚠️ [STT] 시스템에 감지된 사운드 카드가 없어 음성 인식을 비활성화합니다.")
-                        return None
-        except:
-            pass
-
-    try:
-        with no_alsa_error():
-            return pyaudio.PyAudio()
-    except Exception as e:
-        print(f"[STT] PyAudio 초기화 실패: {e}")
-        return None
+    return pyaudio.PyAudio()
 
 def _find_best_device(pa: pyaudio.PyAudio):
     """플랫폼(Win/Linux)에 따른 최적화된 마이크 장치 검색"""
@@ -160,28 +117,25 @@ def _open_stream(pa: pyaudio.PyAudio) -> pyaudio.Stream:
     if 1 not in channels_to_try: channels_to_try.append(1)
 
     print(f"[STT] 오디오 스트림 초기화 중...")
-    if pa is None: return None
-    
-    with no_alsa_error():
-        for rate in rates_to_try:
-            for ch in channels_to_try:
-                try:
-                    stream = pa.open(
-                        format=pyaudio.paInt16,
-                        channels=ch,
-                        rate=rate,
-                        input=True,
-                        input_device_index=device_idx,
-                        frames_per_buffer=4096
-                    )
-                    SAMPLE_RATE = rate
-                    STREAM_CHANNELS = ch
-                    print(f"[STT] 스트림 연결됨 ({rate}Hz, 16bit, {'Stereo' if ch==2 else 'Mono'})")
-                    return stream
-                except:
-                    continue
-    print("⚠️ [STT] 오디오 스트림을 열 수 없습니다. (마이크 미감지)")
-    return None
+    for rate in rates_to_try:
+        for ch in channels_to_try:
+            try:
+                print(f"    [STT] {rate}Hz, {ch}ch 시도 중...", end="\r")
+                stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=ch,
+                    rate=rate,
+                    input=True,
+                    input_device_index=device_idx,
+                    frames_per_buffer=4096
+                )
+                SAMPLE_RATE = rate
+                STREAM_CHANNELS = ch
+                print(f"[STT] 스트림 연결됨 ({rate}Hz, 16bit, {'Stereo' if ch==2 else 'Mono'})")
+                return stream
+            except:
+                continue
+    raise RuntimeError(f"[STT] 오디오 스트림을 열 수 없습니다.")
 
 # ------------------------------------------------
 # 오디오 처리 로직

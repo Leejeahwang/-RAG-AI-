@@ -108,6 +108,18 @@ class NativeRAGManager:
             src = doc.get('source', 'unknown').lower()
             content = doc.get('page_content', '')[:200].lower()
             
+            # 특정 구역(Zone) 쿼리에 대한 상호 간섭 차단 필터링 (Cross-Zone Exclusion Filter)
+            # 질문에서 "A구역"을 물어보는데 "B구역"이나 "C구역" 레이아웃 문서가 섞여 들어가는 것을 원천 배제
+            is_cross_zone_leak = False
+            for z_char in ['a', 'b', 'c']:
+                query_has_zone = f"{z_char.upper()}구역" in query or f"{z_char.lower()}구역" in query or f"zone {z_char.upper()}" in query.upper() or f"zone_{z_char.upper()}" in query.upper()
+                doc_is_other_zone = f"zone_{z_char}" in src and not query_has_zone
+                # 만약 문서가 특정 zone 파일인데 쿼리에는 그 zone이 언급되지 않았다면, 컨텍스트 혼동 방지를 위해 아예 제외시킵니다.
+                if f"zone_" in src and doc_is_other_zone:
+                    is_cross_zone_leak = True
+                    break
+            if is_cross_zone_leak: continue
+
             # 필터링 판별
             doc_theme = next((theme for theme, keywords in CONFLICT_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
             doc_loc = next((loc for loc, keywords in LOCATION_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
@@ -127,6 +139,13 @@ class NativeRAGManager:
             source_scores[src] += (10 - i)
             
         winner_sources = [s for s, score in source_scores.most_common(top_n_sources)]
+        
+        # [중요] 레이아웃(layout) 파일은 소량 청크이므로 단일 소스 집중 로직에 의해 억울하게 배제되지 않도록 강제 복원
+        for doc in valid_results[:10]:
+            src = doc.get('source', 'unknown')
+            if 'layout' in src.lower() and src not in winner_sources:
+                winner_sources.append(src)
+                
         final_docs = [d for d in valid_results if d.get('source') in winner_sources]
         
         # 5. 검색 의도(Intent) 기반 Lexical 리랭킹 (실전 vs 연습 구분)
@@ -134,7 +153,7 @@ class NativeRAGManager:
             "대피", "요령", "행동", "즉시", "절대", "대처", "수건", "자세", "비상", "경고", "피난",
             "차단기", "밸브", "누출", "화학물질", "폭발", "배전반", "가스", "환기", "밀폐", "방독면", "전원" # 공장/산업 특화
         ]
-        penalty_keywords = ["연습", "계획", "수립", "캠페인", "교육", "훈련", "조사", "참여", "안내서"]
+        penalty_keywords = ["연습", "계획", "수립", "캠페인", "교육", "훈련", "조사", "참여", "안내서", "평면도"]
         
         is_action_query = any(k in query.lower() for k in ["대처", "요령", "방법", "어떻게", "방안", "행동", "가이드"])
         
@@ -153,10 +172,16 @@ class NativeRAGManager:
                 if kw in query.lower() and kw in src:
                     feature_score += 25
             
+            # 2. 특정 구역(Zone) 레이아웃 매칭 보너스 (가장 우선적 가점)
+            # 질문에서 "A구역" 혹은 "B구역" 혹은 "C구역"을 언급하고, 파일명에 "zone_a", "zone_b", "zone_c"가 매칭되는 경우
+            for z_char in ['a', 'b', 'c']:
+                if f"zone_{z_char}" in src and (f"{z_char.upper()}구역" in query or f"{z_char.lower()}구역" in query or f"zone {z_char.upper()}" in query.upper() or f"zone_{z_char.upper()}" in query.upper()):
+                    feature_score += 150  # 최상위 노출 강제 가점
+            
             if is_action_query:
-                # 2. 행동 강령에 자주 나오는 핵심 실전 키워드 가점 부여 (+10점)
+                # 3. 행동 강령에 자주 나오는 핵심 실전 키워드 가점 부여 (+10점)
                 feature_score += sum(10 for kw in intent_keywords if kw in content)
-                # 3. 매뉴얼 서문 및 훈련 파트에 자주 나오는 키워드 강력 감점 (-25점)
+                # 4. 매뉴얼 서문 및 훈련 파트에 자주 나오는 키워드 강력 감점 (-25점)
                 feature_score -= sum(25 for kw in penalty_keywords if kw in content)
                 
             reranked_docs.append((base_score + feature_score, d))
@@ -165,7 +190,7 @@ class NativeRAGManager:
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
         
-        return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
+        return super_final_docs[:6] # 기술적 상세 답변을 위해 컨텍스트 제공량을 6개로 확대
 
 # 싱글톤 인스턴스 제공
 rag_manager = NativeRAGManager()

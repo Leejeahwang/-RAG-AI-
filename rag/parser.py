@@ -26,7 +26,7 @@ class ManualParser:
     """
     HWP, PDF, 이미지 파일에서 텍스트를 추출하고 AI를 통해 정제하는 통합 파서 클래스.
     """
-    def __init__(self, use_ai_refinement=True, llm_model="gemma4:e2b"):
+    def __init__(self, use_ai_refinement=True, llm_model="qwen2.5:1.5b"):
         self.use_ai_refinement = use_ai_refinement
         self.llm_model = llm_model
         self._ocr_reader = None
@@ -294,7 +294,7 @@ class ManualParser:
                 except Exception as e:
                     print(f"  [오류] 텍스트 파일(CP949) 읽기 실패: {e}")
         
-        if not raw_text or len(raw_text) < 500:
+        if not raw_text or len(raw_text) < 100:
             print(f"  [건너뜀] 유효하지 않은 내용 (길이 부족 등)")
             return None
             

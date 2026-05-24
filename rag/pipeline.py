@@ -27,8 +27,8 @@ class RAGPipelineManager:
         os.makedirs(self.backup_dir, exist_ok=True)
         os.makedirs(self.filtered_dir, exist_ok=True)
         
-        self.parser = ManualParser()
-        self.chunker = ManualChunker()
+        self.parser = ManualParser(llm_model=config.LLM_MODEL)
+        self.chunker = ManualChunker(model=config.LLM_MODEL)
 
     def _calculate_hash(self, file_path):
         """파일의 MD5 해시값을 계산합니다."""

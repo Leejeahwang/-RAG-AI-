@@ -135,18 +135,11 @@ class EdgeSaver:
             print("완료")
 
             # STT 엔진 로드
-            if getattr(config, 'STT_ENABLED', True):
-                print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
-                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    _ = self.stt_model
-                    stream = self.stt_stream
-                
-                if stream is None:
-                    print("⚠️  (마이크 미감지 - 텍스트 전용 모드)")
-                else:
-                    print("완료")
-            else:
-                print("[시스템] 🎤 음성 인식(STT) 기능이 비활성화되었습니다. (텍스트 모드)")
+            print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                _ = self.stt_model
+                _ = self.stt_stream
+            print("완료")
 
             print("[시스템] 🔊 음성 출력(TTS) 모델 예열 중...", end=" ", flush=True)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -171,7 +164,7 @@ class EdgeSaver:
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
 
-    def _trigger_rag_alert(self, prompt, sensor_info, zone_id):
+    def _trigger_rag_alert(self, prompt, sensor_info):
         """위급 상황 시 콘솔 출력 (patch_stdout이 대화 본문을 자동으로 보호함)"""
         print("\n" + "!" * 55)
         print("🚨 [긴급 개입] AI가 현장 상황을 분석하여 대응 지시를 내립니다.")
@@ -179,31 +172,41 @@ class EdgeSaver:
         
         try:
             self.tts.stop()
-            from rag.chain import call_ollama_native
+            from rag.chain import call_ollama_native, SYSTEM_PROMPT
             from rag.native_retriever import rag_manager
             
-            # 위험 상황에 맞는 매뉴얼 검색
             source_docs = rag_manager.search(prompt)
+            zone_chunks = []
+            general_chunks = []
+            seen_sources = set()  # 소스 파일 중복 방지 필터
             
-            # 메타데이터 헤더 삭제 (앵무새 방지)
-            cleaned_chunks = []
             for doc in source_docs:
-                lines = doc.get('page_content', '').split('\n')
+                src = doc.get('source', '')
+                if not src: continue
+                if src in seen_sources: continue
+                seen_sources.add(src)
+                
+                src_lower = src.lower()
+                content = doc.get('page_content', '')
+                
+                # 메타데이터 헤더 삭제
+                lines = content.split('\n')
                 clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-                cleaned_chunks.append("\n".join(clean_lines))
-            
-            # [평면도 주입] 선택된 Zone의 평면도를 컨텍스트 맨 위(1순위)에 강제 주입
-            layout_text = ""
-            layout_path = os.path.join("data", f"zone_{zone_id}_layout.txt")
-            if os.path.exists(layout_path):
-                with open(layout_path, "r", encoding="utf-8") as f:
-                    layout_text = f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
+                cleaned_content = "\n".join(clean_lines).strip()
+                if not cleaned_content: continue
+                
+                if 'layout' in src_lower or 'zone_' in src_lower:
+                    zone_chunks.append(cleaned_content)
+                else:
+                    general_chunks.append(cleaned_content)
                     
-            context_text = layout_text + "\n\n".join(cleaned_chunks)
+            zone_context_text = "\n\n".join(zone_chunks) if zone_chunks else "해당 구역의 고유 대피 정보가 매뉴얼에 없습니다."
+            general_context_text = "\n\n".join(general_chunks) if general_chunks else "일반 소방 수칙 정보가 없습니다."
+            
+            formatted_prompt = SYSTEM_PROMPT.format(zone_context=zone_context_text, general_context=general_context_text, question=prompt)
             
             ai_response = ""
-            # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
-            for token in call_ollama_native(prompt=context_text, question=prompt):
+            for token in call_ollama_native(formatted_prompt):
                 ai_response += token
             
             print("\n" + "=" * 55)
@@ -212,8 +215,11 @@ class EdgeSaver:
             print(f"{ai_response}")
             print("=" * 55 + "\n")
             
-            send_alert(zone=f"관리구역_{zone_id}", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
-            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            send_alert(zone="관리구역_01", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
+            speed = 1.0
+            if self.current_level >= 5: speed = 1.3
+            elif self.current_level >= 4: speed = 1.2
+            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko', speed=speed)
             
         except Exception as e:
             print(f"⚠️ 긴급 RAG 생성 오류: {e}")
@@ -250,13 +256,8 @@ class EdgeSaver:
                     print("!" * 55 + "\033[0m")
                     
                     trigger_alarm(level, risk['details'])
-                    
-                    import random
-                    zone_id = random.choice(["A", "B", "C"])
-                    
-                    # 프롬프트에 [공장 X구역]을 명시하여 native_retriever.py의 LOCATION_MAP 필터링을 강제 트리거
-                    prompt = f"[공장 {zone_id}구역] 화재 위험 지수 4단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
-                    self._trigger_rag_alert(prompt, risk['details'], zone_id)
+                    prompt = f"🚨 긴급 상황: {risk['details']} 화재 발생! 다른 지침을 전부 배제하고, 반드시 해당 구역의 '대피로' 문장을 가장 첫 문장에 최우선 출력할 것. 그 후 소화기 위치를 아주 짧게 한 줄 덧붙일 것."
+                    self._trigger_rag_alert(prompt, risk['details'])
                     alarm_handled = True
                 elif level < 1:
                     alarm_handled = False
@@ -292,12 +293,16 @@ class EdgeSaver:
                         refresh_interval=1.0
                     ).strip()
                     
+                    # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
+                    if "[EDGE SAVER]" in query or "T:" in query:
+                        query = re.sub(r'\[EDGE SAVER\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
+                        query = re.sub(r'❓\s*질문:\s*', '', query).strip()
+                        query = re.sub(r'T:\s*\d+\.?\d*C\s*\|.*', '', query).strip()
+                        query = query.replace("[EDGE SAVER]", "").strip()
+                    
                     if self.tts: self.tts.stop()
                     
                     if query == "" or query.lower() in ['v', 'voice']:
-                        if not getattr(config, 'STT_ENABLED', True) or self.stt_stream is None:
-                            print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
-                            continue
                         print("\n🎤 말씀해 주세요...")
                         query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream)
                         if not query: continue
@@ -313,16 +318,35 @@ class EdgeSaver:
                     from rag.native_retriever import rag_manager
                     source_docs = rag_manager.search(query)
                     
-                    # LLM 앵무새 증후군 방지: 컨텍스트 내의 메타데이터 헤더([위치:], [출처:]) 텍스트 강제 삭제
-                    cleaned_chunks = []
-                    for doc in source_docs:
-                        lines = doc.get('page_content', '').split('\n')
-                        clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-                        cleaned_chunks.append("\n".join(clean_lines))
-                    context_text = "\n\n".join(cleaned_chunks)
+                    zone_chunks = []
+                    general_chunks = []
+                    seen_sources = set()  # 소스 파일 중복 방지 필터
                     
-                    from rag.chain import SYSTEM_PROMPT
-                    formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
+                    for doc in source_docs:
+                        src = doc.get('source', '')
+                        if not src: continue
+                        if src in seen_sources: continue
+                        seen_sources.add(src)
+                        
+                        src_lower = src.lower()
+                        content = doc.get('page_content', '')
+                        
+                        # 메타데이터 헤더 삭제
+                        lines = content.split('\n')
+                        clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
+                        cleaned_content = "\n".join(clean_lines).strip()
+                        if not cleaned_content: continue
+                        
+                        if 'layout' in src_lower or 'zone_' in src_lower:
+                            zone_chunks.append(cleaned_content)
+                        else:
+                            general_chunks.append(cleaned_content)
+                            
+                    zone_context_text = "\n\n".join(zone_chunks) if zone_chunks else "해당 구역의 고유 대피 정보가 매뉴얼에 없습니다."
+                    general_context_text = "\n\n".join(general_chunks) if general_chunks else "일반 소방 수칙 정보가 없습니다."
+                    
+                    from rag.chain import SYSTEM_PROMPT_NORMAL
+                    formatted_prompt = SYSTEM_PROMPT_NORMAL.format(general_context=general_context_text, question=query)
                     
                     llm = self.main_llm
                     
@@ -337,8 +361,8 @@ class EdgeSaver:
                     
                     try:
                         from rag.chain import call_ollama_native
-                        # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
-                        for token in call_ollama_native(prompt=context_text, question=query):
+                        # [v35] 직접 스트리밍 호출
+                        for token in call_ollama_native(formatted_prompt):
                             print(token, end="", flush=True)
                             sentence_buffer += token
                             

@@ -6,13 +6,12 @@ DEBUG = True
 
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
-LLM_MODEL = "qwen2.5:0.5b"  # 매뉴얼 기반의 똑똑하고 긴 답변을 위해 1.5B로 상향 복귀
-STT_ENABLED = False  # [v48] 라즈베리파이 오디오 드라이버(ALSA) 세그멘테이션 오류 방지를 위해 비활성화
+LLM_MODEL = "qwen2.5:0.5b"
 STT_ENGINE = "WHISPER"
-STT_GEMMA_MODEL = "qwen2.5:1.5b"
+STT_GEMMA_MODEL = "qwen2.5:0.5b"
 STT_WHISPER_MODEL = "large-v3-turbo"
 NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
+OLLAMA_BASE_URL = "http://localhost:11434"
 
 # ── TTS(음성 출력) 설정 ──
 # [v47] Piper 공식 한국어 모델 부재로 인해, 즉각적인 오프라인 반응이 가능한 SAPI5 기반으로 임시 롤백
@@ -25,8 +24,8 @@ PIPER_CONFIG = "models/piper/piper-kss-korean.onnx.json"
 VECTORDB_DIR = "chroma_db"
 FAISS_INDEX_DIR = "faiss_db"
 DATA_DIR = "data"
-CHUNK_SIZE = 250    # [초고속 최적화] 지식 조각당 길이를 절반 이하로 줄여 AI 읽기 시간 50% 단축
-CHUNK_OVERLAP = 50
+CHUNK_SIZE = 600
+CHUNK_OVERLAP = 100
 
 # ── 센서 임계값 설정 ──
 SENSOR_THRESHOLDS = {

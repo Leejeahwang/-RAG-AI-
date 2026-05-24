@@ -16,7 +16,7 @@ class ManualChunker:
     """
     마크다운 구조와 AI 시맨틱 분석을 결합한 스마트 청킹 클래스.
     """
-    def __init__(self, chunk_size=800, overlap=150, model="gemma4:e2b"):
+    def __init__(self, chunk_size=800, overlap=150, model="qwen2.5:1.5b"):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.model = model
