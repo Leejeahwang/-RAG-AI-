@@ -75,6 +75,7 @@ class EdgeSaver:
         self.session = PromptSession()
         self.current_risk_stats = "시스템 초기화 중..."
         self.current_level = 0  # 단계별 발화 속도 조절을 위한 상태 저장
+        self._interrupt_generation = False
 
     @property
     def tts(self):
@@ -227,9 +228,9 @@ class EdgeSaver:
         alarm_handled = False
         while self._monitor_running:
             try:
-                # 1. 만약 현재 LLM이 답변을 생성 중이거나 긴급 RAG가 가동 중이라면
-                # 모니터링에 의한 RAG 긴급 개입을 잠시 대기하여 음성 겹침과 레이아웃 꼬임을 방지합니다.
-                if getattr(self, '_is_generating', False):
+                # 만약 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이라면 
+                # 음성 겹침과 오버헤드를 막기 위해 센서 체크를 잠시 양보합니다.
+                if getattr(self, '_is_generating', False) and self.current_level < 4:
                     time.sleep(1.0)
                     continue
 
@@ -273,6 +274,10 @@ class EdgeSaver:
                 
                 if level >= 4:
                     if not alarm_handled:
+                        # 🚨 [긴급 개입] 일반 질문에 대해 음성 답변 중이었다면 즉시 강제 중단 신호 전달 및 음성 소거
+                        self._interrupt_generation = True
+                        self.tts.stop()
+                        
                         self._is_generating = True  # 중복 RAG 트리거 및 음성 겹침 방지 방어선 구축
                         try:
                             print(f"\n\033[31;1m" + "!" * 55)
@@ -369,11 +374,15 @@ class EdgeSaver:
                     print("-" * 55)
                     sentence_buffer = ""
                     self._is_generating = True # [v28] 가용 자원 집중 시작
+                    self._interrupt_generation = False # 인터럽트 플래그 초기화
                     
                     try:
                         from rag.chain import call_ollama_native
                         # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
                         for token in call_ollama_native(prompt=context_text, question=query):
+                            if getattr(self, '_interrupt_generation', False):
+                                print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
+                                break
                             print(token, end="", flush=True)
                             sentence_buffer += token
                             
@@ -395,7 +404,8 @@ class EdgeSaver:
                     finally:
                         self._is_generating = False # [v28] 감시 모드 다시 활성화
                     
-                    if sentence_buffer.strip():
+                    # 인터럽트되지 않은 경우에만 남은 버퍼 출력
+                    if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
                         self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
                     
                     print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
