@@ -240,6 +240,7 @@ class EdgeSaver:
                 frame = cctv_service.latest_frame
                 
                 fire_detected = False
+                fire_desc = ""
                 # 카메라 하드웨어가 오프라인(더미 프레임 출력 중)인 경우에는 AI 화재 분석을 스킵하여 오발령을 원천 방지합니다.
                 if frame is not None and not getattr(cctv_service, 'camera_offline', False):
                     # 잔존 파일로 인한 오작동 방지를 위해 매번 고유한 임시 파일 생성
@@ -250,6 +251,7 @@ class EdgeSaver:
                         if os.path.exists(tmp_path):
                             analysis = fire_detector.detect_fire(tmp_path)
                             fire_detected = analysis.get('fire_detected', False)
+                            fire_desc = analysis.get('description', '')
                     finally:
                         # 분석 후 임시 파일 즉시 삭제 (디스크 잔존물 제거)
                         if os.path.exists(tmp_path):
@@ -269,8 +271,12 @@ class EdgeSaver:
                 level = risk['level']
                 self.current_level = level  # 레벨 업데이트
                 
+                # RAG 전송용 위험 사유 상세 정보에 구체적인 AI 진단 텍스트(감지 클래스명, 확신도) 주입
+                if fire_detected and fire_desc:
+                    risk['details'] += f" | {fire_desc}"
+
                 # 툴바 데이터 갱신 (터미널 UI 깨짐 방지를 위해 이모지 대신 텍스트/표준 기호 사용)
-                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {'[FIRE]' if fire_detected else 'SAFE'} | {risk['label']}"
+                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
                 
                 if level >= 4:
                     if not alarm_handled:
