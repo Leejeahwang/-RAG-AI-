@@ -13,12 +13,9 @@ _gas_history = []
 FILTER_SIZE = 5
 
 
-def read_gas_level(simulate=False):
+def read_gas_level(simulate=True):
     """
     가스 센서 값을 읽어옵니다. (이동 평균 필터 적용)
-
-    Args:
-        simulate: True면 시뮬레이션 값 반환, False면 실제 GPIO 읽기
 
     Returns:
         int: 필터링된 가스 농도 (아날로그 0~1023)

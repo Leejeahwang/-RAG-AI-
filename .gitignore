@@ -1,21 +1,21 @@
-# 가상환경
+.venv/
 venv/
 .env
-
-# 벡터 데이터베이스
-chroma_db/
-faiss_index/
-
-# 파이썬 캐시 파일
 __pycache__/
 *.pyc
+.vscode/
 
-# macOS 시스템 파일
-.DS_Store
+# 로그 및 대용량 테스트 데이터
+*.log
+test_log.txt
+pipeline_out.txt
+*.wav
+melo_test.wav
 
-# 보관용 폴더
-_archive/
+# 백업 및 임시 작업 폴더
+backups/
+scratch/
+chroma_db_speed/
 
-# 임시 캡처 파일
-temp_capture.jpg
-captured_frame.jpg
+models/
+chroma_db/

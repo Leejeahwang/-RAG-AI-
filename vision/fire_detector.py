@@ -23,39 +23,40 @@ POSSIBLE_MODELS = [
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.10  # 40% 이상의 확신이 있을 때만 화재로 간주
+CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
-try:
-    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
-    loaded_model_path = None
-    for m_path in POSSIBLE_MODELS:
-        if os.path.exists(m_path):
-            loaded_model_path = m_path
-            break
-            
-    if loaded_model_path:
-        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
-        model = YOLO(loaded_model_path)
-    else:
-        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
-except Exception as e:
-    print(f"❌ [에러] 모델 초기화 실패: {e}")
+def get_model():
+    """모델이 로드되어 있지 않으면 로드하고, 있으면 기존 모델을 반환합니다. (지연 로딩)"""
+    global model
+    if model is not None:
+        return model
+
+    try:
+        # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
+        loaded_model_path = None
+        for m_path in POSSIBLE_MODELS:
+            if os.path.exists(m_path):
+                loaded_model_path = m_path
+                break
+                
+        if loaded_model_path:
+            print(f"✅ [Vision AI] 분석용 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
+            model = YOLO(loaded_model_path)
+        else:
+            print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
+    except Exception as e:
+        print(f"❌ [에러] 모델 초기화 실패: {e}")
+    
+    return model
 
 def detect_fire(image_path):
     """
     이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
-
-    Args:
-        image_path: 분석할 이미지 파일 경로
-
-    Returns:
-        dict: {
-            "fire_detected": bool,
-            "confidence": float (0.0~1.0),
-            "description": str (상황 설명)
-        }
     """
-    if model is None:
+    # [지연 로딩 적용] 실제로 이미지가 들어왔을 때만 모델을 로드합니다.
+    current_model = get_model()
+    
+    if current_model is None:
         return {
             "fire_detected": False,
             "confidence": 0.0,
@@ -71,7 +72,7 @@ def detect_fire(image_path):
 
     try:
         # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
-        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+        results = current_model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {

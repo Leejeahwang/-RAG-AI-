@@ -13,7 +13,7 @@ _smoke_history = []
 FILTER_SIZE = 5
 
 
-def read_smoke_level(simulate=False):
+def read_smoke_level(simulate=True):
     """
     연기 센서 값을 읽어옵니다. (이동 평균 필터 적용)
 
