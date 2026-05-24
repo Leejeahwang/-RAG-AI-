@@ -227,6 +227,12 @@ class EdgeSaver:
         alarm_handled = False
         while self._monitor_running:
             try:
+                # 1. 만약 현재 LLM이 답변을 생성 중이거나 긴급 RAG가 가동 중이라면
+                # 모니터링에 의한 RAG 긴급 개입을 잠시 대기하여 음성 겹침과 레이아웃 꼬임을 방지합니다.
+                if getattr(self, '_is_generating', False):
+                    time.sleep(1.0)
+                    continue
+
                 temp_data = read_temperature(simulate=True)
                 gas_val = read_gas_level(simulate=True)
                 smoke_val = read_smoke_level(simulate=True)
@@ -234,10 +240,21 @@ class EdgeSaver:
                 
                 fire_detected = False
                 if frame is not None:
-                    tmp_path = "live_temp_main.jpg"
-                    cv2.imwrite(tmp_path, frame)
-                    analysis = fire_detector.detect_fire(tmp_path)
-                    fire_detected = analysis.get('fire_detected', False)
+                    # 잔존 파일로 인한 오작동 방지를 위해 매번 고유한 임시 파일 생성
+                    import uuid
+                    tmp_path = f"live_temp_monitor_{uuid.uuid4().hex[:8]}.jpg"
+                    try:
+                        cv2.imwrite(tmp_path, frame)
+                        if os.path.exists(tmp_path):
+                            analysis = fire_detector.detect_fire(tmp_path)
+                            fire_detected = analysis.get('fire_detected', False)
+                    finally:
+                        # 분석 후 임시 파일 즉시 삭제 (디스크 잔존물 제거)
+                        if os.path.exists(tmp_path):
+                            try:
+                                os.remove(tmp_path)
+                            except:
+                                pass
 
                 # [시뮬레이터 보정] 카메라가 실제 화재를 감지하면 가상 센서 수치들도 위험 임계값 이상으로 동반 급상승시켜
                 # 퓨전 엔진(fusion.py)이 Level 4/5(긴급/재난) 판정을 내리도록 트리거하여 RAG 알람 개입을 유도합니다.
@@ -253,28 +270,34 @@ class EdgeSaver:
                 # 툴바 데이터 갱신 (터미널 UI 깨짐 방지를 위해 이모지 대신 텍스트/표준 기호 사용)
                 self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {'[FIRE]' if fire_detected else 'SAFE'} | {risk['label']}"
                 
-                if level >= 4 and not alarm_handled:
-                    # ... (rest of the logic remains)
-                    print(f"\n\033[31;1m" + "!" * 55)
-                    print(f"🚨 [재난 발생] {risk['label']} (단계: {level})")
-                    print(f"📝 원인: {risk['details']}")
-                    print("!" * 55 + "\033[0m")
-                    
-                    trigger_alarm(level, risk['details'])
-                    
-                    import random
-                    zone_id = random.choice(["A", "B", "C"])
-                    
-                    # 프롬프트에 [공장 X구역]을 명시하여 native_retriever.py의 LOCATION_MAP 필터링을 강제 트리거
-                    prompt = f"[공장 {zone_id}구역] 화재 위험 지수 4단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
-                    self._trigger_rag_alert(prompt, risk['details'], zone_id)
-                    alarm_handled = True
-                elif level < 1:
+                if level >= 4:
+                    if not alarm_handled:
+                        self._is_generating = True  # 중복 RAG 트리거 및 음성 겹침 방지 방어선 구축
+                        try:
+                            print(f"\n\033[31;1m" + "!" * 55)
+                            print(f"🚨 [재난 발생] {risk['label']} (단계: {level})")
+                            print(f"📝 원인: {risk['details']}")
+                            print("!" * 55 + "\033[0m")
+                            
+                            trigger_alarm(level, risk['details'])
+                            
+                            import random
+                            zone_id = random.choice(["A", "B", "C"])
+                            
+                            # 프롬프트에 [공장 X구역]을 명시하여 native_retriever.py의 LOCATION_MAP 필터링을 강제 트리거
+                            prompt = f"[공장 {zone_id}구역] 화재 위험 지수 {level}단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
+                            self._trigger_rag_alert(prompt, risk['details'], zone_id)
+                            alarm_handled = True
+                        finally:
+                            self._is_generating = False
+                elif level < 2:  # 확실하게 상황이 진정(Level 1 이하)되었을 때만 핸들 플래그 해제
                     alarm_handled = False
                 
-                time.sleep(3)
-            except:
-                pass
+            except Exception as e:
+                # 무음 크래시 방지 및 예외 디버깅 로그
+                print(f"\n⚠️ [센서 감시 루프 경고] {e}")
+                
+            time.sleep(3)
 
     def run(self):
         if not self._initialized: self.initialize()
