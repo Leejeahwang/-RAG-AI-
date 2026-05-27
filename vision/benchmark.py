@@ -31,6 +31,11 @@ MODELS = {
     "New YOLOv8n (FP32)": os.path.join(MODELS_DIR, "new_yolov8n_yolov8n.pt"),
     "New YOLOv8n (FP16)": os.path.join(MODELS_DIR, "new_yolov8n_yolov8n_openvino_model"),
     "New YOLOv8n (INT8)": os.path.join(MODELS_DIR, "new_yolov8n_yolov8n_int8_openvino_model"),
+
+    # 4. 신규 YOLOv11n (best_nano_111 모델)
+    "YOLOv11n (FP32)": os.path.join(MODELS_DIR, "best_nano_111.pt"),
+    "YOLOv11n (FP16)": os.path.join(MODELS_DIR, "best_nano_111_openvino_model"),
+    "YOLOv11n (INT8)": os.path.join(MODELS_DIR, "best_nano_111_int8_openvino_model"),
 }
 
 # 이름이 다르게 생성될 수 있는 양자화 폴더 경로 보정
