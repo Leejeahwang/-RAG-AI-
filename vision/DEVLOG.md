@@ -5,6 +5,25 @@
 
 ---
 
+## 📅 2026-05-27
+
+### 🚀 진행 내용
+- **YOLOv11n 비교군 추가 및 9-Way 테스트 확장**: 새로 확보한 YOLOv11n 모델 가중치(`best_nano_111.pt`)를 비교군에 추가하고 OpenVINO FP16/INT8 포맷 변환을 성공적으로 수행하여 벤치마크 대상을 총 9종으로 확대함.
+- **발열 추적 벤치마크 고도화**: 라즈베리파이 5의 시스템 온도 파일(`thermal_zone0`)을 읽어와 추론 루프 중 CPU의 `시작 온도 ➔ 최대 온도`를 트래킹하는 기능을 [benchmark.py](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/benchmark.py)에 심어 실측 발열 벤치마크를 진행함.
+- **최종 모델 공식 선정**: 
+  - `YOLOv11n (FP16)` 모델이 **108.8 ms**로 가장 빠른 속도를 갱신했으나, 감지 정확도(97.4% vs 96.1%)와 신뢰도(60.1% vs 54.6%)가 더 우수하고, 발열 상승 폭(+3.8℃ vs +6.1℃)이 더 안정적인 **`YOLOv8 (INT8)`**을 최종 실장 모델로 선정함.
+- **우선순위 설정 반영**: 실시간 감지 데몬인 [fire_detector.py](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/fire_detector.py)와 라이브 테스트인 [live_test.py](file:///c:/Users/wldnr/Desktop/RAG_SW/-RAG-AI-/vision/live_test.py)의 우선 로드 모델 순서를 `YOLOv8 (INT8)`이 최우선이 되도록 세팅함.
+
+### 💥 발생한 문제 (Issue)
+- **가상환경 의존성 누락 및 디스크 공간 에러**: 라즈베리파이에서 `onnx` 및 `onnxruntime` 설치 도중 디스크 공간 부족(`Errno 28`)으로 설치 실패가 뜸.
+- **모델 중복 로드**: 파일 매핑 및 보정 과정으로 인해 YOLOv11n INT8 테스트 시 FP16 파일이 로드되는 현상 식별.
+
+### 💡 해결 및 배운 점 (Solution/TIL)
+- **pip 캐시 정리**: `rm -rf ~/.cache/pip`로 pip 다운로드 캐시를 말끔히 비워 SD카드 여유 공간을 확보하고 패키지를 정상 재설치함.
+- **시스템 마진의 중요성**: 1초에 1장씩 추론하는 상황에서 YOLOv10m은 CPU 점유율이 60% 이상에 육박해 화재 발생 시 RAG(Ollama) 및 TTS/STT가 동시 실행될 때 보드가 죽을 리스크가 큼. 전체 E2E 생존력을 위해 성능 마진이 넉넉한 YOLOv8 INT8(120ms, 발열 51.8℃)이 최선의 배포 모델임을 종합 판단을 통해 배움.
+
+---
+
 ## 📅 2026-05-24
 
 ### 🚀 진행 내용

@@ -1,6 +1,6 @@
 # 📋 엣지 세이버 — 구현 현황 & 담당자
 
-> 마지막 업데이트: 2026-03-28
+> 마지막 업데이트: 2026-05-27
 
 ---
 
@@ -11,7 +11,7 @@
 | 파일 | 상태 | 할 일 |
 |------|------|-------|
 | `vision/camera.py` | ✅ 완료 | OpenCV 웹캠 캡처 |
-| `vision/fire_detector.py` | ✅ 완료 | 화재/연기 영상 판별 AI (로컬 YOLOv8 + Roboflow 하이브리드) |
+| `vision/fire_detector.py` | ✅ 완료 | 화재/연기 영상 판별 AI (RPi5 9-Way 발열 벤치마크 완료 및 YOLOv8 INT8 최우선 적용 완료) |
 | `sensors/fusion.py` | 📌 TODO | 위험도 등급 산정 로직 설계 |
 
 ### 👤 이승훈 — GUI & RAG

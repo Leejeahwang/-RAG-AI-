@@ -10,13 +10,13 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 1순위: 최신 INT8 모델, 2순위: 최신 원본 모델
-MODEL_PATH = os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model")
+# 1순위: YOLOv8n (INT8), 2순위: 최신 INT8 모델
+MODEL_PATH = os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model")
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt")
+    MODEL_PATH = os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model")
 
 print("=" * 50)
-print(f"🔥 [라이브 테스트] 화재 감지기 구동 준비 중...")
+print(f"🔥 [라이브 테스트] 화재 감지기 구동 준비 중 (YOLOv8n INT8) ...")
 print(f"👉 사용 모델: {os.path.basename(MODEL_PATH)}")
 print("=" * 50)
 
@@ -46,7 +46,7 @@ while True:
     annotated_frame = results[0].plot()
     
     # 윈도우 창에 띄우기
-    cv2.imshow("Live Fire Detection Test (YOLOv10-M)", annotated_frame)
+    cv2.imshow("Live Fire Detection Test (YOLOv8n INT8)", annotated_frame)
     
     # 'q' 키 입력 시 루프 탈출
     if cv2.waitKey(1) & 0xFF == ord('q'):
