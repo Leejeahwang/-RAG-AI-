@@ -221,9 +221,9 @@ class EdgeSaver:
 
     def _trigger_rag_alert(self, prompt, sensor_info, zone_id):
         """위급 상황 시 콘솔 출력 (patch_stdout이 대화 본문을 자동으로 보호함)"""
-        print("\n" + "!" * 55)
+        print("\n" + "=" * 55)
         print("🚨 [긴급 개입] AI가 현장 상황을 분석하여 대응 지시를 내립니다.")
-        print("!" * 55)
+        print("=" * 55)
         
         try:
             self.tts.stop()
@@ -339,10 +339,10 @@ class EdgeSaver:
                         
                         self._is_generating = True  # 중복 RAG 트리거 및 음성 겹침 방지 방어선 구축
                         try:
-                            print(f"\n\033[31;1m" + "!" * 55)
+                            print(f"\n\033[31;1m" + "=" * 55)
                             print(f"🚨 [재난 발생] {risk['label']} (단계: {level})")
                             print(f"📝 원인: {risk['details']}")
-                            print("!" * 55 + "\033[0m")
+                            print("=" * 55 + "\033[0m")
                             
                             trigger_alarm(level, risk['details'])
                             
