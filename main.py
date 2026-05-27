@@ -46,7 +46,12 @@ from sensors.smoke import read_smoke_level, is_smoke_detected
 from sensors.gas import read_gas_level, is_gas_detected
 from alerts.alarm import trigger_alarm
 from alerts.notifier import send_alert
-from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
+# STT 모듈 임포트 시도 (pyaudio 누락 시 안전 조치)
+STT_AVAILABLE = True
+try:
+    from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
+except ImportError:
+    STT_AVAILABLE = False
 
 # UI 고도화를 위한 prompt_toolkit 추가
 from prompt_toolkit import PromptSession
@@ -93,6 +98,8 @@ class EdgeSaver:
     def stt_model(self):
         """STT 모델 지연 로딩"""
         if self._stt_model is None:
+            if not STT_AVAILABLE:
+                return None
             print("[시스템] 🎤 음성 인식(STT) 모델 로드 중...")
             from voice.stt import _load_model
             self._stt_model = _load_model()
@@ -102,6 +109,8 @@ class EdgeSaver:
     def pa(self):
         """PyAudio 인스턴스 지연 로딩"""
         if self._pa is None:
+            if not STT_AVAILABLE:
+                return None
             from voice.stt import _get_pyaudio_instance
             self._pa = _get_pyaudio_instance()
         return self._pa
@@ -110,6 +119,8 @@ class EdgeSaver:
     def stt_stream(self):
         """STT 스트림 지연 로딩"""
         if self._stt_stream is None:
+            if not STT_AVAILABLE:
+                return None
             from voice.stt import _open_stream
             self._stt_stream = _open_stream(self.pa)
         return self._stt_stream
@@ -144,7 +155,7 @@ class EdgeSaver:
             print("완료")
 
             # STT 엔진 로드
-            if getattr(config, 'STT_ENABLED', True):
+            if getattr(config, 'STT_ENABLED', True) and STT_AVAILABLE:
                 print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     _ = self.stt_model

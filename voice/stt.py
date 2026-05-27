@@ -8,7 +8,10 @@ voice/stt.py — 하이브리드 오프라인 음성 인식(STT) 모듈
 import time
 import threading
 import numpy as np
-import pyaudio
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
 import platform
 import os
 import sys
@@ -66,7 +69,7 @@ WHISPER_RATE = 16000      # 모델용 샘플링 레이트 (16kHz 표준)
 CHUNK_SEC    = 0.5        # 처리 단위 (초)
 
 STREAM_CHANNELS = 1
-STREAM_FORMAT   = pyaudio.paInt16
+STREAM_FORMAT   = pyaudio.paInt16 if pyaudio is not None else 2
 STREAM_DEVICE   = None
 
 SILENCE_THRESHOLD = 0.001  # 감도 극대화 (0.005 -> 0.001)
@@ -78,7 +81,7 @@ SILENCE_TIMEOUT = 1.8     # 무음 종료 대기 시간 (약간 늘림)
 # ------------------------------------------------
 def _get_pyaudio_instance():
     # 1. 설정에서 비활성화된 경우 즉시 반환
-    if not getattr(config, 'STT_ENABLED', True):
+    if not getattr(config, 'STT_ENABLED', True) or pyaudio is None:
         return None
         
     # 2. 리눅스에서 실제 사운드 카드가 있는지 확인 (세그멘테이션 오류 방지)
