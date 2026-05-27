@@ -46,7 +46,6 @@ from sensors.smoke import read_smoke_level, is_smoke_detected
 from sensors.gas import read_gas_level, is_gas_detected
 from alerts.alarm import trigger_alarm
 from alerts.notifier import send_alert
-from voice.tts import TTSHelper
 from voice.stt import _load_model, listen_once, _get_pyaudio_instance, _open_stream
 
 # UI 고도화를 위한 prompt_toolkit 추가
@@ -186,16 +185,20 @@ class EdgeSaver:
         print("\n📢 [시스템] 주기적 비상 대피 방송 스레드가 시작되었습니다.")
         # 방송 주기 (초)
         BROADCAST_INTERVAL = 25
-        last_play_time = 0
+        # 초기 대피 안내 발화가 끝난 뒤부터 주기를 계산할 수 있도록 시작 시점을 현재 시간으로 초기화
+        last_play_time = time.time()
         
         while self._evac_broadcast_running and self._monitor_running:
             try:
                 now = time.time()
                 if now - last_play_time >= BROADCAST_INTERVAL:
                     if self._cached_evac_guidance:
-                        speed = 1.3 if self.current_level >= 5 else 1.2
-                        self.tts.stop()
+                        # 이미 음성 출력 중인 경우 겹침/끊김 방지를 위해 대기
+                        if self.tts.is_speaking():
+                            time.sleep(1.0)
+                            continue
                         
+                        speed = 1.3 if self.current_level >= 5 else 1.2
                         # 무한 대피 방송용 안내 멘트 조합
                         broadcast_text = f"비상 대피 방송입니다. {self._cached_evac_guidance}"
                         self.tts.speak_async(broadcast_text, lang='ko', speed=speed)
@@ -318,6 +321,7 @@ class EdgeSaver:
                 
                 if level >= 4:
                     if not alarm_handled:
+                        alarm_handled = True  # 중복 RAG 트리거 및 음성 겹침 방지를 위해 진입 즉시 플래그 설정
                         # 🚨 [긴급 개입] 일반 질문에 대해 음성 답변 중이었다면 즉시 강제 중단 신호 전달 및 음성 소거
                         self._interrupt_generation = True
                         self.tts.stop()
@@ -337,16 +341,19 @@ class EdgeSaver:
                             # 프롬프트에 [공장 X구역]을 명시하여 native_retriever.py의 LOCATION_MAP 필터링을 강제 트리거
                             prompt = f"[공장 {zone_id}구역] 화재 위험 지수 {level}단계 격상 ({risk['details']}). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
                             self._trigger_rag_alert(prompt, risk['details'], zone_id)
-                            alarm_handled = True
                         finally:
                             self._is_generating = False
                 elif level < 2:  # 확실하게 상황이 진정(Level 1 이하)되었을 때만 핸들 플래그 해제 및 방송 종료
-                    alarm_handled = False
                     if self._evac_broadcast_running:
+                        # 대피 안내 음성이 아직 출력 중인 경우, 메시지가 끝까지 재생될 수 있도록 복귀를 대기합니다.
+                        if self.tts.is_speaking():
+                            time.sleep(1.0)
+                            continue
                         print("\n📢 [시스템] 상황이 정상으로 복귀되었습니다. 비상 대피 방송을 즉시 종료합니다.")
                         self._evac_broadcast_running = False
                         self.tts.stop()
                         self._cached_evac_guidance = ""
+                    alarm_handled = False
                 
             except Exception as e:
                 # 무음 크래시 방지 및 예외 디버깅 로그

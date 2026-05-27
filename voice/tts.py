@@ -5,6 +5,8 @@ import queue
 import threading
 import time
 import tempfile
+import platform
+import subprocess
 import pygame
 import pyttsx3
 import config
@@ -27,6 +29,10 @@ class TTSHelper:
         self._queue = queue.Queue()
         self._stop_event = threading.Event()
         self._is_speaking = False
+        
+        # macOS 및 일반 프로세스/엔진 중단 추적용 변수
+        self._active_process = None
+        self._active_engine = None
         
         # 엔진별 초기화
         self._melo_engine = None
@@ -62,25 +68,60 @@ class TTSHelper:
                 self._is_speaking = True
                 
                 if self._engine_type == "PYTTSX3":
-                    # [v17 - 일회용 엔진 전략] 
-                    # 문구별로 엔진을 새로 생성하여 스레드 교착 및 상태 고착을 원천 봉쇄합니다.
-                    try:
-                        temp_engine = pyttsx3.init()
-                        # 위험 수치에 따른 동적 속도 조절 반영
-                        current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
-                        temp_engine.setProperty('rate', current_rate)
-                        temp_engine.setProperty('volume', self._volume)
-                        
-                        temp_engine.say(text)
-                        temp_engine.runAndWait()
-                        
-                        # [자원 해제] 명시적 중단 및 소멸
-                        temp_engine.stop()
-                        del temp_engine
-                    except Exception as sapi_ex:
-                        pass
+                    if platform.system() == "Darwin":
+                        # macOS의 경우 pyttsx3의 백그라운드 스레드 미동기(말겹침) 및 중단 버그 예방을 위해 
+                        # OS 내장 say 명령어를 동기형 서브프로세스로 실행합니다.
+                        try:
+                            voice_map = {
+                                'ko': 'Yuna',
+                                'en': 'Samantha',
+                                'ja': 'Kyoko',
+                                'zh': 'Tingting'
+                            }
+                            voice_name = voice_map.get(lang, 'Yuna')
+                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                            
+                            # 발화 속도가 rate 단위(WPM)이므로 say 명령어에도 전달
+                            cmd = ['say', '-v', voice_name, '-r', str(current_rate), text]
+                            
+                            self._active_process = subprocess.Popen(cmd)
+                            self._active_process.wait()
+                        except Exception as mac_ex:
+                            # 만약 특정 목소리가 없거나 에러 시 기본 목소리로 폴백
+                            try:
+                                cmd = ['say', '-r', str(current_rate), text]
+                                self._active_process = subprocess.Popen(cmd)
+                                self._active_process.wait()
+                            except:
+                                pass
+                        finally:
+                            self._active_process = None
+                    else:
+                        # [v17 - 일회용 엔진 전략] (Windows/Linux)
+                        # 문구별로 엔진을 새로 생성하여 스레드 교착 및 상태 고착을 원천 봉쇄합니다.
+                        try:
+                            temp_engine = pyttsx3.init()
+                            self._active_engine = temp_engine
+                            
+                            # 위험 수치에 따른 동적 속도 조절 반영
+                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                            temp_engine.setProperty('rate', current_rate)
+                            temp_engine.setProperty('volume', self._volume)
+                            
+                            temp_engine.say(text)
+                            temp_engine.runAndWait()
+                            
+                            # [자원 해제] 명시적 중단 및 소멸
+                            temp_engine.stop()
+                        except Exception as sapi_ex:
+                            pass
+                        finally:
+                            self._active_engine = None
+                            try:
+                                del temp_engine
+                            except:
+                                pass
                 else:
-                    # 2. 고품질 합성 엔진 (MeloTTS)
                     # 2. 고품질 합성 엔진 (MeloTTS)
                     temp_file = os.path.join(self._temp_dir, f"melo_{int(time.time()*1000)}.wav")
                     if self._melo_engine.speak_to_file(text, temp_file, lang=lang, speed=speed):
@@ -151,6 +192,10 @@ class TTSHelper:
             # SAPI 엔진은 가벼운 빈 문장으로 초기화 확인
             self.speak_async(" ")
 
+    def is_speaking(self):
+        """현재 음성이 합성/재생 중이거나 대기열에 작업이 남아있는지 확인합니다."""
+        return self._is_speaking or not self._queue.empty()
+
     def stop(self):
         """현재 진행 중인 재생을 즉시 멈추고 대기열을 비웁니다."""
         # 1. 대기열 비우기
@@ -161,10 +206,21 @@ class TTSHelper:
             except queue.Empty:
                 break
         
-        # 2. 현재 재생 중인 음성 중단 (엔진별 처리)
+        # 2. 현재 재생 중인 서브프로세스나 엔진 중단
         try:
-            if self._engine_type == "PYTTSX3" and self._sapi_engine:
-                self._sapi_engine.stop()
+            if self._active_process:
+                self._active_process.terminate()
+                try:
+                    self._active_process.wait(timeout=0.5)
+                except:
+                    pass
+                self._active_process = None
+        except:
+            pass
+
+        try:
+            if self._engine_type == "PYTTSX3" and self._active_engine:
+                self._active_engine.stop()
             elif pygame.mixer.get_init():
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()
