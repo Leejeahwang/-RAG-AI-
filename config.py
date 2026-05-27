@@ -50,3 +50,9 @@ RISK_LEVELS = {
 CAMERA_INDEX = 0
 CAPTURE_WIDTH = 640
 CAPTURE_PATH = "temp_capture.jpg"
+
+# ── 사이렌 경보 설정 ──
+SIREN_MIN_DURATION = 10.0   # 사이렌 최소 유지 시간 (초)
+SIREN_FILE_PATH = "data/siren.mp3"       # 사용할 커스텀 사이렌 파일 경로 (비어있으면 기본 주파수 합성음 사용)
+SIREN_VOLUME = 0.25        # 사이렌 볼륨 크기 (0.0 ~ 1.0)
+

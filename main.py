@@ -225,6 +225,7 @@ class EdgeSaver:
         print("🚨 [긴급 개입] AI가 현장 상황을 분석하여 대응 지시를 내립니다.")
         print("=" * 55)
         
+        from alerts.alarm import stop_siren
         try:
             self.tts.stop()
             from rag.chain import call_ollama_native
@@ -250,8 +251,13 @@ class EdgeSaver:
             context_text = layout_text + "\n\n".join(cleaned_chunks)
             
             ai_response = ""
+            first_token = True
             # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
             for token in call_ollama_native(prompt=context_text, question=prompt):
+                if first_token:
+                    # AI 첫 토큰이 출력되는 즉시 사이렌 경보음을 정지합니다.
+                    stop_siren()
+                    first_token = False
                 ai_response += token
             
             print("\n" + "=" * 55)
@@ -274,6 +280,9 @@ class EdgeSaver:
             
         except Exception as e:
             print(f"⚠️ 긴급 RAG 생성 오류: {e}")
+        finally:
+            # 예외 등으로 첫 토큰 체크에 실패하더라도 무한 사이렌을 원천 차단
+            stop_siren()
 
     def _monitor_sensors(self):
         """백그라운드 센서 및 비전 감시 (툴바 수치 갱신 전용)"""
