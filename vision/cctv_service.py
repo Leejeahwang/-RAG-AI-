@@ -1,5 +1,5 @@
 """
-Edge Saver 비전 모듈 백그라운드 서비스 (cctv_service.py) - Mac 최종 수정본
+Edge Saver 비전 모듈 백그라운드 서비스 (cctv_service.py) - Mac & RPi5 통합 최종 수정본
 """
 
 import cv2
@@ -8,7 +8,6 @@ import time
 import datetime
 import threading
 import platform
-import subprocess
 import numpy as np
 import config
 
@@ -51,89 +50,72 @@ def cleanup_old_captures(days=3):
 def camera_worker_thread():
     global latest_frame, camera_running, camera_offline
     
-    cap = cv2.VideoCapture(config.CAMERA_INDEX)
-    use_rpicam = False
     is_linux = (platform.system() == 'Linux')
+    cap = None
+    picam = None
     
-    if cap.isOpened():
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            print("⚠️ [경고] 기본 카메라 장치에서 빈 화면이 들어옵니다.")
-            cap.release()
-            if is_linux:
-                print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
-                use_rpicam = True
-                camera_offline = False
-            else:
-                print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
-                camera_offline = True
-        else:
+    # 1. OS 환경에 따른 카메라 장치 초기화
+    if is_linux:
+        print("🔄 [시스템] 라즈베리파이 5 최적화: 고성능 Picamera2 엔진을 구동합니다.")
+        try:
+            from picamera2 import Picamera2
+            picam = Picamera2()
+            # 640x480 사이즈로 가볍게 프레임 설정
+            config_pc = picam.create_preview_configuration(main={"format": "RGB888", "size": (640, 480)})
+            picam.configure(config_pc)
+            picam.start()
             camera_offline = False
+        except Exception as e:
+            print(f"❌ [에러] 라즈베리파이 전용 Picamera2 초기화 실패: {e}")
+            camera_offline = True
     else:
-        print("⚠️ [경고] 기본 카메라를 열 수 없습니다.")
-        if is_linux:
-            print("   [라즈베리파이 5 대응] rpicam-jpeg 모드로 전환을 시도합니다.")
-            use_rpicam = True
+        print("🍏 [시스템] macOS 환경 검출: 표준 OpenCV VideoCapture를 구동합니다.")
+        cap = cv2.VideoCapture(config.CAMERA_INDEX)
+        if cap.isOpened():
             camera_offline = False
         else:
-            print("   [macOS/기타 OS] rpicam 폴백을 비활성화하고 더미 이미지를 생성합니다.")
+            print("⚠️ [경고] 기본 카메라를 열 수 없습니다.")
             camera_offline = True
 
-    if use_rpicam:
-        print("🔄 [시스템] 라즈베리파이 전용 rpicam-jpeg 캡처 모드로 전환합니다.")
-        
-    print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다.")
+    print("📷 [백그라운드] 카메라 수집 스레드가 정상 가동되었습니다.")
     
-    rpicam_fail_count = 0
-    
+    # 2. 실시간 프레임 수집 루프
     while camera_running:
-        if not use_rpicam:
-            if cap is not None and cap.isOpened():
+        if not camera_offline:
+            if is_linux: # 💡 라즈베리파이 5 구동 로직
+                try:
+                    frame = picam.capture_array()
+                    # Picamera2의 오리지널 RGB 이미지를 OpenCV 표준인 BGR로 즉시 변환
+                    latest_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    time.sleep(0.03) # 약 30 FPS 안정화 유지
+                except Exception as e:
+                    print(f"❌ [에러] 실시간 프레임 수집 실패: {e}")
+                    time.sleep(0.5)
+            else: # 💡 Mac 구동 로직
                 ret, frame = cap.read()
                 if ret and frame is not None:
                     h, w = frame.shape[:2]
                     target_w = 640
                     target_h = int(h * (target_w / w))
-                    resized_frame = cv2.resize(frame, (target_w, target_h))
-                    latest_frame = resized_frame
+                    latest_frame = cv2.resize(frame, (target_w, target_h))
+                    time.sleep(0.01)
                 else:
                     time.sleep(0.1)
-            else:
-                # 카메라 하드웨어가 열리지 않은 경우 더미 이미지 생성하여 시스템 루프 유지
-                dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(dummy_frame, "CAMERA OFFLINE (NO HARDWARE)", (50, 240),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                latest_frame = dummy_frame
-                time.sleep(1.0)
         else:
-            try:
-                # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (라즈베리파이 5 최적화)
-                cmd = ["rpicam-jpeg", "-t", "1", "-n", "-o", "-", "--width", "640", "--height", "480"]
-                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                
-                if result.returncode == 0 and result.stdout:
-                    image_array = np.frombuffer(result.stdout, dtype=np.uint8)
-                    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        latest_frame = frame
-                        rpicam_fail_count = 0  # 성공 시 카운트 리셋
-                else:
-                    raise FileNotFoundError("rpicam-jpeg returned non-zero code or empty stdout")
-            except Exception as e:
-                rpicam_fail_count += 1
-                if rpicam_fail_count <= 3:
-                    print(f"❌ [에러] rpicam 캡처 실패: {e}")
-                elif rpicam_fail_count == 4:
-                    print("❌ [에러] rpicam 캡처 오류가 계속되어 로그 출력을 제한하고 대기 주기를 늘립니다.")
-                
-                sleep_time = 5.0 if rpicam_fail_count > 3 else 0.5
-                time.sleep(sleep_time)
-                continue
-                
-            time.sleep(0.5)
+            # 카메라 하드웨어가 비정상일 때 시스템 정지를 막기 위한 더미 이미지 피드 생성
+            dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(dummy_frame, "CAMERA OFFLINE (NO HARDWARE)", (50, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            latest_frame = dummy_frame
+            time.sleep(1.0)
             
-    if not use_rpicam and cap is not None and cap.isOpened():
+    # 3. 자원 해제 복구 작업
+    if is_linux and picam is not None:
+        picam.stop()
+        print("🔒 [해제] 라즈베리파이 카메라 장치를 정상 종료했습니다.")
+    elif cap is not None and cap.isOpened():
         cap.release()
+        print("🔒 [해제] Mac 카메라 장치를 정상 해제했습니다.")
 
 def start_cctv_service(scan_interval_sec=5):
     global latest_frame, camera_running
@@ -142,7 +124,7 @@ def start_cctv_service(scan_interval_sec=5):
         os.makedirs(CAPTURE_DIR)
         
     print(f"\n🚀 [엣지 세이버 CCTV 시작] {scan_interval_sec}초 간격으로 무인 화재 감시를 시작합니다.")
-    print("👉 (중지하려면 화면 클릭 후 'q' 키를 누르거나 터미널에서 Ctrl+C를 누르세요)\n")
+    print("👉 (중지하려면 화면 클릭 후 'q' 키를 누르세요)\n")
 
     cam_thread = threading.Thread(target=camera_worker_thread, daemon=True)
     cam_thread.start()
@@ -157,8 +139,8 @@ def start_cctv_service(scan_interval_sec=5):
             current_frame = latest_frame
             
             if current_frame is not None:
-                # Mac의 화면 멈춤 방지를 위해 GUI는 무조건 메인 루프에서 처리
                 if DEBUG_MODE:
+                    # 가속이 없는 환경(llvmpipe)에서도 OpenCV가 CPU로 화면 창을 무조건 강제 팝업합니다.
                     cv2.imshow("CCTV_DEBUG_PREVIEW", current_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         print("\n🛑 q 키 입력 감지! 무인 감시 모드를 강제 종료합니다.")
@@ -172,18 +154,13 @@ def start_cctv_service(scan_interval_sec=5):
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     save_path = os.path.join(CAPTURE_DIR, f"scan_{timestamp}.jpg")
                     
-                    # 프레임 저장
                     cv2.imwrite(save_path, current_frame)
                     
-                    # Mac 폴더 권한 문제로 저장이 안 되었을 경우 예외 처리
                     if not os.path.exists(save_path):
-                        print("❌ [에러] Mac 권한 문제: 캡처 이미지를 폴더에 저장하지 못했습니다.")
+                        print("❌ [에러] 파일 권한 문제: 캡처 이미지를 폴더에 저장하지 못했습니다.")
                         continue
                     
-                    # 🚀 윈도우 원본과 똑같이 실제 AI 화재 판별 엔진 호출
                     analysis = detect_fire(save_path)
-                    
-                    # 💡 분석 결과 (정확도 등) 상세 출력
                     print(f"🔎 [AI 분석 결과] {analysis}")
                     
                     if "오류" in analysis.get('description', '') or "초기화" in analysis.get('description', ''):
@@ -193,14 +170,12 @@ def start_cctv_service(scan_interval_sec=5):
                     else:
                         print(f"[{timestamp}] 특이사항 없음 (안전)")
                         
-                    # 평시/오류 시 즉시 삭제 (디스크 낭비 방지)
                     if not analysis.get("fire_detected") and os.path.exists(save_path):
                         os.remove(save_path)
                             
                     if cleanup_counter > 100:
                         cleanup_old_captures(days=3)
                         cleanup_counter = 0
-
             else:
                 time.sleep(0.1)
                 
