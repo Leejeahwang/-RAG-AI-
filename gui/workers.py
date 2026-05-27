@@ -58,6 +58,52 @@ LLMItem = Tuple[int, int, str, str, str, dict]
 
 
 # ════════════════════════════════════════════════════════════════
+#  Native RAG QA 어댑터 (FAISS + BM25 + Ollama 스트리밍)
+# ════════════════════════════════════════════════════════════════
+
+class NativeQA:
+    """새 방식 RAG 어댑터.
+
+    rag.native_retriever(FAISS+BM25 하이브리드) 검색 + rag.chain.call_ollama_native
+    스트리밍 호출을 묶어, gui가 기대하는 qa.invoke(prompt) -> {"result": str}
+    인터페이스로 노출한다. (옛 build_qa_chain / Chroma 방식을 대체)
+
+    faiss / sentence_transformers 의존성은 인스턴스 생성 시점에만 로드되므로,
+    이 모듈 import 자체는 해당 패키지 없이도 성공한다(호출 측에서 폴백 가능)."""
+
+    def __init__(self):
+        from rag.native_retriever import rag_manager
+        from rag.loader import load_and_split
+
+        self._rag = rag_manager
+        self._rag.load_resources()
+        if not self._rag.index:
+            RUNTIME.add_log("📖 [RAG] 인덱스 없음 — 매뉴얼로 신규 구축")
+            chunks = load_and_split()
+            self._rag.build_index(chunks)
+        RUNTIME.add_log(f"✅ [RAG] Native 인덱스 준비 완료 ({len(self._rag.metadata)}개)")
+
+    @staticmethod
+    def _clean(doc: dict) -> str:
+        """매뉴얼 메타데이터 헤더([위치:], [출처:], 마크다운 기호) 제거 — 앵무새/노이즈 방지."""
+        lines = doc.get("page_content", "").split("\n")
+        keep = [
+            l for l in lines
+            if "[위치:" not in l and "[출처:" not in l
+            and not l.strip().startswith(("###", "---"))
+        ]
+        return "\n".join(keep)
+
+    def invoke(self, prompt: str) -> dict:
+        from rag.chain import call_ollama_native
+
+        docs = self._rag.search(prompt)
+        context = "\n\n".join(self._clean(d) for d in docs)
+        answer = "".join(call_ollama_native(prompt=context, question=prompt))
+        return {"result": answer.strip()}
+
+
+# ════════════════════════════════════════════════════════════════
 #  Sensor worker
 # ════════════════════════════════════════════════════════════════
 
@@ -477,3 +523,4 @@ def shutdown_workers(stt_bundle: Optional[tuple] = None, tts_helper: Any = None)
             pa.terminate()
         except Exception:
             pass
+
