@@ -38,17 +38,8 @@ def init_engine():
     RUNTIME.add_log("🔥 EDGE SAVER 감시 시스템 기동")
     RUNTIME.add_log("=" * 40)
     try:
-        from rag.loader import load_and_split
-        from rag.retriever import build_vectorstore, get_retriever
-        from rag.chain import build_qa_chain
-
-        RUNTIME.add_log("[시스템] 1/3 매뉴얼 로딩")
-        chunks = load_and_split()
-        RUNTIME.add_log("[시스템] 2/3 벡터DB 구축")
-        db = build_vectorstore(chunks)
-        retriever = get_retriever(db)
-        RUNTIME.add_log("[시스템] 3/3 QA 체인 구성")
-        qa = build_qa_chain(retriever)
+        RUNTIME.add_log("[시스템] 1/2 Native RAG 엔진(FAISS+BM25) 로드")
+        qa = W.NativeQA()
 
         RUNTIME.add_log("[시스템] TTS 엔진 준비")
         tts_helper = tts.TTSHelper()
@@ -145,3 +136,4 @@ else:
         C.render_risk_gauge()
         C.render_log_panel()
         C.render_ai_panel(llm_queue)
+
