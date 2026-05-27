@@ -18,14 +18,21 @@ roboflow
 # --- RAG & Data Engine ---
 langchain
 langchain-community
+langchain-core
+langchain-classic
 langchain-text-splitters
+chromadb
+opencv-python
+paho-mqtt
+numpy
+pyaudio
+pyttsx3
+faster-whisper
+roboflow
+pygame-ce
 faiss-cpu
 sentence-transformers
-ollama
-pypdf
-python-docx
-python-pptx
-olefile
+prompt-toolkit
 beautifulsoup4
 requests
 

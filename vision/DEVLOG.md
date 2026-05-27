@@ -17,9 +17,15 @@
 ### 💥 발생한 문제 (Issue)
 - **가상환경 의존성 누락 및 디스크 공간 에러**: 라즈베리파이에서 `onnx` 및 `onnxruntime` 설치 도중 디스크 공간 부족(`Errno 28`)으로 설치 실패가 뜸.
 - **모델 중복 로드**: 파일 매핑 및 보정 과정으로 인해 YOLOv11n INT8 테스트 시 FP16 파일이 로드되는 현상 식별.
+- **PC 통합 환경 구동 중 라이브러리 누락**: `main.py` E2E 테스트 과정에서 윈도우 환경에 `pygame`, `pyttsx3`, `faiss-cpu`, `sentence-transformers`, `prompt-toolkit` 등의 패키지가 설치되어 있지 않아 실행 불가 에러 다수 발생.
+- **PyAudio 컴파일 및 빌드 실패**: 윈도우 가상환경에서 `pyaudio`를 pip로 설치하려 했으나 `portaudio.h`가 없어 빌드가 실패(C1083)해 STT 모듈 임포트 실패로 크래시 발생.
 
 ### 💡 해결 및 배운 점 (Solution/TIL)
 - **pip 캐시 정리**: `rm -rf ~/.cache/pip`로 pip 다운로드 캐시를 말끔히 비워 SD카드 여유 공간을 확보하고 패키지를 정상 재설치함.
+- **의존성 업데이트 및 우회 설치**: 
+  - `requirements.txt`에 신규 의존성들을 갱신하여 일괄 설치하도록 구조화함.
+  - Python 3.13+ 버전과의 호환성 해결을 위해 pygame 대신 pre-built wheel이 정상 제공되는 `pygame-ce`(Community Edition)를 우회 설치하여 컴파일 에러 해결.
+- **STT/PyAudio 예외 방어 및 텍스트 폴백**: 마이크 환경이나 `pyaudio` 라이브러리가 없는 PC 또는 엣지 시스템에서도 오류로 뻗지 않도록, `main.py`와 `voice/stt.py`에서 `pyaudio` 및 STT 관련 임포트부를 `try-except` 예외 처리하여 감싸고 `STT_AVAILABLE` 플래그를 통해 텍스트 전용 모드로 안전하게 자동 폴백되도록 보강함.
 - **시스템 마진의 중요성**: 1초에 1장씩 추론하는 상황에서 YOLOv10m은 CPU 점유율이 60% 이상에 육박해 화재 발생 시 RAG(Ollama) 및 TTS/STT가 동시 실행될 때 보드가 죽을 리스크가 큼. 전체 E2E 생존력을 위해 성능 마진이 넉넉한 YOLOv8 INT8(120ms, 발열 51.8℃)이 최선의 배포 모델임을 종합 판단을 통해 배움.
 
 ---
