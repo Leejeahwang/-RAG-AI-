@@ -220,51 +220,69 @@ class EdgeSaver:
         print("\n📢 [시스템] 비상 대피 방송 스레드가 종료되었습니다.")
 
     def _trigger_rag_alert(self, prompt, sensor_info, zone_id):
-        """위급 상황 시 콘솔 출력 (patch_stdout이 대화 본문을 자동으로 보호함)"""
-        print("\n" + "!" * 55)
-        print("🚨 [긴급 개입] AI가 현장 상황을 분석하여 대응 지시를 내립니다.")
-        print("!" * 55)
+        """위급 상황 시 LLM 스트리밍 추론을 생략(Bypassing)하고, 0초 만에 100% 신뢰할 수 있는 원본 대피로를 직송합니다."""
+        alert_header = (
+            "\n" + "!" * 55 + "\n"
+            "🚨 [긴급 개입] 시스템 원본 비상 지침을 즉각 격발(Bypass)합니다.\n"
+            + "!" * 55
+        )
+        print(alert_header)
         
         try:
             self.tts.stop()
-            from rag.chain import call_ollama_native
             from rag.native_retriever import rag_manager
             
             # 위험 상황에 맞는 매뉴얼 검색
             source_docs = rag_manager.search(prompt)
             
-            # 메타데이터 헤더 삭제 (앵무새 방지)
-            cleaned_chunks = []
-            for doc in source_docs:
-                lines = doc.get('page_content', '').split('\n')
-                clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-                cleaned_chunks.append("\n".join(clean_lines))
-            
-            # [평면도 주입] 선택된 Zone의 평면도를 컨텍스트 맨 위(1순위)에 강제 주입
+            # 1. 현장 평면도 원문 추출
             layout_text = ""
             layout_path = os.path.join("data", f"zone_{zone_id}_layout.txt")
             if os.path.exists(layout_path):
                 with open(layout_path, "r", encoding="utf-8") as f:
-                    layout_text = f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
-                    
-            context_text = layout_text + "\n\n".join(cleaned_chunks)
+                    layout_text = f.read().strip()
             
-            ai_response = ""
-            # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
-            for token in call_ollama_native(prompt=context_text, question=prompt):
-                ai_response += token
+            # 2. 공장 소방 매뉴얼 핵심 수칙 원본 정제 추출
+            fire_protocol_text = ""
+            for doc in source_docs:
+                src = doc.get('source', '')
+                if "factory_fire_manual" in src.lower() or "emergency" in src.lower() or "saver" in src.lower():
+                    lines = doc.get('page_content', '').split('\n')
+                    clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
+                    fire_protocol_text = "\n".join(clean_lines).strip()
+                    break
             
-            print("\n" + "=" * 55)
-            print("🔊 [AI 긴급 피난 안내]")
-            print("-" * 55)
-            print(f"{ai_response}")
-            print("=" * 55 + "\n")
+            # 만약 매뉴얼 추출이 실패한 경우 대비 기본 대피 수칙 백업
+            if not fire_protocol_text:
+                fire_protocol_text = (
+                    "- 연기 흡입 방지를 위해 젖은 천으로 호흡기를 막으십시오.\n"
+                    "- 시야 확보가 어려울 경우 벽을 짚고 한 방향으로만 이동하십시오.\n"
+                    "- 정전이나 붕괴 위험이 있으므로 엘리베이터나 리프트를 절대 탑승하지 마시고 비상계단만을 이용하십시오."
+                )
+            
+            # 3. 고속 0초 피난 안내 템플릿 결합 (하십시오체 일관 적용)
+            assembled_guidance = (
+                f"[공장 {zone_id}구역 화재 비상 대피 지침]\n\n"
+                f"🚨 {layout_text}\n\n"
+                f"📝 [공장 화재 대피 기본 수칙]\n"
+                f"{fire_protocol_text}\n\n"
+                f"즉시 위 수칙에 따라 신속하게 대피하십시오."
+            )
+            
+            alert_response = (
+                "\n" + "=" * 55 + "\n"
+                "🔊 [AI 즉각 피난 지침 직송 (LLM Bypass)]\n"
+                "-" * 55 + "\n"
+                f"{assembled_guidance}\n"
+                + "=" * 55 + "\n"
+            )
+            print(alert_response)
             
             # 대피 지침 전역 캐싱
-            self._cached_evac_guidance = ai_response
+            self._cached_evac_guidance = assembled_guidance
             
-            send_alert(zone=f"관리구역_{zone_id}", risk_level=4, sensor_details=sensor_info, ai_guidance=ai_response)
-            self.tts.speak_async(f"비상 상황 발생! {ai_response}", lang='ko')
+            send_alert(zone=f"관리구역_{zone_id}", risk_level=4, sensor_details=sensor_info, ai_guidance=assembled_guidance)
+            self.tts.speak_async(f"비상 상황 발생! {assembled_guidance}", lang='ko')
             
             # 주기적 비상 대피 방송 스레드 가동
             if not self._evac_broadcast_running:
@@ -273,7 +291,7 @@ class EdgeSaver:
                 self._evac_broadcast_thread.start()
             
         except Exception as e:
-            print(f"⚠️ 긴급 RAG 생성 오류: {e}")
+            print(f"⚠️ 긴급 대피로 직송 오류: {e}")
 
     def _monitor_sensors(self):
         """백그라운드 센서 및 비전 감시 (툴바 수치 갱신 전용)"""
@@ -339,10 +357,13 @@ class EdgeSaver:
                         
                         self._is_generating = True  # 중복 RAG 트리거 및 음성 겹침 방지 방어선 구축
                         try:
-                            print(f"\n\033[31;1m" + "!" * 55)
-                            print(f"🚨 [재난 발생] {risk['label']} (단계: {level})")
-                            print(f"📝 원인: {risk['details']}")
-                            print("!" * 55 + "\033[0m")
+                            warning_msg = (
+                                f"\n\033[31;1m" + "!" * 55 + "\n"
+                                f"🚨 [재난 발생] {risk['label']} (단계: {level})\n"
+                                f"📝 원인: {risk['details']}\n"
+                                f"{'!' * 55}\033[0m"
+                            )
+                            print(warning_msg)
                             
                             trigger_alarm(level, risk['details'])
                             
@@ -399,6 +420,13 @@ class EdgeSaver:
                         refresh_interval=1.0
                     ).strip()
                     
+                    # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
+                    if "[EDGE SAVER]" in query or "T:" in query:
+                        query = re.sub(r'\[EDGE SAVER\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
+                        query = re.sub(r'❓\s*질문:\s*', '', query).strip()
+                        query = re.sub(r'T:\s*\d+\.?\d*C\s*\|.*', '', query).strip()
+                        query = query.replace("[EDGE SAVER]", "").strip()
+                        
                     if self.tts: self.tts.stop()
                     
                     if query == "" or query.lower() in ['v', 'voice']:
@@ -418,14 +446,33 @@ class EdgeSaver:
                     start_t = time.time()
                     
                     from rag.native_retriever import rag_manager
-                    source_docs = rag_manager.search(query)
+                    from rag.chain import rewrite_query_ollama
+                    
+                    # [v49] LLM 기반 고속 쿼리 재작성 적용 (Query Reformulation)
+                    search_query = query
+                    keywords = rewrite_query_ollama(query)
+                    if keywords:
+                        # 원본 질문과 명사 키워드를 병합하여 하이브리드 검색 매칭률 극대화
+                        search_query = f"{query} {keywords}"
+                        print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
+                        
+                    source_docs = rag_manager.search(search_query)
                     
                     # LLM 앵무새 증후군 방지: 컨텍스트 내의 메타데이터 헤더([위치:], [출처:]) 텍스트 강제 삭제
                     cleaned_chunks = []
+                    seen_sources = set()  # 동일 소스 파일 중복 방지 필터 (Attention Bloat 차단)
                     for doc in source_docs:
+                        src = doc.get('source', '')
+                        if src:
+                            if src in seen_sources:
+                                continue
+                            seen_sources.add(src)
+                            
                         lines = doc.get('page_content', '').split('\n')
                         clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-                        cleaned_chunks.append("\n".join(clean_lines))
+                        cleaned_content = "\n".join(clean_lines).strip()
+                        if cleaned_content:
+                            cleaned_chunks.append(cleaned_content)
                     context_text = "\n\n".join(cleaned_chunks)
                     
                     from rag.chain import SYSTEM_PROMPT

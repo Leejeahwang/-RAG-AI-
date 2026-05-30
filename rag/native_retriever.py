@@ -211,9 +211,31 @@ class NativeRAGManager:
             doc_theme = next((theme for theme, keywords in CONFLICT_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
             doc_loc = next((loc for loc, keywords in LOCATION_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
             
+            # 구역 평면도/대피로(zone, layout) 파일은 공장 핵심 지표이므로 필터링에서 예외 처리 또는 공장으로 분류
+            if "zone" in src or "layout" in src:
+                doc_loc = "공장"
+            
             if detected_themes and doc_theme and doc_theme not in detected_themes: continue
             if detected_locs and doc_loc and doc_loc not in detected_locs: continue
             
+            # [Strict 구역 필터링] 
+            # 질문에서 특정 구역이 감지되었는데, 이 문서가 다른 구역의 레이아웃인 경우 RAG 후보에서 완전히 제외시킵니다.
+            target_zones_in_query = []
+            for zc in ["A", "B", "C"]:
+                if f"{zc}구역" in query or f"{zc} 구역" in query or f"zone_{zc.lower()}" in query or f"zone_{zc.upper()}" in query:
+                    target_zones_in_query.append(zc)
+            
+            # 질문에 특정 구역이 명시되어 있는데, 다른 구역의 레이아웃 파일인 경우 즉시 버림
+            is_unrelated_zone = False
+            if target_zones_in_query:
+                for zc in ["A", "B", "C"]:
+                    if zc not in target_zones_in_query:
+                        if f"zone_{zc.lower()}" in src or f"zone_{zc.upper()}" in src:
+                            is_unrelated_zone = True
+                            break
+            if is_unrelated_zone:
+                continue
+
             valid_results.append(doc)
 
         if not valid_results:
@@ -226,7 +248,33 @@ class NativeRAGManager:
             source_scores[src] += (10 - i)
             
         winner_sources = [s for s, score in source_scores.most_common(top_n_sources)]
-        final_docs = [d for d in valid_results if d.get('source') in winner_sources]
+        # [품질 보강] 질문에 매칭되는 정확한 구역 정보 소스만 winner_sources 필터를 우회하여 강제 보존합니다.
+        final_docs = []
+        for d in valid_results:
+            src = d.get('source', '')
+            
+            # 현재 질문에 감지된 대상 구역
+            target_zones_in_query = [zc for zc in ["A", "B", "C"] if f"{zc}구역" in query or f"{zc} 구역" in query or f"zone_{zc.lower()}" in query or f"zone_{zc.upper()}" in query]
+            
+            is_matched_critical_zone = False
+            if target_zones_in_query:
+                # 질문에 해당하는 특정 구역 파일만 예외 보존 처리 (다른 구역 파일이나 generic zone 단어 매칭 차단)
+                for zc in target_zones_in_query:
+                    if f"zone_{zc.lower()}" in src.lower() or f"zone_{zc.upper()}" in src.lower():
+                        is_matched_critical_zone = True
+                        break
+            
+            # [토픽별 핵심 수칙 강제 보존 바이패스]
+            # 질문에 특정 대형 토픽(아파트, 숨/CPR)이 명시된 경우 관련 핵심 수본들을 단일 소스 집중 필터와 무관하게 보존합니다.
+            is_critical_topic_source = False
+            if "아파트" in query and "아파트" in src:
+                is_critical_topic_source = True
+            elif any(k in query for k in ["숨", "CPR", "심폐", "응급"]) and any(k in src.lower() for k in ["119", "응급", "cpr", "saver"]):
+                is_critical_topic_source = True
+            
+            if src in winner_sources or is_matched_critical_zone or is_critical_topic_source:
+                final_docs.append(d)
+
         
         # 6. 검색 의도(Intent) 기반 Lexical 리랭킹 (실전 vs 연습 구분)
         intent_keywords = [
@@ -246,10 +294,15 @@ class NativeRAGManager:
             
             # --- 고도화된 리랭킹 필터 ---
             
-            # 1. 소스 파일명 매칭 보너스: 질문의 핵심 키워드가 파일명에 있으면 강력 가점 (+25점)
+            # 1. 소스 파일명 및 Zone 구역 매칭 보너스 (+80점 - 최우선 순위 격상)
             for kw in ["공장", "factory", "아파트", "apartment", "화산", "태풍"]:
                 if kw in query.lower() and kw in src:
                     feature_score += 25
+                    
+            for zone_char in ["A", "B", "C"]:
+                if f"{zone_char}구역" in query or f"{zone_char} 구역" in query or f"zone_{zone_char.lower()}" in query or f"zone_{zone_char.upper()}" in query:
+                    if f"zone_{zone_char.lower()}" in src or f"zone_{zone_char.upper()}" in src:
+                        feature_score += 80  # 최상위로 끌어올림
             
             if is_action_query:
                 # 2. 행동 강령에 자주 나오는 핵심 실전 키워드 가점 부여 (+10점)
@@ -263,7 +316,7 @@ class NativeRAGManager:
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
         
-        return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
+        return super_final_docs[:8] # 로컬 1.5B 콘텍스트 수용성(2048) 내에서 지식 유실이 없도록 전달량을 8개로 보강
 
 # 싱글톤 인스턴스 제공
 rag_manager = NativeRAGManager()
