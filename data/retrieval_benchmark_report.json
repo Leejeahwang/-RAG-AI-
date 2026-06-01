@@ -2,14 +2,14 @@
     "total_scenarios": 15,
     "metrics": {
         "stage1_baseline": {
-            "hit_rate_at_1": 0.8,
-            "mrr": 0.8333,
-            "avg_latency_sec": 0.053
+            "hit_rate_at_1": 0.8667,
+            "mrr": 0.8667,
+            "avg_latency_sec": 3.7625
         },
         "stage2_bge_reranker": {
-            "hit_rate_at_1": 0.6,
-            "mrr": 0.7167,
-            "avg_latency_sec": 0.3148
+            "hit_rate_at_1": 0.6667,
+            "mrr": 0.75,
+            "avg_latency_sec": 4.1465
         }
     },
     "details": [
@@ -24,13 +24,13 @@
                 "top_1_source": "zone_A_layout.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.1202
+                "latency_sec": 5.3522
             },
             "stage2_with_reranker": {
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 4,
                 "hit_at_1": 0,
-                "latency_sec": 0.4521
+                "latency_sec": 5.8567
             }
         },
         {
@@ -44,13 +44,13 @@
                 "top_1_source": "zone_B_layout.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0435
+                "latency_sec": 3.6391
             },
             "stage2_with_reranker": {
                 "top_1_source": "zone_B_layout.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3278
+                "latency_sec": 3.9771
             }
         },
         {
@@ -64,13 +64,13 @@
                 "top_1_source": "factory_fire_manual.txt",
                 "target_rank": -1,
                 "hit_at_1": 0,
-                "latency_sec": 0.039
+                "latency_sec": 3.6848
             },
             "stage2_with_reranker": {
-                "top_1_source": "전국 화재 대피 훈련 홍보 전단지.pdf",
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": -1,
                 "hit_at_1": 0,
-                "latency_sec": 0.3015
+                "latency_sec": 4.0435
             }
         },
         {
@@ -85,13 +85,13 @@
                 "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0379
+                "latency_sec": 4.0029
             },
             "stage2_with_reranker": {
-                "top_1_source": "edge_saver_manual.txt",
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3027
+                "latency_sec": 4.3605
             }
         },
         {
@@ -106,13 +106,13 @@
                 "top_1_source": "edge_saver_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0487
+                "latency_sec": 5.417
             },
             "stage2_with_reranker": {
                 "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3354
+                "latency_sec": 5.8293
             }
         },
         {
@@ -124,16 +124,16 @@
                 "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp"
             ],
             "stage1": {
-                "top_1_source": "edge_saver_manual.txt",
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0425
+                "latency_sec": 5.7671
             },
             "stage2_with_reranker": {
                 "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3154
+                "latency_sec": 6.1903
             }
         },
         {
@@ -147,13 +147,13 @@
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0433
+                "latency_sec": 4.3663
             },
             "stage2_with_reranker": {
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3828
+                "latency_sec": 4.7909
             }
         },
         {
@@ -167,13 +167,13 @@
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0446
+                "latency_sec": 4.5319
             },
             "stage2_with_reranker": {
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.413
+                "latency_sec": 5.0073
             }
         },
         {
@@ -187,13 +187,13 @@
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0566
+                "latency_sec": 5.2835
             },
             "stage2_with_reranker": {
                 "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3462
+                "latency_sec": 5.7554
             }
         },
         {
@@ -205,16 +205,16 @@
                 "factory_gas_manual.txt"
             ],
             "stage1": {
-                "top_1_source": "factory_smoke_manual.txt",
-                "target_rank": 2,
-                "hit_at_1": 0,
-                "latency_sec": 0.0414
+                "top_1_source": "factory_gas_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 0.4945
             },
             "stage2_with_reranker": {
                 "top_1_source": "factory_smoke_manual.txt",
                 "target_rank": 2,
                 "hit_at_1": 0,
-                "latency_sec": 0.1307
+                "latency_sec": 0.6492
             }
         },
         {
@@ -226,16 +226,16 @@
                 "factory_fire_manual.txt"
             ],
             "stage1": {
-                "top_1_source": "edge_saver_manual.txt",
+                "top_1_source": "factory_fire_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0416
+                "latency_sec": 3.8222
             },
             "stage2_with_reranker": {
-                "top_1_source": "edge_saver_manual.txt",
+                "top_1_source": "factory_fire_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.319
+                "latency_sec": 4.2572
             }
         },
         {
@@ -250,13 +250,13 @@
                 "top_1_source": "factory_fire_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0501
+                "latency_sec": 4.7392
             },
             "stage2_with_reranker": {
-                "top_1_source": "factory_gas_manual.txt",
-                "target_rank": 2,
-                "hit_at_1": 0,
-                "latency_sec": 0.2424
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.0414
             }
         },
         {
@@ -268,16 +268,16 @@
                 "factory_gas_manual.txt"
             ],
             "stage1": {
-                "top_1_source": "폭발 국민행동요령 매뉴얼.pdf",
+                "top_1_source": "factory_smoke_manual.txt",
                 "target_rank": -1,
                 "hit_at_1": 0,
-                "latency_sec": 0.0362
+                "latency_sec": 0.6854
             },
             "stage2_with_reranker": {
                 "top_1_source": "폭발 국민행동요령 매뉴얼.pdf",
                 "target_rank": -1,
                 "hit_at_1": 0,
-                "latency_sec": 0.1721
+                "latency_sec": 0.8889
             }
         },
         {
@@ -291,13 +291,13 @@
                 "top_1_source": "edge_saver_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0774
+                "latency_sec": 2.9476
             },
             "stage2_with_reranker": {
                 "top_1_source": "화산폭발시 국민행동요령.hwp",
                 "target_rank": 2,
                 "hit_at_1": 0,
-                "latency_sec": 0.3472
+                "latency_sec": 3.4114
             }
         },
         {
@@ -311,13 +311,13 @@
                 "top_1_source": "edge_saver_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.0719
+                "latency_sec": 1.7031
             },
             "stage2_with_reranker": {
                 "top_1_source": "edge_saver_manual.txt",
                 "target_rank": 1,
                 "hit_at_1": 1,
-                "latency_sec": 0.3341
+                "latency_sec": 2.1383
             }
         }
     ]
