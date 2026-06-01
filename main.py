@@ -298,10 +298,11 @@ class EdgeSaver:
         alarm_handled = False
         while self._monitor_running:
             try:
-                # 만약 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이라면 
-                # 음성 겹침과 오버헤드를 막기 위해 센서 체크를 잠시 양보합니다.
-                if getattr(self, '_is_generating', False) and self.current_level < 4:
-                    time.sleep(1.0)
+                # [CPU 점유율 극대화] LLM이 답변을 생성 중(is_generating)일 때는
+                # 위험도 레벨과 무관하게 백그라운드 비전 AI(YOLO) 및 센서 융합 스캔을 100% 안전하게 양보/대기시켜
+                # CPU의 자원 경합을 원천 해결하고 답변 지연 속도를 대폭 단축합니다.
+                if getattr(self, '_is_generating', False):
+                    time.sleep(1.5)
                     continue
 
                 temp_data = read_temperature(simulate=True)
