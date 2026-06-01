@@ -375,7 +375,7 @@ class EdgeSaver:
                             self._trigger_rag_alert(prompt, risk['details'], zone_id)
                         finally:
                             self._is_generating = False
-                elif level < 2:  # 확실하게 상황이 진정(Level 1 이하)되었을 때만 핸들 플래그 해제 및 방송 종료
+                elif level == 0:  # 센서 및 비전 수치가 완전히 평온(Level 0)해졌을 때만 알람 흔들림(Chattering) 방지를 위해 플래그 해제 및 방송 종료
                     if self._evac_broadcast_running:
                         # 대피 안내 음성이 아직 출력 중인 경우, 메시지가 끝까지 재생될 수 있도록 복귀를 대기합니다.
                         if self.tts.is_speaking():

@@ -254,7 +254,7 @@ class EdgeSaverTest:
                             f"{'!' * 65}\033[0m"
                         )
                         print(warning_msg)
-                elif level < 2:
+                elif level == 0:  # 센서 및 비전 위험이 완전히 정상(Level 0)으로 소멸되었을 때만 알람 흔들림(Chattering) 방지를 위해 해제
                     alarm_handled = False
                 
             except Exception as e:
