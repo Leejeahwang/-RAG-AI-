@@ -26,7 +26,7 @@ class ManualParser:
     """
     HWP, PDF, 이미지 파일에서 텍스트를 추출하고 AI를 통해 정제하는 통합 파서 클래스.
     """
-    def __init__(self, use_ai_refinement=True, llm_model="gemma4:e2b"):
+    def __init__(self, use_ai_refinement=True, llm_model="qwen2.5:1.5b"):
         self.use_ai_refinement = use_ai_refinement
         self.llm_model = llm_model
         self._ocr_reader = None
@@ -80,8 +80,9 @@ class ManualParser:
                 
                 try:
                     decoded = data.decode('utf-16le', errors='ignore')
-                    cleaned = re.sub(r'[\x00-\x1f]', '', decoded)
-                    # [주의] [\x7f-\xff] 제거 로직은 한글을 파괴하므로 삭제함
+                    # 119생활응급처치매뉴얼의 바이너리 쓰레기 코드를 차단하고 한글/영문/핵심 기호만 고속 정밀 필터링
+                    cleaned = re.sub(r'[^가-힣a-zA-Z0-9\s.,()\-\[\]#:\n!?~%*\"\'/&+=<>]', '', decoded)
+                    cleaned = re.sub(r'[ \t]+', ' ', cleaned).strip()
                     full_text.append(cleaned)
                 except Exception as e:
                     print(f"      [경고] {section_node} 디코딩 실패: {e}")
@@ -243,6 +244,9 @@ class ManualParser:
         administrative_keywords = ['지원안내', '보상금', '복구지원', '행정절차', '신청서', '포상']
         if any(kw in filename for kw in administrative_keywords):
             print(f"    [검역] 행정 키워드 감지됨 ({filename}). AI 정밀 판정 모드 가동.")
+        else:
+            # 행정 키워드가 없다면 RAG 필수 행동 요령 지침서이므로 오프라인 초고속 패스
+            return True, "BYPASS_PASS"
         
         # 2. AI 정밀 판정 (주제 분류)
         sample_text = text[:1500]
@@ -294,7 +298,7 @@ class ManualParser:
                 except Exception as e:
                     print(f"  [오류] 텍스트 파일(CP949) 읽기 실패: {e}")
         
-        if not raw_text or len(raw_text) < 500:
+        if not raw_text or len(raw_text) < 100:  # C구역 등 초소형/고가치 비상 대피 도면의 RAG 인덱스 누락 방지를 위해 100자로 완화
             print(f"  [건너뜀] 유효하지 않은 내용 (길이 부족 등)")
             return None
             
@@ -306,7 +310,11 @@ class ManualParser:
             
         final_content = clean_data
         if self.use_ai_refinement:
-            final_content = self.sanitize_content_with_ai(clean_data, basename)
+            # 10,000자 초과의 대용량 파일은 로컬 LLM 컨텍스트 오버플로우와 추론 지연을 막기 위해 AI 정제를 건너뜁니다.
+            if len(clean_data) > 10000:
+                print(f"      [정보] 대용량 파일 ({len(clean_data)}자) 이므로 AI 정제를 건너뛰고 정제된 원본을 직접 적재합니다.")
+            else:
+                final_content = self.sanitize_content_with_ai(clean_data, basename)
             
         print(f"  [통과] 수락됨: {len(final_content)} 자")
         return {"source": basename, "content": final_content}

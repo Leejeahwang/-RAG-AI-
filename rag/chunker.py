@@ -23,36 +23,12 @@ class ManualChunker:
         self.model = model
 
     def generate_ai_title(self, text, filename):
-        if not text: return filename
-        prompt = f"아래 텍스트를 분석하여 문서의 핵심 주제를 10자 이내의 명사형으로 출력하세요.\n파일명: {filename}\n내용: {text[:1000]}\n결과(제목만):"
-        try:
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
-                timeout=60
-            )
-            ai_title = response.json().get("response", "").strip()
-            return re.sub(r'["\'#\.\(\)]', '', ai_title) if ai_title else filename
-        except: return filename
+        # 로컬 CPU 속도 극대화를 위해 AI 타이틀 요약 생략하고 파일명을 직접 가공하여 사용합니다.
+        return os.path.splitext(filename)[0]
 
     def get_semantic_splits(self, text):
-        if len(text) < 400: return text
-        prompt = f"아래 텍스트에서 주제나 카테고리가 바뀌는 지점에 '[SPLIT]' 마커만 삽입하세요. 원본 텍스트의 글자나 기호는 절대 수정하거나 삭제하지 마세요.\n원본 텍스트:\n{text}"
-        try:
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
-                timeout=90
-            )
-            content = response.json().get("response", "").strip()
-            # [안전 장치] 혹시나 AI가 변조한 LaTeX 기호 제거 (원본 텍스트 보존 우선)
-            # 마커를 제외하고 원본과 너무 다르면 원본을 반환
-            if "[SPLIT]" not in content: return text
-            
-            # AI가 임의로 추가한 수식 기호 제거
-            content = content.replace('$', '').replace('\\text{', '').replace('}', '')
-            return content
-        except: return text
+        # 로컬 CPU 자원 및 대용량 문서 속도 최적화를 위해 시맨틱 분리 AI 호출을 생략하고 안전한 폴백 청커를 사용합니다.
+        return text
 
     def chunk_document(self, content, source_name):
         """단일 문서를 청크 리스트로 분할합니다."""

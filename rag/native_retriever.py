@@ -316,7 +316,7 @@ class NativeRAGManager:
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
         
-        return super_final_docs[:8] # 로컬 1.5B 콘텍스트 수용성(2048) 내에서 지식 유실이 없도록 전달량을 8개로 보강
+        return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
 
 # 싱글톤 인스턴스 제공
 rag_manager = NativeRAGManager()

@@ -24,12 +24,12 @@ def trigger_alarm(risk_level, message=""):
         - Level 4+: 전관 방송 연동
     """
     label = config.RISK_LEVELS.get(risk_level, "알 수 없음")
-    print(f"\n🚨 [경보 Level {risk_level} - {label}] {message}")
-
+    lines = [f"\n🚨 [경보 Level {risk_level} - {label}] {message}"]
     if risk_level >= 3:
-        print("   🔔 부저 작동! (시뮬레이션)")
+        lines.append("   🔔 부저 작동! (시뮬레이션)")
     if risk_level >= 4:
-        print("   📢 전관 방송 작동! (시뮬레이션)")
+        lines.append("   📢 전관 방송 작동! (시뮬레이션)")
+    print("\n".join(lines))
 
 
 def stop_alarm():
