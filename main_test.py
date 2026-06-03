@@ -384,7 +384,7 @@ class EdgeSaverTest:
                     print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
                     if source_docs:
                         sources = set(d.get('source', 'unknown_manual') for d in source_docs)
-                        print(f"[참고 문헌] {sources}")
+                        print(f"[참고 문헌 (BGE-Base Reranker 정렬 적용)] {sources}")
                     print("-" * 55)
 
                 except KeyboardInterrupt: break

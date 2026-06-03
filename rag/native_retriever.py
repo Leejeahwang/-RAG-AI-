@@ -11,6 +11,10 @@ import numpy as np
 import faiss
 import pickle
 from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers.cross_encoder import CrossEncoder
+except ImportError:
+    CrossEncoder = None
 from typing import List, Dict, Any
 import config
 from collections import Counter
@@ -79,6 +83,7 @@ class NativeRAGManager:
         self.index = None
         self.bm25 = None
         self.metadata = []
+        self.reranker = None
         self.model_name = config.NATIVE_EMBEDDING_MODEL
         self.index_dir = config.FAISS_INDEX_DIR
         self.index_file = os.path.join(self.index_dir, "index.faiss")
@@ -102,6 +107,17 @@ class NativeRAGManager:
                     self.bm25 = pickle.load(f)
             
             print(f"[NativeRAG] 로드 완료 (데이터: {len(self.metadata)}개)")
+            
+            # Reranker 모델 CPU 사전 로드 기작
+            if getattr(config, "USE_RERANKER", False) and CrossEncoder is not None:
+                reranker_model = getattr(config, "RERANKER_MODEL_NAME", "BAAI/bge-reranker-base")
+                print(f"[NativeRAG] Reranker 로드 중: {reranker_model}...")
+                try:
+                    self.reranker = CrossEncoder(reranker_model, device="cpu")
+                    print(f"[NativeRAG] Reranker 로드 완료: {reranker_model}")
+                except Exception as e:
+                    print(f"[NativeRAG] Reranker 로드 실패 (Lexical Fallback 준비): {e}")
+                    self.reranker = None
         else:
             print("[NativeRAG] 기존 인덱스가 없습니다. 초기 구축이 필요합니다.")
 
@@ -315,6 +331,26 @@ class NativeRAGManager:
         # 재계산된 점수 기준 내림차순 정렬
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
+        
+        # 7. BGE Reranker를 통한 2차 시맨틱 정밀 리랭킹
+        if self.reranker is not None and super_final_docs:
+            try:
+                # 엣지 CPU 오버헤드 방지를 위해 최정예 후보 10개 컷오프
+                candidates = super_final_docs[:10]
+                pairs = [[query, doc.get("page_content", "")] for doc in candidates]
+                
+                # 시맨틱 가중치 계산
+                scores = self.reranker.predict(pairs)
+                scored_candidates = list(zip(scores, candidates))
+                
+                # 점수 기반 정밀 내림차순 정렬
+                scored_candidates.sort(key=lambda x: x[0], reverse=True)
+                final_sorted_docs = [doc for _, doc in scored_candidates]
+                
+                return final_sorted_docs[:4]
+            except Exception as e:
+                print(f"[NativeRAG] Reranker 추론 실패 (Lexical Fallback 가동): {e}")
+                return super_final_docs[:4]
         
         return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
 
