@@ -279,15 +279,15 @@ class EdgeSaverTest:
         self._monitor_thread = threading.Thread(target=self._monitor_sensors, daemon=True)
         self._monitor_thread.start()
 
-        with patch_stdout():
+        # SIMPLE_UI 플래그가 설정된 경우: prompt_toolkit 툴바 렌더링을 완전히 우회하고 순정 터미널 input()으로 가동 (화면 깨짐 차단)
+        if getattr(config, "SIMPLE_UI", False):
             while True:
                 try:
-                    query = self.session.prompt(
-                        "❓ 질문: ", 
-                        bottom_toolbar=self._get_bottom_toolbar,
-                        refresh_interval=1.0
-                    ).strip()
+                    # 센서 상태를 실시간 툴바 대신 일반 텍스트로 한 줄씩 출력
+                    print(f"\n📢 [실시간 상태] {self.current_risk_stats}")
+                    query = input("❓ 질문: ").strip()
                     
+                    # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
                     if "[EDGE SAVER]" in query or "T:" in query:
                         query = re.sub(r'\[EDGE SAVER.*?\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
                         query = re.sub(r'❓\s*질문:\s*', '', query).strip()
@@ -308,6 +308,131 @@ class EdgeSaverTest:
                         break
                     else:
                         lang = 'ko' if re.search('[가-힣]', query) else 'en'
+                        
+                    print("\n[분석] 대응 지침 생성 중...")
+                    start_t = time.time()
+                    
+                    from rag.native_retriever import rag_manager
+                    from rag.chain import rewrite_query_ollama
+                    
+                    search_query = query
+                    keywords = rewrite_query_ollama(query)
+                    if keywords:
+                        search_query = f"{query} {keywords}"
+                        print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
+                        
+                    # BGE-Base Reranker가 내부적으로 자동 작동하여 상위 4개 엄선
+                    source_docs = rag_manager.search(search_query)
+                    
+                    cleaned_chunks = []
+                    seen_sources = set()  
+                    for doc in source_docs:
+                        src = doc.get('source', '')
+                        if src:
+                            if src in seen_sources:
+                                continue
+                            seen_sources.add(src)
+                            
+                        lines = doc.get('page_content', '').split('\n')
+                        clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
+                        cleaned_content = "\n".join(clean_lines).strip()
+                        if cleaned_content:
+                            cleaned_chunks.append(cleaned_content)
+                    context_text = "\n\n".join(cleaned_chunks)
+                    
+                    from rag.chain import SYSTEM_PROMPT
+                    formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
+                    
+                    speed = 1.0
+                    if self.current_level >= 5: speed = 1.3
+                    elif self.current_level >= 4: speed = 1.2
+                    
+                    print("-" * 55)
+                    sentence_buffer = ""
+                    self._is_generating = True 
+                    self._interrupt_generation = False 
+                    
+                    try:
+                        from rag.chain import call_ollama_native
+                        completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
+                        
+                        for token in call_ollama_native(prompt=context_text, question=query):
+                            if getattr(self, '_interrupt_generation', False):
+                                print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
+                                break
+                            print(token, end="", flush=True)
+                            sentence_buffer += token
+                            
+                            is_split_point = any(p in token for p in ".!?\n")
+                            if is_split_point and "." in token:
+                                if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
+                                    is_split_point = False
+                            
+                            if not is_split_point:
+                                if "," in token and len(sentence_buffer) > 15:
+                                    is_split_point = True
+                                elif len(sentence_buffer) > 25 and " " in token:
+                                    is_split_point = True
+                            
+                            if is_split_point:
+                                clean_sent = sentence_buffer.strip()
+                                # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
+                                if len(clean_sent) > 6 and clean_sent in completed_sentences:
+                                    print("\n\n⚠️ [Deduplicator] 초경량 모델의 반복 생성(앵무새 루프) 감지로 강제 종료합니다.")
+                                    sentence_buffer = ""
+                                    break
+                                
+                                if len(clean_sent) > 6:
+                                    completed_sentences.append(clean_sent)
+                                    
+                                self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                                sentence_buffer = ""
+                    finally:
+                        self._is_generating = False 
+                    
+                    if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
+                        self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                    
+                    print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
+                    if source_docs:
+                        sources = set(d.get('source', 'unknown_manual') for d in source_docs)
+                        print(f"[참고 문헌 (BGE-Base Reranker 정렬 적용)] {sources}")
+                    print("-" * 55)
+
+                except KeyboardInterrupt: break
+                except Exception as e: print(f"❌ 오류: {e}")
+        
+        # 기존 prompt_toolkit 기반 UI 구동 분기
+        else:
+            with patch_stdout():
+                while True:
+                    try:
+                        query = self.session.prompt(
+                            "❓ 질문: ", 
+                            bottom_toolbar=self._get_bottom_toolbar,
+                            refresh_interval=1.0
+                        ).strip()
+                        
+                        if "[EDGE SAVER]" in query or "T:" in query:
+                            query = re.sub(r'\[EDGE SAVER.*?\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
+                            query = re.sub(r'❓\s*질문:\s*', '', query).strip()
+                            query = re.sub(r'T:\s*\d+\.?\d*C\s*\|.*', '', query).strip()
+                            query = query.replace("[EDGE SAVER]", "").strip()
+                            
+                        if self.tts: self.tts.stop()
+                        
+                        if query == "" or query.lower() in ['v', 'voice']:
+                            if not getattr(config, 'STT_ENABLED', True) or self.stt_stream is None:
+                                print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
+                                continue
+                            print("\n🎤 말씀해 주세요...")
+                            query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream)
+                            if not query: continue
+                            print(f"🎤 인식: {query}")
+                        elif query.lower() in ['q', 'exit', 'quit']:
+                            break
+                        else:
+                            lang = 'ko' if re.search('[가-힣]', query) else 'en'
 
                     print("\n[분석] 대응 지침 생성 중...")
                     start_t = time.time()

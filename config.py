@@ -3,6 +3,8 @@ import os
 # ── 시스템 전역 설정 ──
 APP_NAME = "엣지 세이버 (Edge Saver)"
 DEBUG = True
+SIMPLE_UI = True  # 라즈베리파이/VNC 터미널의 툴바 화면 깨짐 및 꼬임 현상을 방지하기 위한 안전 경량 CLI 플래그
+
 
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (라즈베리파이 0.5B 초가속 적용)
