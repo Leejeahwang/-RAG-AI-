@@ -135,6 +135,9 @@ class RuntimeState:
         self._is_generating: bool = False
         self._first_alert: bool = True
 
+        # 주기적 비상 대피 방송용 캐시 (생성된 대피 지침을 반복 방송)
+        self._evac_guidance: str = ""
+
         self._stt_enabled: bool = False
         self._stt_queue: "queue.Queue[STTMessage]" = queue.Queue(maxsize=16)
         self._stt_dropped: bool = False
@@ -294,6 +297,19 @@ class RuntimeState:
     def is_generating(self) -> bool:
         with self._lock:
             return self._is_generating
+
+    # ── 비상 대피 방송 캐시 (주기적 반복 방송용) ──
+    def set_evac_guidance(self, text: str) -> None:
+        with self._lock:
+            self._evac_guidance = text
+
+    def get_evac_guidance(self) -> str:
+        with self._lock:
+            return self._evac_guidance
+
+    def clear_evac_guidance(self) -> None:
+        with self._lock:
+            self._evac_guidance = ""
 
     # ── alert claim (CAS) ──
     def try_claim_alert(self) -> bool:
