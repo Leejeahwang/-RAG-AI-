@@ -354,6 +354,8 @@ class EdgeSaverTest:
                     
                     try:
                         from rag.chain import call_ollama_native
+                        completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
+                        
                         for token in call_ollama_native(prompt=context_text, question=query):
                             if getattr(self, '_interrupt_generation', False):
                                 print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
@@ -373,6 +375,16 @@ class EdgeSaverTest:
                                     is_split_point = True
                             
                             if is_split_point:
+                                clean_sent = sentence_buffer.strip()
+                                # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
+                                if len(clean_sent) > 6 and clean_sent in completed_sentences:
+                                    print("\n\n⚠️ [Deduplicator] 초경량 모델의 반복 생성(앵무새 루프) 감지로 강제 종료합니다.")
+                                    sentence_buffer = ""
+                                    break
+                                
+                                if len(clean_sent) > 6:
+                                    completed_sentences.append(clean_sent)
+                                    
                                 self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
                                 sentence_buffer = ""
                     finally:

@@ -47,12 +47,13 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
         "stream": True,
         "keep_alive": "24h",
         "options": {
-            "temperature": 0.1,
-            "repeat_penalty": 1.15,   # [Option A 적용] 무한 반복 앵무새 버그를 억제하기 위해 페널티 재강화
-            "num_predict": 800,       # [길이 제한 해제] 긴 매뉴얼 답변이 잘리지 않도록 300자에서 800자로 대폭 확장
+            "temperature": 0.0,       # 0.5b의 횡설수설 방지를 위해 완전 확정적 생성(0.0) 유도
+            "repeat_penalty": 1.35,   # 초경량 모델의 반복 앵무새 꼬임 현상을 억제하기 위한 페널티 재강화
+            "num_predict": 400,       # 0.5b 가속을 위해 불필요하게 늘어나는 토큰 한도를 400자로 제한
             "num_ctx": 2048,
             "num_thread": 4,
-            "use_mlock": True
+            "use_mlock": True,
+            "stop": ["질문:", "답변:", "수칙:", "매뉴얼:", "\n\n\n", "edgesaver", "edge saver"] # 앵무새 무한 루프 원천 차단 시퀀스 지정
         }
     }
     
