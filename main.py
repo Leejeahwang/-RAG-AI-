@@ -539,8 +539,7 @@ class EdgeSaver:
                     try:
                         query = self.session.prompt(
                             "❓ 질문: ", 
-                            bottom_toolbar=self._get_bottom_toolbar,
-                            refresh_interval=1.0
+                            bottom_toolbar=self._get_bottom_toolbar
                         ).strip()
                         
                         # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제

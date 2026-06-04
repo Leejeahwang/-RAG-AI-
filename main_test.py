@@ -409,8 +409,7 @@ class EdgeSaverTest:
                     try:
                         query = self.session.prompt(
                             "❓ 질문: ", 
-                            bottom_toolbar=self._get_bottom_toolbar,
-                            refresh_interval=1.0
+                            bottom_toolbar=self._get_bottom_toolbar
                         ).strip()
                         
                         if "[EDGE SAVER]" in query or "T:" in query:

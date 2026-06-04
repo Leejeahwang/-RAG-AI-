@@ -3,7 +3,7 @@ import os
 # ── 시스템 전역 설정 ──
 APP_NAME = "엣지 세이버 (Edge Saver)"
 DEBUG = True
-SIMPLE_UI = True  # 라즈베리파이/VNC 터미널의 툴바 화면 깨짐 및 꼬임 현상을 방지하기 위한 안전 경량 CLI 플래그
+SIMPLE_UI = False  # 라즈베리파이/VNC 터미널 환경 최적화로 툴바 UI 사용 가능 (False 시 툴바 활성화)
 
 
 # ── LLM & STT 모델 설정 ──
