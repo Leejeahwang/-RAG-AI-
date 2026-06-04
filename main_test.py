@@ -312,14 +312,8 @@ class EdgeSaverTest:
                     print("\n[분석] 대응 지침 생성 중...")
                     start_t = time.time()
                     
-                    from rag.native_retriever import rag_manager
-                    from rag.chain import rewrite_query_ollama
-                    
+                    # [1.5B 키워드 추출 제거] 라즈베리파이5 연산 병목 제거를 위해 LLM 쿼리 재작성 레이어 제거 (원본 쿼리 직송)
                     search_query = query
-                    keywords = rewrite_query_ollama(query)
-                    if keywords:
-                        search_query = f"{query} {keywords}"
-                        print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
                         
                     # BGE-Base Reranker가 내부적으로 자동 작동하여 상위 4개 엄선
                     source_docs = rag_manager.search(search_query)

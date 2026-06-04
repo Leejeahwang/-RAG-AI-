@@ -445,16 +445,8 @@ class EdgeSaver:
                     print("\n[분석] 대응 지침 생성 중...")
                     start_t = time.time()
                     
-                    from rag.native_retriever import rag_manager
-                    from rag.chain import rewrite_query_ollama
-                    
-                    # [v49] LLM 기반 고속 쿼리 재작성 적용 (Query Reformulation)
+                    # [1.5B 키워드 추출 제거] 라즈베리파이5 연산 병목 제거를 위해 LLM 쿼리 재작성 레이어 제거 (원본 쿼리 직송)
                     search_query = query
-                    keywords = rewrite_query_ollama(query)
-                    if keywords:
-                        # 원본 질문과 명사 키워드를 병합하여 하이브리드 검색 매칭률 극대화
-                        search_query = f"{query} {keywords}"
-                        print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
                         
                     source_docs = rag_manager.search(search_query)
                     
