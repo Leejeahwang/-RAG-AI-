@@ -58,6 +58,39 @@ LLMItem = Tuple[int, int, str, str, str, dict]
 
 
 # ════════════════════════════════════════════════════════════════
+#  공용 헬퍼 (main.py 포팅: 발화 속도 / 평면도 주입 / 비상 레벨)
+# ════════════════════════════════════════════════════════════════
+
+def _speed_for_level(level: int) -> float:
+    """위험 단계별 TTS 발화 속도 (Lv5: 1.3x, Lv4: 1.2x, 그 외 1.0x)."""
+    if level >= 5:
+        return 1.3
+    if level >= 4:
+        return 1.2
+    return 1.0
+
+
+def _resolve_layout_text(zone: str) -> str:
+    """zone 문자열에서 A/B/C를 추출해 해당 평면도 파일을 RAG 1순위 컨텍스트로 반환."""
+    import re
+    m = re.search(r"([ABC])\s*구역", zone or "") or re.search(r"\b([ABC])\b", zone or "")
+    zone_id = m.group(1) if m else "A"
+    path = os.path.join(config.DATA_DIR, f"zone_{zone_id}_layout.txt")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
+    return ""
+
+
+def _current_emergency_level() -> int:
+    """현재 비상 위험도 (비MQTT: 단일 위험도 / MQTT: 활성 구역 최대 위험도)."""
+    if MQTT_MODE:
+        zones = RUNTIME.get_all_zones()
+        return max((RUNTIME.get_zone_risk(z).level for z in zones), default=0)
+    return RUNTIME.get_risk().level
+
+
+# ════════════════════════════════════════════════════════════════
 #  Native RAG QA 어댑터 (FAISS + BM25 + Ollama 스트리밍)
 # ════════════════════════════════════════════════════════════════
 
@@ -94,11 +127,14 @@ class NativeQA:
         ]
         return "\n".join(keep)
 
-    def invoke(self, prompt: str) -> dict:
+    def invoke(self, prompt: str, layout_text: str = "") -> dict:
         from rag.chain import call_ollama_native
 
         docs = self._rag.search(prompt)
         context = "\n\n".join(self._clean(d) for d in docs)
+        # 평면도가 있으면 컨텍스트 맨 앞(1순위)에 강제 주입 (비상 시 대피로 우선 참조)
+        if layout_text:
+            context = layout_text + context
         answer = "".join(call_ollama_native(prompt=context, question=prompt))
         return {"result": answer.strip()}
 
@@ -116,6 +152,15 @@ def sensor_worker(stop_event: threading.Event) -> None:
             t_data = temperature.read_temperature(simulate=SIMULATE)
 
             now = time.time()
+            fire = RUNTIME.get_fire()
+
+            # [시뮬레이터 보정] 카메라가 화재를 감지하면 가상 센서 수치도 위험 임계값 이상으로
+            # 동반 급상승시켜 fusion이 Lv4/5(긴급/재난) 판정을 내리도록 트리거 (main.py 동일 동작)
+            if fire.detected:
+                s_val = 550   # 연기 임계값(300) 초과
+                g_val = 600   # 가스 임계값(400) 초과
+                t_data = {**t_data, "temperature": 75.0}  # 고온 임계값(60) 초과
+
             RUNTIME.set_sensors(SensorSnapshot(
                 smoke=int(s_val),
                 gas=int(g_val),
@@ -124,7 +169,6 @@ def sensor_worker(stop_event: threading.Event) -> None:
                 ts=now,
             ))
 
-            fire = RUNTIME.get_fire()
             risk = fusion.calculate_risk_level(s_val, g_val, t_data, fire.detected)
             RUNTIME.set_risk(RiskSnapshot(
                 level=int(risk["level"]),
@@ -235,13 +279,16 @@ def llm_worker(
         _prio, _seq_id, kind, prompt, lang, meta = item
         RUNTIME.set_generating(True)
         try:
+            layout_text = ""
             if kind == "emergency":
                 trigger_alarm(meta.get("level", 0), meta.get("details", ""))
                 try:
                     tts_helper.stop()
                 except Exception:
                     pass
-            res = qa.invoke(prompt)
+                # 해당 구역 평면도를 RAG 컨텍스트 1순위로 주입
+                layout_text = _resolve_layout_text(meta.get("zone", ""))
+            res = qa.invoke(prompt, layout_text=layout_text)
             answer = res.get("result", "").strip() if isinstance(res, dict) else str(res)
             RUNTIME.set_last_answer(answer)
 
@@ -255,15 +302,19 @@ def llm_worker(
                     )
                 except Exception as e:
                     RUNTIME.add_log(f"❌ [알림] {e}")
+                # 주기적 비상 방송 워커가 반복 송출하도록 대피 지침 캐싱
+                RUNTIME.set_evac_guidance(answer)
                 RUNTIME.add_log("📢 [LLM] 비상 지침 생성 완료, TTS 시작")
                 try:
-                    tts_helper.speak(f"비상 상황 발생! {answer}", lang="ko")
+                    speed = _speed_for_level(meta.get("level", 0))
+                    tts_helper.speak(f"비상 상황 발생! {answer}", lang="ko", speed=speed)
                 except Exception as e:
                     RUNTIME.add_log(f"❌ [TTS] {e}")
             else:
                 RUNTIME.add_log("✅ [LLM] 응답 완료")
                 try:
-                    tts_helper.speak(answer, lang=lang)
+                    speed = _speed_for_level(_current_emergency_level())
+                    tts_helper.speak(answer, lang=lang, speed=speed)
                 except Exception as e:
                     RUNTIME.add_log(f"❌ [TTS] {e}")
         except Exception as e:
@@ -271,6 +322,56 @@ def llm_worker(
         finally:
             RUNTIME.set_generating(False)
     RUNTIME.add_log("🛑 [LLM] 종료")
+
+
+# ════════════════════════════════════════════════════════════════
+#  Evac broadcast worker (주기적 비상 대피 방송)
+# ════════════════════════════════════════════════════════════════
+
+def evac_broadcast_worker(stop_event: threading.Event, tts_helper: Any) -> None:
+    """대피 상황이 지속되는 동안 25초 주기로 대피 지침을 반복 방송.
+
+    위험도가 Lv2 미만으로 진정되면 캐시를 비우고 방송을 종료한다.
+    (main.py의 _run_evac_broadcast 포팅)"""
+    RUNTIME.add_log("📢 [비상방송] 워커 시작")
+    BROADCAST_INTERVAL = 25.0
+    last_play = time.time()
+
+    while not stop_event.is_set():
+        try:
+            guidance = RUNTIME.get_evac_guidance()
+            if not guidance:
+                # 캐시 없음: 다음 방송이 캐시 설정 시점부터 한 주기 뒤가 되도록 타이머 리셋
+                last_play = time.time()
+                stop_event.wait(1.0)
+                continue
+
+            level = _current_emergency_level()
+            if level < 2:
+                RUNTIME.clear_evac_guidance()
+                try:
+                    tts_helper.stop()
+                except Exception:
+                    pass
+                RUNTIME.add_log("📢 [비상방송] 상황 정상 복귀 — 방송 종료")
+                stop_event.wait(1.0)
+                continue
+
+            now = time.time()
+            if now - last_play >= BROADCAST_INTERVAL:
+                # 이미 음성 출력 중이면 겹침 방지를 위해 대기
+                if tts_helper.is_speaking():
+                    stop_event.wait(1.0)
+                    continue
+                speed = 1.3 if level >= 5 else 1.2
+                tts_helper.speak_async(
+                    f"비상 대피 방송입니다. {guidance}", lang="ko", speed=speed
+                )
+                last_play = now
+        except Exception as e:
+            RUNTIME.add_log(f"❌ [비상방송] {e}")
+        stop_event.wait(1.0)
+    RUNTIME.add_log("🛑 [비상방송] 종료")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -487,6 +588,7 @@ def start_workers(qa: Any, stt_bundle: tuple, tts_helper: Any) -> "queue.Priorit
             ("alert_dispatcher", alert_dispatcher, (stop_event, _llm_queue)),
             ("stt", stt_worker, (stop_event, stt_model, pa, stream)),
             ("llm", llm_worker, (stop_event, _llm_queue, qa, tts_helper)),
+            ("evac_broadcast", evac_broadcast_worker, (stop_event, tts_helper)),
         ]
     else:
         specs = [
@@ -494,6 +596,7 @@ def start_workers(qa: Any, stt_bundle: tuple, tts_helper: Any) -> "queue.Priorit
             ("fire", fire_worker, (stop_event,)),
             ("stt", stt_worker, (stop_event, stt_model, pa, stream)),
             ("llm", llm_worker, (stop_event, _llm_queue, qa, tts_helper)),
+            ("evac_broadcast", evac_broadcast_worker, (stop_event, tts_helper)),
         ]
     for name, target, args in specs:
         t = threading.Thread(target=target, args=args, daemon=True, name=name)
@@ -531,4 +634,6 @@ def shutdown_workers(stt_bundle: Optional[tuple] = None, tts_helper: Any = None)
             pa.terminate()
         except Exception:
             pass
+
+
 
