@@ -28,12 +28,14 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
     
     # 0.5B 모델의 지능에 맞추어 시스템 역할(System Role)과 사용자 역할(User Role)을 분리하여 지침 수행력 향상
     system_content = (
-        "You are an emergency response assistant 'Edge Saver'.\n"
-        "Your ONLY task is to copy and paste the relevant instructions from the provided [참고 매뉴얼] exactly as they are written.\n"
-        "Rules:\n"
-        "1. Copy the manual sentences verbatim. Do NOT change any words, endings, or sentence structures.\n"
-        "2. Do NOT summarize, modify, or rewrite any facts.\n"
-        "3. Output ONLY the copied emergency guidelines without any intro, extra explanations, or conversational filler."
+        "You are an emergency response expert 'Edge Saver'.\n"
+        "Your ONLY task is to copy and output the safety instructions from the [참고 매뉴얼] word for word. Do NOT change, summarize, or modify any words.\n\n"
+        "Example:\n"
+        "[참고 매뉴얼]\n"
+        "* 전기 화재 시 절대로 물을 뿌리면 안 됩니다. 메인 차단기를 내리고 분말 소화기를 사용하십시오.\n"
+        "질문: 전기 화재 대처법은?\n"
+        "답변: 전기 화재 시 절대로 물을 뿌리면 안 됩니다. 메인 차단기를 내리고 분말 소화기를 사용하십시오.\n\n"
+        "Ensure you answer ONLY with the copied manual lines without any extra comments."
     )
     
     user_content = (
@@ -52,8 +54,9 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
         "stream": True,
         "keep_alive": "24h",
         "options": {
-            "temperature": 0.0,       # 0.5b의 횡설수설 방지를 위해 완전 확정적 생성(0.0) 유도
-            "repeat_penalty": 1.05,   # 초경량 모델의 단어 왜곡(예: 메인 전원->전원콘)을 방지하기 위해 패널티 대폭 완화
+            "temperature": 0.1,       # 특정 루프 차단을 위한 약간의 유연성 부여
+            "top_p": 0.85,            # 무작위 이상한 단어 생성을 억제하기 위한 누적 확률 제한
+            "repeat_penalty": 1.15,   # 단어 반복 루프(1.05)와 억지 단어 비틀기(1.35) 사이의 최적의 밸런스 지점
             "num_predict": 400,       # 0.5b 가속을 위해 불필요하게 늘어나는 토큰 한도를 400자로 제한
             "num_ctx": 2048,
             "num_thread": 4,

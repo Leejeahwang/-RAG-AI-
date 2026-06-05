@@ -347,12 +347,12 @@ class NativeRAGManager:
                 scored_candidates.sort(key=lambda x: x[0], reverse=True)
                 final_sorted_docs = [doc for _, doc in scored_candidates]
                 
-                return final_sorted_docs[:4]
+                return final_sorted_docs[:getattr(config, 'RAG_TOP_K', 4)]
             except Exception as e:
                 print(f"[NativeRAG] Reranker 추론 실패 (Lexical Fallback 가동): {e}")
-                return super_final_docs[:4]
+                return super_final_docs[:getattr(config, 'RAG_TOP_K', 4)]
         
-        return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
+        return super_final_docs[:getattr(config, 'RAG_TOP_K', 4)] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
 
 # 싱글톤 인스턴스 제공
 rag_manager = NativeRAGManager()

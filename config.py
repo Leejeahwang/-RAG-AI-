@@ -35,6 +35,7 @@ CHUNK_OVERLAP = 50
 # ── Reranker 설정 ──
 USE_RERANKER = True
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-base"
+RAG_TOP_K = 2  # 0.5B 초소형 모델의 컨텍스트 병목과 인지 부하를 줄이기 위해 상위 청크 반환 개수를 2개로 제한
 
 
 
