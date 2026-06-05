@@ -370,7 +370,6 @@ class EdgeSaverTest:
                     try:
                         if not getattr(config, 'USE_LLM', True):
                             # Zero-LLM RAG 모드: 컨텍스트(매뉴얼 원문)를 그대로 출력하고 발화
-                            import re
                             sentences = []
                             for block in context_text.split('\n'):
                                 block = block.strip()
@@ -530,7 +529,6 @@ class EdgeSaverTest:
                         try:
                             if not getattr(config, 'USE_LLM', True):
                                 # Zero-LLM RAG 모드: 컨텍스트(매뉴얼 원문)를 그대로 출력하고 발화
-                                import re
                                 sentences = []
                                 for block in context_text.split('\n'):
                                     block = block.strip()
