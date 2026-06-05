@@ -189,6 +189,8 @@ class EdgeSaver:
 
     def _get_bottom_toolbar(self):
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
+        if self.current_level >= 4:
+            return HTML(f'<style bg="ansired" fg="white"> [🚨 EDGE SAVER - AI 즉각 대피 지침 직송 (LLM Bypass)] | {self.current_risk_stats} </style>')
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
 
     def _run_evac_broadcast(self):
@@ -271,8 +273,6 @@ class EdgeSaver:
             
             alert_response = (
                 "\n" + "=" * 55 + "\n"
-                "🔊 [AI 즉각 피난 지침 직송 (LLM Bypass)]\n"
-                "-" * 55 + "\n"
                 f"{assembled_guidance}\n"
                 + "=" * 55 + "\n"
             )
@@ -346,7 +346,10 @@ class EdgeSaver:
                     risk['details'] += f" | {fire_desc}"
 
                 # 툴바 데이터 갱신 (터미널 UI 깨짐 방지를 위해 이모지 대신 텍스트/표준 기호 사용)
-                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
+                if level >= 4:
+                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']} | [LLM BYPASS]"
+                else:
+                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
                 
                 if level >= 4:
                     if not alarm_handled:

@@ -189,6 +189,8 @@ class EdgeSaverTest:
 
     def _get_bottom_toolbar(self):
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
+        if self.current_level >= 4:
+            return HTML(f'<style bg="ansired" fg="white"> [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | {self.current_risk_stats} </style>')
         return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER TEST - RERANKER ACTIVE] | {self.current_risk_stats} </style>')
 
     def _monitor_sensors(self):
@@ -239,7 +241,10 @@ class EdgeSaverTest:
                     risk['details'] += f" | {fire_desc}"
 
                 # 하단 툴바 갱신
-                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
+                if level >= 4:
+                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']} | [LLM BYPASS]"
+                else:
+                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
                 
                 if level >= 4:
                     # [TEST MODE] 4단계 이상 비상 경보 격발(RAG 알림 바이패스, 음성 비상 스레드)을 미작동시킵니다.
