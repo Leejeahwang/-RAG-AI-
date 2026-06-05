@@ -9,6 +9,7 @@ SIMPLE_UI = False  # 라즈베리파이/VNC 터미널 환경 최적화로 툴바
 # ── LLM & STT 모델 설정 ──
 # [v35] Ollama Native 호출을 위한 모델명 (라즈베리파이 0.5B 초가속 적용)
 LLM_MODEL = "qwen2.5:0.5b"  # 최종 대응 지침 생성용 초경량 가속 모델 (0.5B)
+USE_LLM = False  # True: 0.5B 모델로 답변 생성, False: Reranker 검색 청크를 원본 그대로 즉시 출력 (Zero-LLM RAG)
 KEYWORD_MODEL = "qwen2.5:1.5b"  # 시맨틱 쿼리 키워드 고속 추출용 똑똑한 모델 (1.5B)
 STT_ENABLED = False  # [v48] 라즈베리파이 오디오 드라이버(ALSA) 세그멘테이션 오류 방지를 위해 비활성화
 STT_ENGINE = "WHISPER"

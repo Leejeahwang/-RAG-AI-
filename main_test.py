@@ -368,39 +368,76 @@ class EdgeSaverTest:
                     self._interrupt_generation = False 
                     
                     try:
-                        from rag.chain import call_ollama_native
-                        completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
-                        
-                        for token in call_ollama_native(prompt=context_text, question=query):
-                            if getattr(self, '_interrupt_generation', False):
-                                print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
-                                break
-                            print(token, end="", flush=True)
-                            sentence_buffer += token
-                            
-                            is_split_point = any(p in token for p in ".!?\n")
-                            if is_split_point and "." in token:
-                                if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
-                                    is_split_point = False
-                            
-                            if not is_split_point:
-                                if "," in token and len(sentence_buffer) > 15:
-                                    is_split_point = True
-                                elif len(sentence_buffer) > 25 and " " in token:
-                                    is_split_point = True
-                            
-                            if is_split_point:
-                                clean_sent = sentence_buffer.strip()
-                                # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
-                                if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                                    sentence_buffer = ""
+                        if not getattr(config, 'USE_LLM', True):
+                            # Zero-LLM RAG 모드: 컨텍스트(매뉴얼 원문)를 그대로 출력하고 발화
+                            import re
+                            sentences = []
+                            for block in context_text.split('\n'):
+                                block = block.strip()
+                                if not block:
+                                    continue
+                                # 문장 단위 분할 (마침표, 느낌표, 물음표 뒤에 공백이 오는 패턴 기준)
+                                parts = re.split(r'(?<=[.!?])\s+', block)
+                                for part in parts:
+                                    if part.strip():
+                                        sentences.append(part.strip())
+
+                            completed_sentences = []
+                            for sentence in sentences:
+                                if getattr(self, '_interrupt_generation', False):
+                                    print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
                                     break
                                 
+                                # 타이핑 효과 연출 (Premium UI)
+                                for char in sentence:
+                                    if getattr(self, '_interrupt_generation', False):
+                                        break
+                                    print(char, end="", flush=True)
+                                    time.sleep(0.01)
+                                print(" ", end="", flush=True)
+                                
+                                clean_sent = sentence.strip()
                                 if len(clean_sent) > 6:
                                     completed_sentences.append(clean_sent)
+                                
+                                self.tts.speak_async(sentence, lang=lang, speed=speed)
+                            print()  # 개행
+                        else:
+                            from rag.chain import call_ollama_native
+                            completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
+                            
+                            # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
+                            for token in call_ollama_native(prompt=context_text, question=query):
+                                if getattr(self, '_interrupt_generation', False):
+                                    print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
+                                    break
+                                print(token, end="", flush=True)
+                                sentence_buffer += token
+                                
+                                is_split_point = any(p in token for p in ".!?\n")
+                                if is_split_point and "." in token:
+                                    if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
+                                        is_split_point = False
+                                
+                                # [v28] 번개 분할: 첫 구절은 25자만 넘어도 즉시 음성 출력
+                                if not is_split_point:
+                                    if "," in token and len(sentence_buffer) > 15:
+                                        is_split_point = True
+                                    elif len(sentence_buffer) > 25 and " " in token:
+                                        is_split_point = True
+                                
+                                if is_split_point:
+                                    clean_sent = sentence_buffer.strip()
+                                    # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
+                                    if len(clean_sent) > 6 and clean_sent in completed_sentences:
+                                        sentence_buffer = ""
+                                        break
                                     
-                                self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-                                sentence_buffer = ""
+                                    if len(clean_sent) > 6:
+                                        completed_sentences.append(clean_sent)
+                                        
+                                    self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                                    sentence_buffer = ""
                     finally:
                         self._is_generating = False 
                     
@@ -491,39 +528,76 @@ class EdgeSaverTest:
                         self._interrupt_generation = False 
                         
                         try:
-                            from rag.chain import call_ollama_native
-                            completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
-                            
-                            for token in call_ollama_native(prompt=context_text, question=query):
-                                if getattr(self, '_interrupt_generation', False):
-                                    print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
-                                    break
-                                print(token, end="", flush=True)
-                                sentence_buffer += token
-                                
-                                is_split_point = any(p in token for p in ".!?\n")
-                                if is_split_point and "." in token:
-                                    if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
-                                        is_split_point = False
-                                
-                                if not is_split_point:
-                                    if "," in token and len(sentence_buffer) > 15:
-                                        is_split_point = True
-                                    elif len(sentence_buffer) > 25 and " " in token:
-                                        is_split_point = True
-                                
-                                if is_split_point:
-                                    clean_sent = sentence_buffer.strip()
-                                    # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
-                                    if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                                        sentence_buffer = ""
+                            if not getattr(config, 'USE_LLM', True):
+                                # Zero-LLM RAG 모드: 컨텍스트(매뉴얼 원문)를 그대로 출력하고 발화
+                                import re
+                                sentences = []
+                                for block in context_text.split('\n'):
+                                    block = block.strip()
+                                    if not block:
+                                        continue
+                                    # 문장 단위 분할 (마침표, 느낌표, 물음표 뒤에 공백이 오는 패턴 기준)
+                                    parts = re.split(r'(?<=[.!?])\s+', block)
+                                    for part in parts:
+                                        if part.strip():
+                                            sentences.append(part.strip())
+
+                                completed_sentences = []
+                                for sentence in sentences:
+                                    if getattr(self, '_interrupt_generation', False):
+                                        print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
                                         break
                                     
+                                    # 타이핑 효과 연출 (Premium UI)
+                                    for char in sentence:
+                                        if getattr(self, '_interrupt_generation', False):
+                                            break
+                                        print(char, end="", flush=True)
+                                        time.sleep(0.01)
+                                    print(" ", end="", flush=True)
+                                    
+                                    clean_sent = sentence.strip()
                                     if len(clean_sent) > 6:
                                         completed_sentences.append(clean_sent)
+                                    
+                                    self.tts.speak_async(sentence, lang=lang, speed=speed)
+                                print()  # 개행
+                            else:
+                                from rag.chain import call_ollama_native
+                                completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
+                                
+                                # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
+                                for token in call_ollama_native(prompt=context_text, question=query):
+                                    if getattr(self, '_interrupt_generation', False):
+                                        print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
+                                        break
+                                    print(token, end="", flush=True)
+                                    sentence_buffer += token
+                                    
+                                    is_split_point = any(p in token for p in ".!?\n")
+                                    if is_split_point and "." in token:
+                                        if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
+                                            is_split_point = False
+                                    
+                                    # [v28] 번개 분할: 첫 구절은 25자만 넘어도 즉시 음성 출력
+                                    if not is_split_point:
+                                        if "," in token and len(sentence_buffer) > 15:
+                                            is_split_point = True
+                                        elif len(sentence_buffer) > 25 and " " in token:
+                                            is_split_point = True
+                                    
+                                    if is_split_point:
+                                        clean_sent = sentence_buffer.strip()
+                                        # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
+                                        if len(clean_sent) > 6 and clean_sent in completed_sentences:
+                                            sentence_buffer = ""
+                                            break
                                         
-                                    self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-                                    sentence_buffer = ""
+                                        if len(clean_sent) > 6:
+                                            completed_sentences.append(clean_sent)
+                                            
+                                        self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
+                                        sentence_buffer = ""
                         finally:
                             self._is_generating = False 
                         
