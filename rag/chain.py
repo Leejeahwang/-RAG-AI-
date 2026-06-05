@@ -124,7 +124,7 @@ def rewrite_query_ollama(query):
         }
     }
     try:
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, timeout=15)
         if response.status_code == 200:
             result = response.json().get("response", "").strip()
             # 쉼표나 단어가 깨지는 것을 방지하고 줄바꿈 제거

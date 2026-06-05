@@ -304,10 +304,10 @@ class EdgeSaverTest:
                     
                     # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
                     if "[EDGE SAVER]" in query or "T:" in query:
-                        query = re.sub(r'\[EDGE SAVER.*?\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
-                        query = re.sub(r'❓\s*질문:\s*', '', query).strip()
-                        query = re.sub(r'T:\s*\d+\.?\d*C\s*\|.*', '', query).strip()
-                        query = query.replace("[EDGE SAVER]", "").strip()
+                        query = re.sub(r'(?m)^.*T:\s*\d+\.?\d*C\s*\|.*$', '', query)
+                        query = re.sub(r'(?m)^.*\[EDGE SAVER.*\].*$', '', query)
+                        query = re.sub(r'❓\s*질문:\s*', '', query)
+                        query = query.strip()
                         
                     if self.tts: self.tts.stop()
                     
@@ -426,11 +426,12 @@ class EdgeSaverTest:
                             bottom_toolbar=self._get_bottom_toolbar
                         ).strip()
                         
+                        # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
                         if "[EDGE SAVER]" in query or "T:" in query:
-                            query = re.sub(r'\[EDGE SAVER.*?\]\s*\|.*?(?:정상|긴급|재난|대비|주의)', '', query).strip()
-                            query = re.sub(r'❓\s*질문:\s*', '', query).strip()
-                            query = re.sub(r'T:\s*\d+\.?\d*C\s*\|.*', '', query).strip()
-                            query = query.replace("[EDGE SAVER]", "").strip()
+                            query = re.sub(r'(?m)^.*T:\s*\d+\.?\d*C\s*\|.*$', '', query)
+                            query = re.sub(r'(?m)^.*\[EDGE SAVER.*\].*$', '', query)
+                            query = re.sub(r'❓\s*질문:\s*', '', query)
+                            query = query.strip()
                             
                         if self.tts: self.tts.stop()
                         
