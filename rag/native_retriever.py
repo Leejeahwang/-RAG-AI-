@@ -332,7 +332,7 @@ class NativeRAGManager:
         reranked_docs.sort(key=lambda x: x[0], reverse=True)
         super_final_docs = [d for score, d in reranked_docs]
         
-        # 7. BGE Reranker를 통한 2차 시맨틱 정밀 리랭킹
+        # 7. BGE Reranker를 통한 2차 시맨틱 정밀 리랭킹 및 Lexical 가중치 융합
         if self.reranker is not None and super_final_docs:
             try:
                 # 엣지 CPU 오버헤드 방지를 위해 최정예 후보 10개 컷오프
@@ -340,12 +340,26 @@ class NativeRAGManager:
                 pairs = [[query, doc.get("page_content", "")] for doc in candidates]
                 
                 # 시맨틱 가중치 계산
-                scores = self.reranker.predict(pairs)
-                scored_candidates = list(zip(scores, candidates))
+                bge_scores = self.reranker.predict(pairs)
                 
-                # 점수 기반 정밀 내림차순 정렬
-                scored_candidates.sort(key=lambda x: x[0], reverse=True)
-                final_sorted_docs = [doc for _, doc in scored_candidates]
+                hybrid_candidates = []
+                for bge_score, doc in zip(bge_scores, candidates):
+                    # Lexical 점수 가져오기 (reranked_docs에서 doc의 score 매칭)
+                    lex_score = next((score for score, d in reranked_docs if d == doc), 0.0)
+                    norm_lex = lex_score / 100.0
+                    
+                    # 신고 예시/템플릿처럼 실제 대처 지침이 아닌 단순 템플릿(00동, 00구, 안내 ▶) 감지 시 강력한 페널티 부여
+                    reporting_penalty = 0.0
+                    content = doc.get("page_content", "")
+                    if any(w in content for w in ["00동", "00구", "사상자여부", "안내 ▶", "위치 ▶", "피해 ▶"]):
+                        reporting_penalty = -0.5
+                        
+                    combined_score = bge_score + (norm_lex * 0.2) + reporting_penalty
+                    hybrid_candidates.append((combined_score, doc))
+                
+                # 최종 융합 점수 기준 내림차순 정렬
+                hybrid_candidates.sort(key=lambda x: x[0], reverse=True)
+                final_sorted_docs = [doc for _, doc in hybrid_candidates]
                 
                 return final_sorted_docs[:getattr(config, 'RAG_TOP_K', 4)]
             except Exception as e:
