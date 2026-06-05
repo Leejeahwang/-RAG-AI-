@@ -190,8 +190,18 @@ class EdgeSaverTest:
     def _get_bottom_toolbar(self):
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
         if self.current_level >= 4:
-            return HTML(f'<style bg="ansired" fg="white"> [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | {self.current_risk_stats} </style>')
-        return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER TEST - RERANKER ACTIVE] | {self.current_risk_stats} </style>')
+            return HTML(
+                f'<style bg="ansired" fg="white">'
+                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE]\n'
+                f' {self.current_risk_stats}'
+                f'</style>'
+            )
+        return HTML(
+            f'<style bg="ansiblue" fg="white">'
+            f' [EDGE SAVER TEST - RERANKER ACTIVE]\n'
+            f' {self.current_risk_stats}'
+            f'</style>'
+        )
 
     def _monitor_sensors(self):
         """백그라운드 센서 및 비전 감시 (4단계 경보 격발 미작동 모드)"""

@@ -190,8 +190,18 @@ class EdgeSaver:
     def _get_bottom_toolbar(self):
         """실시간 센서 정보를 하단 툴바 스타일(HTML)로 반환"""
         if self.current_level >= 4:
-            return HTML(f'<style bg="ansired" fg="white"> [🚨 EDGE SAVER - AI 즉각 대피 지침 직송 (LLM Bypass)] | {self.current_risk_stats} </style>')
-        return HTML(f'<style bg="ansiblue" fg="white"> [EDGE SAVER] | {self.current_risk_stats} </style>')
+            return HTML(
+                f'<style bg="ansired" fg="white">'
+                f' [🚨 EDGE SAVER - AI 즉각 대피 지침 직송 (LLM Bypass)]\n'
+                f' {self.current_risk_stats}'
+                f'</style>'
+            )
+        return HTML(
+            f'<style bg="ansiblue" fg="white">'
+            f' [EDGE SAVER]\n'
+            f' {self.current_risk_stats}'
+            f'</style>'
+        )
 
     def _run_evac_broadcast(self):
         """대피 상황이 지속되는 동안 주기적으로 대피 지침을 무한 반복 방송하는 스레드"""
