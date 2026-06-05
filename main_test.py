@@ -378,7 +378,6 @@ class EdgeSaverTest:
                                 clean_sent = sentence_buffer.strip()
                                 # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
                                 if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                                    print("\n\n⚠️ [Deduplicator] 초경량 모델의 반복 생성(앵무새 루프) 감지로 강제 종료합니다.")
                                     sentence_buffer = ""
                                     break
                                 
@@ -502,7 +501,6 @@ class EdgeSaverTest:
                                     clean_sent = sentence_buffer.strip()
                                     # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
                                     if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                                        print("\n\n⚠️ [Deduplicator] 초경량 모델의 반복 생성(앵무새 루프) 감지로 강제 종료합니다.")
                                         sentence_buffer = ""
                                         break
                                     
