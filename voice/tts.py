@@ -223,12 +223,12 @@ class TTSHelper:
 
         try:
             if self._engine_type == "PYTTSX3" and self._active_engine:
-                # stop()의 경우, 이미 speak 루프 내에서 락을 쥔 상태이므로 non-blocking 획득 시도를 하거나 안전 보호망 적용
+                # stop()의 경우, 이미 speak 루프 내에서 락을 쥔 상태이므로 락을 획득했을 때만 중단 명령 전달
                 acquired = self._lock.acquire(blocking=False)
-                try:
-                    self._active_engine.stop()
-                finally:
-                    if acquired:
+                if acquired:
+                    try:
+                        self._active_engine.stop()
+                    finally:
                         self._lock.release()
             elif pygame.mixer.get_init():
                 pygame.mixer.music.stop()
