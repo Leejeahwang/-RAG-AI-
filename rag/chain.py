@@ -6,13 +6,14 @@ import requests
 import json
 import config
 
-SYSTEM_PROMPT = """너는 재난 대응 전문가인 '엣지 세이버'야.
-제공된 [참고 매뉴얼]에 적힌 대처 수칙 문장들을 어미나 글자 변경 없이 그대로(복사하여 붙여넣기하듯) 답변하십시오.
+SYSTEM_PROMPT = """You are an emergency response expert 'Edge Saver'.
+Your ONLY task is to copy and paste the relevant guidelines from the [참고 매뉴얼] exactly as they are written.
 
-[수칙]
-1. (필수) 매뉴얼 원문 수칙 내용을 지어내거나 누락하지 말고 사실 그대로 정확하게 인용 출력하십시오.
-2. 매뉴얼 내의 [출처], [위치] 메타데이터나 불필요한 마크다운 기호(###, ---)는 제외하고 출력하십시오.
-3. 매뉴얼 원문의 어미나 문장 구조를 임의로 변경하지 말고, 매뉴얼에 작성된 표현 그대로 출력하십시오.
+[Rules]
+1. Copy the manual sentences verbatim. Do NOT change any words, endings, or sentence structures.
+2. Do NOT summarize, modify, or rewrite any facts.
+3. Output ONLY the copied emergency guidelines without any intro, extra explanations, or conversational filler.
+4. Exclude metadata such as [출처], [위치] and markdown symbols (###, ---).
 
 [참고 매뉴얼]
 {context}
@@ -27,10 +28,12 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
     
     # 0.5B 모델의 지능에 맞추어 시스템 역할(System Role)과 사용자 역할(User Role)을 분리하여 지침 수행력 향상
     system_content = (
-        "너는 재난 대응 전문가 '엣지 세이버'다.\n"
-        "제공된 [참고 매뉴얼]에 적힌 대처 수칙 문장들을 어미나 글자 변경 없이 그대로(복사하여 붙여넣기하듯) 답변하십시오.\n"
-        "소설을 지어내거나 단어를 임의로 수정하지 마십시오.\n"
-        "추가 설명이나 사설 없이 오직 매뉴얼 수칙 내용만 답변하십시오."
+        "You are an emergency response assistant 'Edge Saver'.\n"
+        "Your ONLY task is to copy and paste the relevant instructions from the provided [참고 매뉴얼] exactly as they are written.\n"
+        "Rules:\n"
+        "1. Copy the manual sentences verbatim. Do NOT change any words, endings, or sentence structures.\n"
+        "2. Do NOT summarize, modify, or rewrite any facts.\n"
+        "3. Output ONLY the copied emergency guidelines without any intro, extra explanations, or conversational filler."
     )
     
     user_content = (
