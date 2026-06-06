@@ -163,9 +163,9 @@ class EdgeSaverTest:
 
             # STT 엔진 로드
             if getattr(config, 'STT_ENABLED', True) and STT_AVAILABLE:
-                print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중...", end=" ", flush=True)
+                print("[시스템] 🎤 음성 인식(STT) 엔진 준비 중... (최초 가동 시 모델 다운로드로 수 분 이상 소요될 수 있습니다.)")
+                _ = self.stt_model
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    _ = self.stt_model
                     stream = self.stt_stream
                 
                 if stream is None:
