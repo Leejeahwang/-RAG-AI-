@@ -44,9 +44,8 @@ sudo apt install -y python3-opencv libportaudio2 portaudio19-dev libopenblas-dev
    cd ./-RAG-AI-
    ```
 2. **Python 가상환경 생성 및 활성화**:
-   라즈베리파이 5 공식 카메라 라이브러리(`picamera2`)와 시스템 종속 드라이버 패키지를 가상환경 내에서 매끄럽게 로드할 수 있도록 `--system-site-packages` 옵션을 줘서 가상환경을 만드는 것을 강력히 권장합니다.
    ```bash
-   python3 -m venv --system-site-packages venv
+   python3 -m venv venv
    source venv/bin/activate
    ```
 
