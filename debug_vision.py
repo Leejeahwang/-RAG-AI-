@@ -25,7 +25,6 @@ def debug_vision_system():
         print("ℹ️ GStreamer 시도 실패. V4L2 드라이버로 폴백 시도합니다.")
         cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
         if cap.isOpened():
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_CONVERT_RGB, 1)
