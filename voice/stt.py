@@ -202,6 +202,28 @@ def _numpy_to_wav(audio_np: np.ndarray) -> bytes:
             wav_file.writeframes(audio_int16.tobytes())
         return wav_io.getvalue()
 
+def has_cached_model(actual_model, download_root=None):
+    repo_folder = f"models--{actual_model.replace('/', '--')}"
+    paths_to_check = []
+    if download_root:
+        paths_to_check.append(os.path.join(download_root, repo_folder))
+    global_cache = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub", repo_folder)
+    paths_to_check.append(global_cache)
+    
+    for base_dir in paths_to_check:
+        snapshots_dir = os.path.join(base_dir, "snapshots")
+        if os.path.exists(snapshots_dir) and os.path.isdir(snapshots_dir):
+            try:
+                subdirs = os.listdir(snapshots_dir)
+                if subdirs:
+                    hash_dir = os.path.join(snapshots_dir, subdirs[0])
+                    # model.bin이 존재하면 완전한 캐시로 판단
+                    if os.path.exists(os.path.join(hash_dir, "model.bin")):
+                        return os.path.dirname(base_dir)
+            except:
+                pass
+    return None
+
 def _load_model():
     """설정에 따라 STT 엔진 모델 로드 (Gemma 모드시 로드 스킵)"""
     if config.STT_ENGINE == "GEMMA":
@@ -212,8 +234,6 @@ def _load_model():
     print(f"[STT] 'WHISPER' 백업 모드 가동 중 ({MODEL_SIZE})...", end=" ", flush=True)
     try:
         from faster_whisper import WhisperModel
-        # [최적화] 로컬 'models' 폴더에 이미 존재하면 로컬 폴더를 사용하고,
-        # 존재하지 않으면 윈도우 전역 캐시 등 표준 경로를 체크하여 중복 다운로드를 차단합니다.
         model_path = os.path.join(os.getcwd(), "models")
         
         # 모델 명칭 강제 매핑 (large-v3-turbo가 1.6G로 오해받지 않도록)
@@ -221,11 +241,25 @@ def _load_model():
         if "turbo" in MODEL_SIZE.lower():
             actual_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
             
-        local_model_dir = os.path.join(model_path, f"models--{actual_model.replace('/', '--')}")
-        if os.path.exists(local_model_dir):
-            model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE, download_root=model_path)
+        cached_root = has_cached_model(actual_model, model_path)
+        if cached_root:
+            # 캐시가 완벽히 존재하므로 인터넷 조회(API 랙) 없이 즉시 로드
+            model = WhisperModel(
+                actual_model, 
+                device=DEVICE_TYPE, 
+                compute_type=COMPUTE, 
+                download_root=cached_root,
+                local_files_only=True
+            )
         else:
-            model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE)
+            # 캐시가 없으므로 로컬 models 폴더로 새로 다운로드 진행
+            model = WhisperModel(
+                actual_model, 
+                device=DEVICE_TYPE, 
+                compute_type=COMPUTE, 
+                download_root=model_path,
+                local_files_only=False
+            )
         print("완료")
         return model
     except ImportError:
