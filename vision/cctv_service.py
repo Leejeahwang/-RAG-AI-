@@ -46,19 +46,27 @@ def cleanup_old_captures(days=3):
 def camera_worker_thread():
     global latest_frame, camera_running
     
-    # 라즈베리파이 5 V4L2 호환 레이어를 위한 백엔드 명시적 지정
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    # 1순위: GStreamer libcamerasrc 시도 (libcamerify 없이도 최상의 AF 기능 연동 가능)
+    gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
+    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+    
     if not cap.isOpened():
+        print("🔄 [시스템] GStreamer 연동 실패. V4L2 백엔드와 YUYV 포맷 강제로 폴백합니다.")
+        # 2순위: V4L2 백엔드 및 픽셀 포맷 강제 (reshape 오류 방지)
+        cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
+    if not cap.isOpened():
+        # 3순위: 최종 일반 장치 오픈
         cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
         print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
         camera_running = False
         return
-        
-    # [Matrix Reshape 에러 방지] 프레임 버퍼 크기를 명시적으로 고정
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다.")
     
