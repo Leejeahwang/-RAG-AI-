@@ -5,6 +5,12 @@ import platform
 # Windows에서 심볼릭 링크 권한 에러(WinError 1314) 방지 (HuggingFace 관련)
 if platform.system() == "Windows":
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 
 import threading
 import time
@@ -192,14 +198,14 @@ class EdgeSaverTest:
         if self.current_level >= 4:
             return HTML(
                 f'<style bg="ansired" fg="white">'
-                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE]\n'
-                f' {self.current_risk_stats}'
+                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | '
+                f'{self.current_risk_stats}'
                 f'</style>'
             )
         return HTML(
             f'<style bg="ansiblue" fg="white">'
-            f' [EDGE SAVER TEST - RERANKER ACTIVE]\n'
-            f' {self.current_risk_stats}'
+            f' [EDGE SAVER TEST - RERANKER ACTIVE] | '
+            f'{self.current_risk_stats}'
             f'</style>'
         )
 

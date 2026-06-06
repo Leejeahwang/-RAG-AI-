@@ -50,6 +50,14 @@ except Exception as e:
 @contextmanager
 def silence_fd():
     """Redirects file descriptors 1 (stdout) and 2 (stderr) to /dev/null to silence C-level library logs."""
+    import platform
+    if platform.system() == "Windows":
+        try:
+            yield
+        except:
+            pass
+        return
+
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
         old_stdout = os.dup(1)
