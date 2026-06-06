@@ -294,8 +294,9 @@ class EdgeSaverTest:
         self._monitor_thread = threading.Thread(target=self._monitor_sensors, daemon=True)
         self._monitor_thread.start()
 
-        # SIMPLE_UI 플래그가 설정된 경우: prompt_toolkit 툴바 렌더링을 완전히 우회하고 순정 터미널 input()으로 가동 (화면 깨짐 차단)
-        if getattr(config, "SIMPLE_UI", False):
+        # SIMPLE_UI 플래그가 설정된 경우(또는 윈도우 환경): prompt_toolkit 툴바 렌더링을 우회하고 순정 터미널 input()으로 가동 (WinError 1 에러 차단)
+        import platform
+        if getattr(config, "SIMPLE_UI", False) or platform.system() == "Windows":
             while True:
                 try:
                     # 센서 상태를 실시간 툴바 대신 일반 텍스트로 한 줄씩 출력
