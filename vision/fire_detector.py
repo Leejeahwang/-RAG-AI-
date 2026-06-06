@@ -6,6 +6,8 @@ Phase 3: 인터넷 연결 없이 라즈베리파이 로컬에서 ultralytics 모
 """
 
 import os
+import sys
+from contextlib import contextmanager
 try:
     from ultralytics import YOLO
 except ImportError:
@@ -45,6 +47,26 @@ try:
 except Exception as e:
     print(f"❌ [에러] 모델 초기화 실패: {e}")
 
+@contextmanager
+def silence_fd():
+    """Redirects file descriptors 1 (stdout) and 2 (stderr) to /dev/null to silence C-level library logs."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        old_stdout = os.dup(1)
+        old_stderr = os.dup(2)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        try:
+            yield
+        finally:
+            os.dup2(old_stdout, 1)
+            os.dup2(old_stderr, 2)
+            os.close(devnull)
+            os.close(old_stdout)
+            os.close(old_stderr)
+    except:
+        yield
+
 def detect_fire(image_path):
     """
     이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
@@ -74,8 +96,9 @@ def detect_fire(image_path):
         }
 
     try:
-        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
-        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지 및 C-level 로그 억제)
+        with silence_fd():
+            results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {
