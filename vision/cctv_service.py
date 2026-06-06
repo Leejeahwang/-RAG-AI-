@@ -26,7 +26,7 @@ camera_running = True
 
 # PC에서 테스트할 때 카메라 화면을 띄워보고 싶다면 True 로 변경하세요!
 # 라즈베리파이(서버) 환경으로 넘어갈 때는 무조건 False 여야 합니다.
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 def cleanup_old_captures(days=3):
     """
