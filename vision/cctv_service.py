@@ -23,10 +23,12 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 # 전역 변수: 항상 최신 프레임을 1개만 기억
 latest_frame = None
 camera_running = True
+camera_offline = False
 
 # PC에서 테스트할 때 카메라 화면을 띄워보고 싶다면 True 로 변경하세요!
 # 라즈베리파이(서버) 환경으로 넘어갈 때는 무조건 False 여야 합니다.
 DEBUG_MODE = False
+
 
 def cleanup_old_captures(days=3):
     """
@@ -115,9 +117,11 @@ def camera_worker_thread():
                 cap.release()
             cap = None
             
+    global camera_offline
     if not success or cap is None:
-        print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
+        print("⚠️ [안내] 카메라 장치를 열 수 없습니다. 카메라 감지 기능 없이 센서 모드로만 감시를 시작합니다.")
         camera_running = False
+        camera_offline = True
         return
         
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다. (화면이 뜨지 않습니다)")
