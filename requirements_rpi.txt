@@ -2,7 +2,7 @@
 # 라즈베리파이 5 (Raspberry Pi 5) 전용 의존성
 # ==========================================
 # ⚠️ 주의: pip 설치 전, 터미널에서 아래의 시스템 패키지를 먼저 설치하세요!
-# sudo apt update && sudo apt install -y python3-opencv libportaudio2 libopenblas-dev espeak
+# sudo apt update && sudo apt install -y python3-opencv libportaudio2 portaudio19-dev libopenblas-dev espeak
 # ==========================================
 
 # --- Core AI & Framework ---

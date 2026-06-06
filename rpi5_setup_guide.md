@@ -19,7 +19,7 @@
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-opencv libportaudio2 libopenblas-dev espeak git curl python3-pip python3-venv
+sudo apt install -y python3-opencv libportaudio2 portaudio19-dev libopenblas-dev espeak git curl python3-pip python3-venv
 ```
 
 ### Step 2: 로컬 LLM 엔진 (Ollama) 설치 및 모델 다운로드
