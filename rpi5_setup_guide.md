@@ -89,3 +89,75 @@ pip install -r requirements_rpi.txt
    - 카메라가 구동되며 화면 감시를 시작합니다.
    - 카메라에 불이나 연기 요소를 시뮬레이션(또는 가상 화재 트리거 작동)하면 센서 값이 위험 레벨 5(재난)로 자동 승격되어 사이렌과 함께 AI 긴급 피난 안내가 기동합니다.
    - AI가 규격화된 3대 항목(1. 종류/장소, 2. 대치방법/소방용품 위치, 3. 대피로)에 맞춰 대피 지침을 생성하고 스피커로 안내 낭독하는지 확인합니다.
+
+---
+
+## 📷 5. 라즈베리파이 카메라 모듈 3 (Camera Module 3) 확인 & 연동 가이드
+
+라즈베리파이 5 및 최신 OS(Bookworm) 환경에서 카메라마이크 3(CSI 포트 연결 방식, IMX708 센서)을 사용할 때는 libcamera 스택을 사용해야 하므로, 기존 USB 웹캠 방식과 다르게 인식 검증이 필요합니다.
+
+### 1) 시스템 레벨 하드웨어 인식 확인
+터미널에서 아래 명령을 실행하여 카메라 보드가 하드웨어적으로 올바르게 결착되어 드라이버가 로드되었는지 확인합니다:
+
+```bash
+rpicam-hello --list-cameras
+```
+또는
+```bash
+libcamera-hello --list-cameras
+```
+
+* **정상 작동 시 출력 예시**:
+  ```text
+  Available cameras
+  -----------------
+  0 : imx708 [4608x2592] (/base/soc/pcie@120000/rp1/i2c@80000/imx708@1a)
+  ```
+  *(만약 `No cameras available` 메시지가 뜬다면 메인보드 슬롯 케이블 방향 및 체결 상태를 다시 검검해야 합니다.)*
+
+### 2) Python (OpenCV)에서 모듈 3 연결 상태 검증 코드
+라즈베리파이 5의 libcamera 환경에서 OpenCV가 정상적으로 프레임을 캡처할 수 있는지 체크하는 독립 실행용 파이썬 스크립트(`check_camera.py`)입니다.
+
+```python
+# check_camera.py
+import cv2
+import sys
+
+def test_rpi_camera():
+    print("🔍 라즈베리파이 카메라 모듈 3 인식 테스트 시작...")
+    
+    # VideoCapture 생성 (라즈베리파이 V4L2 호환 백엔드 사용)
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    
+    if not cap.isOpened():
+        print("❌ 카메라 장치를 열 수 없습니다! (/dev/video0 노드 부재)")
+        print("💡 팁: 'libcamerify python3 check_camera.py' 로 실행해 보십시오.")
+        sys.exit(1)
+        
+    # 해상도 지정
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    # 테스트 프레임 캡처
+    ret, frame = cap.read()
+    if ret:
+        print("✅ RPi 카메라 모듈 3로부터 프레임 수집 성공!")
+        print(f"   - 해상도: {frame.shape[1]}x{frame.shape[0]}")
+        cv2.imwrite("rpi_cam3_test.jpg", frame)
+        print("💾 테스트 샷이 'rpi_cam3_test.jpg'로 저장되었습니다.")
+    else:
+        print("❌ 카메라 장치는 열렸으나, 비디오 프레임을 획득하지 못했습니다.")
+        
+    cap.release()
+
+if __name__ == "__main__":
+    test_rpi_camera()
+```
+
+### 3) 💡 최상의 작동 팁: `libcamerify` 도구 사용
+라즈베리파이 5에서 OpenCV 코드(`cv2.VideoCapture(0)`)가 드라이버 제약으로 카메라를 열지 못할 경우, 라즈베리파이 OS가 자체 지원하는 **libcamerify** 래퍼를 씌워 파이썬을 실행하면 기존 코드를 하나도 고치지 않고 완벽하게 에뮬레이션 작동합니다.
+
+```bash
+# 가상환경이 활성화된 상태에서 실행
+libcamerify python3 main.py
+```
