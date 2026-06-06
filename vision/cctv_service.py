@@ -66,8 +66,15 @@ def camera_worker_thread():
             picam.start()
             camera_offline = False
         except Exception as e:
-            print(f"❌ [에러] 라즈베리파이 전용 Picamera2 초기화 실패: {e}")
-            camera_offline = True
+            print(f"⚠️ [주의] 라즈베리파이 Picamera2 초기화 실패: {e}")
+            print("🔄 [시스템] 표준 OpenCV VideoCapture 및 libcamerify 연동으로 폴백합니다.")
+            cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_V4L2)
+            if cap.isOpened():
+                camera_offline = False
+                is_linux = False  # 프레임 캡처 루프에서 cap.read()를 사용하도록 우회 설정
+            else:
+                print("⚠️ [경고] 폴백 카메라 연결도 실패했습니다.")
+                camera_offline = True
     else:
         print("🍏 [시스템] macOS 환경 검출: 표준 OpenCV VideoCapture를 구동합니다.")
         cap = cv2.VideoCapture(config.CAMERA_INDEX)
