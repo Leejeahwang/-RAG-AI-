@@ -46,12 +46,19 @@ def cleanup_old_captures(days=3):
 def camera_worker_thread():
     global latest_frame, camera_running
     
-    cap = cv2.VideoCapture(0)
+    # 라즈베리파이 5 V4L2 호환 레이어를 위한 백엔드 명시적 지정
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
         print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
         camera_running = False
         return
+        
+    # [Matrix Reshape 에러 방지] 프레임 버퍼 크기를 명시적으로 고정
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다.")
     
