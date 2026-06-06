@@ -52,13 +52,10 @@ def camera_worker_thread():
     
     if not cap.isOpened():
         print("🔄 [시스템] GStreamer 연동 실패. V4L2 백엔드 정보로 폴백합니다.")
-        # 2순위: V4L2 백엔드 및 해상도 세팅 (reshape 오류 방지)
+        # 2순위: V4L2 백엔드로 해상도 조작 없이 직접 연동 (Broken pipe 방지)
         cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
         if cap.isOpened():
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_CONVERT_RGB, 1)
-            # 💡 [초점 해결] 라즈베리파이 카메라 모듈 3의 연속 자동 초점(AF) 강제 활성화
+            # [초점 해결] 라즈베리파이 카메라 모듈 3의 연속 자동 초점(AF) 강제 활성화
             os.system("v4l2-ctl -d /dev/video0 -c focus_automatic_continuous=1 > /dev/null 2>&1")
             
     if not cap.isOpened():
