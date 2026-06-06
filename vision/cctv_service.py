@@ -54,6 +54,18 @@ def cleanup_old_captures(days=3):
     if deleted_count > 0:
         print(f"🧹 [청소 완료] {days}일 이상 지난 과거 캡처 파일 {deleted_count}개를 자동 삭제했습니다.")
 
+def try_read_frame(cap):
+    """카메라가 실제로 프레임을 읽을 수 있는지 확인하고 첫 프레임을 반환합니다."""
+    if cap is None or not cap.isOpened():
+        return False, None
+    try:
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            return True, frame
+    except Exception as e:
+        pass
+    return False, None
+
 def camera_worker_thread():
     """
     아무리 AI 추론이 느려져도 카메라 영상이 '지연(Lag)' 되지 않도록,
@@ -61,10 +73,49 @@ def camera_worker_thread():
     """
     global latest_frame, camera_running
     
-    # 0번 카메라 열기 (CSI 또는 웹캠)
-    cap = cv2.VideoCapture(0)
+    cap = None
+    success = False
     
-    if not cap.isOpened():
+    # 1. GStreamer 우선 시도
+    gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
+    try:
+        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        success, _ = try_read_frame(cap)
+        if not success:
+            cap.release()
+            cap = None
+    except Exception:
+        if cap:
+            cap.release()
+        cap = None
+        
+    # 2. V4L2 드라이버로 폴백 시도
+    if not success:
+        try:
+            cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            success, _ = try_read_frame(cap)
+            if not success:
+                cap.release()
+                cap = None
+        except Exception:
+            if cap:
+                cap.release()
+            cap = None
+            
+    # 3. 기본 VideoCapture(0) 폴백 시도
+    if not success:
+        try:
+            cap = cv2.VideoCapture(0)
+            success, _ = try_read_frame(cap)
+            if not success:
+                cap.release()
+                cap = None
+        except Exception:
+            if cap:
+                cap.release()
+            cap = None
+            
+    if not success or cap is None:
         print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
         camera_running = False
         return
@@ -72,8 +123,8 @@ def camera_worker_thread():
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다. (화면이 뜨지 않습니다)")
     
     while camera_running:
-        ret, frame = cap.read()
-        if ret:
+        success_read, frame = try_read_frame(cap)
+        if success_read and frame is not None:
             # 해상도를 640 너비로 리사이즈 (저장 및 AI 처리 속도 향상)
             h, w = frame.shape[:2]
             target_w = 640

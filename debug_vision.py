@@ -3,6 +3,18 @@ import os
 import time
 from vision.fire_detector import model, CONFIDENCE_THRESHOLD
 
+def try_read_frame(cap):
+    """카메라가 실제로 프레임을 읽을 수 있는지 확인하고 첫 프레임을 반환합니다."""
+    if cap is None or not cap.isOpened():
+        return False, None
+    try:
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            return True, frame
+    except Exception as e:
+        print(f"⚠️ 프레임 획득 테스트 실패 (예외 발생): {e}")
+    return False, None
+
 def debug_vision_system():
     print("=====================================================")
     print("🔍 엣지 세이버 - 비전 감지 긴급 진단 스크립트 시작")
@@ -17,21 +29,59 @@ def debug_vision_system():
     
     # 1. 카메라 장치 연결 시도
     print("\n[1단계] 카메라 연결 상태를 진단합니다...")
-    # GStreamer 우선 시도
-    gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
-    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
     
-    if not cap.isOpened():
-        print("ℹ️ GStreamer 시도 실패. V4L2 드라이버로 폴백 시도합니다.")
-        cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-        if cap.isOpened():
-            # [Broken pipe 방지] 라즈베리파이 V4L2 compat layer는 set 해상도 변경 시 통신선이 터지므로 속성 설정 없이 오픈
-            pass
-            
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
+    cap = None
+    success = False
+    
+    # 1.1 GStreamer 우선 시도
+    print("ℹ️ GStreamer 백엔드로 카메라 시도 중...")
+    gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
+    try:
+        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        success, _ = try_read_frame(cap)
+        if not success:
+            print("ℹ️ GStreamer 시도 실패 (프레임 읽기 불가능).")
+            cap.release()
+            cap = None
+    except Exception as e:
+        print(f"⚠️ GStreamer 초기화 중 예외 발생: {e}")
+        if cap:
+            cap.release()
+        cap = None
         
-    if not cap.isOpened():
+    # 1.2 V4L2 드라이버로 폴백 시도
+    if not success:
+        print("ℹ️ V4L2 드라이버로 폴백 시도합니다...")
+        try:
+            cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            success, _ = try_read_frame(cap)
+            if not success:
+                print("ℹ️ V4L2 시도 실패 (프레임 읽기 불가능).")
+                cap.release()
+                cap = None
+        except Exception as e:
+            print(f"⚠️ V4L2 초기화 중 예외 발생: {e}")
+            if cap:
+                cap.release()
+            cap = None
+            
+    # 1.3 기본 VideoCapture(0) 폴백 시도
+    if not success:
+        print("ℹ️ 기본 VideoCapture(0)로 시도합니다...")
+        try:
+            cap = cv2.VideoCapture(0)
+            success, _ = try_read_frame(cap)
+            if not success:
+                print("ℹ️ 기본 VideoCapture(0) 시도 실패 (프레임 읽기 불가능).")
+                cap.release()
+                cap = None
+        except Exception as e:
+            print(f"⚠️ 기본 VideoCapture(0) 초기화 중 예외 발생: {e}")
+            if cap:
+                cap.release()
+            cap = None
+            
+    if not success or cap is None:
         print("❌ [에러] 라즈베리파이에 연결된 물리 카메라 장치를 열 수 없습니다.")
         print("💡 팁: 케이블 접촉 상태나 'rpicam-hello --list-cameras' 결과를 재점검하십시오.")
         return
@@ -41,7 +91,7 @@ def debug_vision_system():
     # 2. 테스트 캡처 및 저장
     print("\n[2단계] 테스트 샷을 촬영하여 디스크에 저장합니다...")
     time.sleep(2.0) # 카메라 밝기 조절 대기
-    ret, frame = cap.read()
+    ret, frame = try_read_frame(cap)
     cap.release()
     
     if not ret or frame is None:
