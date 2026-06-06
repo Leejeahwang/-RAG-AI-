@@ -12,7 +12,10 @@ import os
 import time
 import datetime
 import threading
-from fire_detector import detect_fire
+try:
+    from vision.fire_detector import detect_fire
+except ModuleNotFoundError:
+    from fire_detector import detect_fire
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
