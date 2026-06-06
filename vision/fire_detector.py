@@ -6,8 +6,6 @@ Phase 3: 인터넷 연결 없이 라즈베리파이 로컬에서 ultralytics 모
 """
 
 import os
-import sys
-from contextlib import contextmanager
 try:
     from ultralytics import YOLO
 except ImportError:
@@ -17,55 +15,31 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
+# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 최신 타겟 (라즈베리파이 5 최종 배포 모델 - YOLOv8 INT8)
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # YOLOv10 최적화 INT8
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # YOLOv10 원본
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
+    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
-    os.path.join(MODEL_DIR, "best_nano_111.pt"),  # 신규 추가된 경량 가중치
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
+    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
 ]
 
 model = None
 CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
-# 존재하는 모델 중 로드에 성공하는 첫 번째 모델을 채택 (순차적 폴백 로직)
-for m_path in POSSIBLE_MODELS:
-    if os.path.exists(m_path):
-        try:
-            print(f"🔄 [Vision AI] 오프라인 화재 모델 로드 시도: {os.path.basename(m_path)}")
-            model = YOLO(m_path)
-            print(f"✅ [Vision AI] 모델 로드 완료: {os.path.basename(m_path)}")
+try:
+    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
+    loaded_model_path = None
+    for m_path in POSSIBLE_MODELS:
+        if os.path.exists(m_path):
+            loaded_model_path = m_path
             break
-        except Exception as e:
-            print(f"⚠️ [경고] 모델 로드 실패 ({os.path.basename(m_path)}): {e}. 다음 후보를 시도함.")
-            model = None
-
-if model is None:
-    print(f"❌ [에러] 모든 모델 로드에 실패함. {MODEL_DIR}의 모델 파일들과 라이브러리 설치 상태를 확인하시오.")
-
-@contextmanager
-def silence_fd():
-    """Redirects file descriptors 1 (stdout) and 2 (stderr) to /dev/null to silence C-level library logs."""
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        old_stdout = os.dup(1)
-        old_stderr = os.dup(2)
-        os.dup2(devnull, 1)
-        os.dup2(devnull, 2)
-        try:
-            yield
-        finally:
-            os.dup2(old_stdout, 1)
-            os.dup2(old_stderr, 2)
-            os.close(devnull)
-            os.close(old_stdout)
-            os.close(old_stderr)
-    except:
-        yield
+            
+    if loaded_model_path:
+        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
+        model = YOLO(loaded_model_path)
+    else:
+        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
+except Exception as e:
+    print(f"❌ [에러] 모델 초기화 실패: {e}")
 
 def detect_fire(image_path):
     """
@@ -96,9 +70,8 @@ def detect_fire(image_path):
         }
 
     try:
-        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지 및 C-level 로그 억제)
-        with silence_fd():
-            results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
+        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {
