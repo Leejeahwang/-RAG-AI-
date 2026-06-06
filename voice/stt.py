@@ -212,16 +212,20 @@ def _load_model():
     print(f"[STT] 'WHISPER' 백업 모드 가동 중 ({MODEL_SIZE})...", end=" ", flush=True)
     try:
         from faster_whisper import WhisperModel
-        # [최적화] 모델을 로컬 'models' 폴더에 저장하여 관리
+        # [최적화] 로컬 'models' 폴더에 이미 존재하면 로컬 폴더를 사용하고,
+        # 존재하지 않으면 윈도우 전역 캐시 등 표준 경로를 체크하여 중복 다운로드를 차단합니다.
         model_path = os.path.join(os.getcwd(), "models")
-        os.makedirs(model_path, exist_ok=True)
         
         # 모델 명칭 강제 매핑 (large-v3-turbo가 1.6G로 오해받지 않도록)
         actual_model = MODEL_SIZE
         if "turbo" in MODEL_SIZE.lower():
             actual_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
             
-        model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE, download_root=model_path)
+        local_model_dir = os.path.join(model_path, f"models--{actual_model.replace('/', '--')}")
+        if os.path.exists(local_model_dir):
+            model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE, download_root=model_path)
+        else:
+            model = WhisperModel(actual_model, device=DEVICE_TYPE, compute_type=COMPUTE)
         print("완료")
         return model
     except ImportError:
