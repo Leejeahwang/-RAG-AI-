@@ -1,0 +1,324 @@
+{
+    "total_scenarios": 15,
+    "metrics": {
+        "stage1_baseline": {
+            "hit_rate_at_1": 0.8667,
+            "mrr": 0.8667,
+            "avg_latency_sec": 3.7625
+        },
+        "stage2_bge_reranker": {
+            "hit_rate_at_1": 0.6667,
+            "mrr": 0.75,
+            "avg_latency_sec": 4.1465
+        }
+    },
+    "details": [
+        {
+            "id": 1,
+            "query": "A구역 화재시 대피방법은?",
+            "category": "zone_evacuation",
+            "expected_sources": [
+                "zone_A_layout.txt"
+            ],
+            "stage1": {
+                "top_1_source": "zone_A_layout.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.3522
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 4,
+                "hit_at_1": 0,
+                "latency_sec": 5.8567
+            }
+        },
+        {
+            "id": 2,
+            "query": "B구역 비상 탈출 경로 알려줘",
+            "category": "zone_evacuation",
+            "expected_sources": [
+                "zone_B_layout.txt"
+            ],
+            "stage1": {
+                "top_1_source": "zone_B_layout.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 3.6391
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "zone_B_layout.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 3.9771
+            }
+        },
+        {
+            "id": 3,
+            "query": "C구역에서 불이 났는데 어디로 대피해?",
+            "category": "zone_evacuation",
+            "expected_sources": [
+                "zone_C_layout.txt"
+            ],
+            "stage1": {
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": -1,
+                "hit_at_1": 0,
+                "latency_sec": 3.6848
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": -1,
+                "hit_at_1": 0,
+                "latency_sec": 4.0435
+            }
+        },
+        {
+            "id": 4,
+            "query": "사람이 숨을 안쉬는데 어떡해?",
+            "category": "emergency_cpr",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp"
+            ],
+            "stage1": {
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.0029
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.3605
+            }
+        },
+        {
+            "id": 5,
+            "query": "높은데서 떨어져서 뼈가 부러진거 같아 어떻게 해?",
+            "category": "emergency_injury",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp"
+            ],
+            "stage1": {
+                "top_1_source": "edge_saver_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.417
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.8293
+            }
+        },
+        {
+            "id": 6,
+            "query": "피가 멈추지 않고 철철 흘러 지혈 어떻게 하지?",
+            "category": "emergency_injury",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp"
+            ],
+            "stage1": {
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.7671
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "[자료] 119생활응급처치매뉴얼 및 핸드북.hwp",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 6.1903
+            }
+        },
+        {
+            "id": 7,
+            "query": "아파트 불났는데 문밖으로 연기가 들어오면 어떡함?",
+            "category": "apartment_fire",
+            "expected_sources": [
+                "(아파트 입주자) 화재 피난행동요령.pdf"
+            ],
+            "stage1": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.3663
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.7909
+            }
+        },
+        {
+            "id": 8,
+            "query": "아파트에서 이웃집에 불이 났을 때 대기해야 하나 대피해야 하나?",
+            "category": "apartment_fire",
+            "expected_sources": [
+                "(아파트 입주자) 화재 피난행동요령.pdf"
+            ],
+            "stage1": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.5319
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.0073
+            }
+        },
+        {
+            "id": 9,
+            "query": "아파트 엘리베이터 타고 대피해도 됨?",
+            "category": "apartment_fire",
+            "expected_sources": [
+                "(아파트 입주자) 화재 피난행동요령.pdf"
+            ],
+            "stage1": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.2835
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "(아파트 입주자) 화재 피난행동요령.pdf",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.7554
+            }
+        },
+        {
+            "id": 10,
+            "query": "공장에서 화학물질이 누출됐는데 어떡하지?",
+            "category": "factory_accident",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "factory_gas_manual.txt"
+            ],
+            "stage1": {
+                "top_1_source": "factory_gas_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 0.4945
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "factory_smoke_manual.txt",
+                "target_rank": 2,
+                "hit_at_1": 0,
+                "latency_sec": 0.6492
+            }
+        },
+        {
+            "id": 11,
+            "query": "기계 벨트에 팔이 끼었어 비상 정지 어떻게 해?",
+            "category": "factory_accident",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "factory_fire_manual.txt"
+            ],
+            "stage1": {
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 3.8222
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.2572
+            }
+        },
+        {
+            "id": 12,
+            "query": "배전반에서 불꽃이 튀면서 전기 화재 났어 물 뿌려도 됨?",
+            "category": "factory_accident",
+            "expected_sources": [
+                "factory_fire_manual.txt",
+                "소화기구에관한설명_수동식소화기(설치장소, 분류).hwp"
+            ],
+            "stage1": {
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 4.7392
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "factory_fire_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 5.0414
+            }
+        },
+        {
+            "id": 13,
+            "query": "유독가스가 유출됐을 때 대피 요령은?",
+            "category": "factory_accident",
+            "expected_sources": [
+                "edge_saver_manual.txt",
+                "factory_gas_manual.txt"
+            ],
+            "stage1": {
+                "top_1_source": "factory_smoke_manual.txt",
+                "target_rank": -1,
+                "hit_at_1": 0,
+                "latency_sec": 0.6854
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "폭발 국민행동요령 매뉴얼.pdf",
+                "target_rank": -1,
+                "hit_at_1": 0,
+                "latency_sec": 0.8889
+            }
+        },
+        {
+            "id": 14,
+            "query": "산에서 길을 잃고 조난당했을 때 수칙",
+            "category": "mountain_accident",
+            "expected_sources": [
+                "edge_saver_manual.txt"
+            ],
+            "stage1": {
+                "top_1_source": "edge_saver_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 2.9476
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "화산폭발시 국민행동요령.hwp",
+                "target_rank": 2,
+                "hit_at_1": 0,
+                "latency_sec": 3.4114
+            }
+        },
+        {
+            "id": 15,
+            "query": "산사태나 낙석이 발생했을 때 대처 방법",
+            "category": "mountain_accident",
+            "expected_sources": [
+                "edge_saver_manual.txt"
+            ],
+            "stage1": {
+                "top_1_source": "edge_saver_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 1.7031
+            },
+            "stage2_with_reranker": {
+                "top_1_source": "edge_saver_manual.txt",
+                "target_rank": 1,
+                "hit_at_1": 1,
+                "latency_sec": 2.1383
+            }
+        }
+    ]
+}

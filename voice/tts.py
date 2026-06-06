@@ -30,6 +30,7 @@ class TTSHelper:
         self._queue = queue.Queue()
         self._stop_event = threading.Event()
         self._is_speaking = False
+        self._lock = threading.Lock() # SAPI5(pyttsx3) 멀티스레딩 동시 경합 크래시 원천 차단용 전역 락
         
         # macOS 및 일반 프로세스/엔진 중단 추적용 변수
         self._active_process = None
@@ -100,28 +101,30 @@ class TTSHelper:
                     else:
                         # [v17 - 일회용 엔진 전략] (Windows/Linux)
                         # 문구별로 엔진을 새로 생성하여 스레드 교착 및 상태 고착을 원천 봉쇄합니다.
-                        try:
-                            temp_engine = pyttsx3.init()
-                            self._active_engine = temp_engine
-                            
-                            # 위험 수치에 따른 동적 속도 조절 반영
-                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
-                            temp_engine.setProperty('rate', current_rate)
-                            temp_engine.setProperty('volume', self._volume)
-                            
-                            temp_engine.say(text)
-                            temp_engine.runAndWait()
-                            
-                            # [자원 해제] 명시적 중단 및 소멸
-                            temp_engine.stop()
-                        except Exception as sapi_ex:
-                            pass
-                        finally:
-                            self._active_engine = None
+                        # 멀티스레드 동시 난입으로 인한 pyttsx3 C++ COM 객체 세그멘테이션 오류를 방지하기 위해 락(Lock) 획득
+                        with self._lock:
                             try:
-                                del temp_engine
-                            except:
+                                temp_engine = pyttsx3.init()
+                                self._active_engine = temp_engine
+                                
+                                # 위험 수치에 따른 동적 속도 조절 반영
+                                current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                                temp_engine.setProperty('rate', current_rate)
+                                temp_engine.setProperty('volume', self._volume)
+                                
+                                temp_engine.say(text)
+                                temp_engine.runAndWait()
+                                
+                                # [자원 해제] 명시적 중단 및 소멸
+                                temp_engine.stop()
+                            except Exception as sapi_ex:
                                 pass
+                            finally:
+                                self._active_engine = None
+                                try:
+                                    del temp_engine
+                                except:
+                                    pass
                 else:
                     # 2. 고품질 합성 엔진 (MeloTTS)
                     temp_file = os.path.join(self._temp_dir, f"melo_{int(time.time()*1000)}.wav")
@@ -221,7 +224,13 @@ class TTSHelper:
 
         try:
             if self._engine_type == "PYTTSX3" and self._active_engine:
-                self._active_engine.stop()
+                # stop()의 경우, 이미 speak 루프 내에서 락을 쥔 상태이므로 락을 획득했을 때만 중단 명령 전달
+                acquired = self._lock.acquire(blocking=False)
+                if acquired:
+                    try:
+                        self._active_engine.stop()
+                    finally:
+                        self._lock.release()
             elif pygame.mixer.get_init():
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()

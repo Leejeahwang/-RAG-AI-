@@ -6,13 +6,14 @@ import requests
 import json
 import config
 
-SYSTEM_PROMPT = """너는 재난 대응 전문가인 '엣지 세이버'야.
-제공된 [참고 매뉴얼]을 바탕으로 질문에 대해 충실하게 답변해.
+SYSTEM_PROMPT = """You are an emergency response expert 'Edge Saver'.
+Your ONLY task is to copy and paste the relevant guidelines from the [참고 매뉴얼] exactly as they are written.
 
-[수칙]
-1. (필수) 매뉴얼에 있는 [출처], [위치] 메타데이터나 불필요한 마크다운 기호(###, ---)는 출력하지 마.
-2. 긴급한 '대피/대처' 질문에는 핵심 결론부터 짧고 강하게 답변하고, '기준/원리' 같은 기술적 질문에는 매뉴얼의 내용을 상세히 포함해서 설명해.
-3. 모든 답변은 음성으로 읽기 좋게 문장형(-습니다, -에요)으로 작성하고, 복잡한 표 형태보다는 리스트(1., 2.)로 풀어서 써줘.
+[Rules]
+1. Copy the manual sentences verbatim. Do NOT change any words, endings, or sentence structures.
+2. Do NOT summarize, modify, or rewrite any facts.
+3. Output ONLY the copied emergency guidelines without any intro, extra explanations, or conversational filler.
+4. Exclude metadata such as [출처], [위치] and markdown symbols (###, ---).
 
 [참고 매뉴얼]
 {context}
@@ -25,20 +26,26 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
     """requests를 사용하여 Ollama에 직접 스트리밍 요청을 보냅니다. (Chat API 사용)"""
     url = f"{config.OLLAMA_BASE_URL}/api/chat"
     
-    # [호환성 패치] 시스템 프롬프트를 지원하지 않는 커스텀/소형 모델을 위해 모든 프롬프트를 user role 1개로 통합
-    combined_prompt = (
-        "너는 재난 대응 전문가인 '엣지 세이버'야. 제공된 [참고 매뉴얼]을 바탕으로 질문에 대해 충실하게 답변해.\n\n"
-        "[수칙]\n"
-        "1. (필수) 매뉴얼에 있는 [출처], [위치] 메타데이터나 불필요한 마크다운 기호(###, ---)는 출력하지 마.\n"
-        "2. 긴급한 '대피/대처' 질문에는 핵심 결론부터 짧고 강하게 답변해.\n"
-        "3. 모든 답변은 음성으로 읽기 좋게 문장형(-습니다, -에요)으로 작성해.\n"
-        "4. (매우 중요) 답변을 마치면 즉시 대화를 종료하고, 사용자의 질문이나 프롬프트를 절대로 앵무새처럼 다시 따라 읽지 마.\n\n"
+    # 0.5B 모델의 지능에 맞추어 시스템 역할(System Role)과 사용자 역할(User Role)을 분리하여 지침 수행력 향상
+    system_content = (
+        "You are an emergency response expert 'Edge Saver'.\n"
+        "Your ONLY task is to copy and output the safety instructions from the [참고 매뉴얼] word for word. Do NOT change, summarize, or modify any words.\n\n"
+        "Example:\n"
+        "[참고 매뉴얼]\n"
+        "* 전기 화재 시 절대로 물을 뿌리면 안 됩니다. 메인 차단기를 내리고 분말 소화기를 사용하십시오.\n"
+        "질문: 전기 화재 대처법은?\n"
+        "답변: 전기 화재 시 절대로 물을 뿌리면 안 됩니다. 메인 차단기를 내리고 분말 소화기를 사용하십시오.\n\n"
+        "Ensure you answer ONLY with the copied manual lines without any extra comments."
+    )
+    
+    user_content = (
         f"[참고 매뉴얼]\n{prompt}\n\n"
         f"질문: {question}"
     )
 
     messages = [
-        {"role": "user", "content": combined_prompt}
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content}
     ]
 
     payload = {
@@ -47,12 +54,14 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
         "stream": True,
         "keep_alive": "24h",
         "options": {
-            "temperature": 0.1,
-            "repeat_penalty": 1.15,   # [Option A 적용] 무한 반복 앵무새 버그를 억제하기 위해 페널티 재강화
-            "num_predict": 800,       # [길이 제한 해제] 긴 매뉴얼 답변이 잘리지 않도록 300자에서 800자로 대폭 확장
+            "temperature": 0.1,       # 특정 루프 차단을 위한 약간의 유연성 부여
+            "top_p": 0.85,            # 무작위 이상한 단어 생성을 억제하기 위한 누적 확률 제한
+            "repeat_penalty": 1.15,   # 단어 반복 루프(1.05)와 억지 단어 비틀기(1.35) 사이의 최적의 밸런스 지점
+            "num_predict": 400,       # 0.5b 가속을 위해 불필요하게 늘어나는 토큰 한도를 400자로 제한
             "num_ctx": 2048,
             "num_thread": 4,
-            "use_mlock": True
+            "use_mlock": True,
+            "stop": ["질문:", "답변:", "수칙:", "매뉴얼:", "\n\n\n", "edgesaver", "edge saver"] # 앵무새 무한 루프 원천 차단 시퀀스 지정
         }
     }
     
@@ -85,3 +94,54 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
 def load_llm():
     """호환성을 위해 남겨둔 함수 (실제로는 call_ollama_native 사용)"""
     return None
+
+def rewrite_query_ollama(query):
+    """소형 모델을 사용하여 구어체/다급한 질문을 고속으로 RAG 검색 전용 핵심 명사 키워드로 변환합니다."""
+    import requests
+    import json
+    import re
+    url = f"{config.OLLAMA_BASE_URL}/api/generate"
+    prompt = (
+        "당신은 재난 안전 전문 검색어 보조 장치입니다.\n"
+        "다급하거나 풀어 써진 구어체 질문을 RAG 정보 검색에 적합한 표준 명사형 키워드 2~3개로 정밀 변환하십시오.\n"
+        "이때 질문의 어미나 구어적 표현은 완전히 배제하고, 반드시 다음 사상(Mapping)을 강제 적용하십시오:\n"
+        "- '불', '불이 났는데', '불남' -> '화재, 대피'\n"
+        "- '숨', '숨을 안쉬어', '안쉼', '숨안쉼', '심정지' -> '심폐소생술, CPR, 응급처치'\n"
+        "- '피나', '피남', '다침' -> '지혈, 응급처치'\n"
+        "설명 없이 오직 쉼표로 구분한 단답 명사들만 출력하십시오.\n\n"
+        f"질문: {query}\n"
+        "키워드:"
+    )
+    payload = {
+        "model": config.KEYWORD_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "repeat_penalty": 1.2,
+            "num_predict": 20,
+            "num_thread": 4
+        }
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            result = response.json().get("response", "").strip()
+            # 쉼표나 단어가 깨지는 것을 방지하고 줄바꿈 제거
+            cleaned = result.replace("\n", " ").strip()
+            
+            # [안전 장치] 소형 모델의 설명조 문구 및 지침 반복 출력 강제 필터링
+            for phrase in ["쉼표로 출력합니다", "쉼표로 구분하여", "명사 키워드는", "키워드는", "추출된 키워드", "핵심 키워드", "입니다", "출력합니다"]:
+                cleaned = cleaned.replace(phrase, "")
+            
+            # 한글, 영문, 숫자, 쉼표, 공백 외의 모든 불필요한 기호 제거
+            cleaned = re.sub(r'[^가-힣a-zA-Z0-9\s,]', '', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            
+            # 마침표 제거
+            if cleaned.endswith("."):
+                cleaned = cleaned[:-1]
+            return cleaned.strip()
+    except Exception as e:
+        pass
+    return ""

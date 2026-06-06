@@ -1,0 +1,24 @@
+{
+    "baseline_rag": {
+        "hit_rate_at_1": 0.6667,
+        "mrr": 0.7333,
+        "avg_latency_sec": 0.1135
+    },
+    "reranker_models": {
+        "MiniLM (초경량/영어위주)": {
+            "hit_rate_at_1": 0.6,
+            "mrr": 0.7167,
+            "avg_latency_sec": 0.7009
+        },
+        "bge-m3-ko (중간체급/한국어특화)": {
+            "hit_rate_at_1": 0.8667,
+            "mrr": 0.8667,
+            "avg_latency_sec": 9.6648
+        },
+        "BGE-Base (중중량급/의미론우수)": {
+            "hit_rate_at_1": 0.8667,
+            "mrr": 0.8667,
+            "avg_latency_sec": 3.082
+        }
+    }
+}

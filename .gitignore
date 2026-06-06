@@ -19,6 +19,7 @@ chroma_db_speed/
 
 models/
 chroma_db/
+live_temp_main.jpg
 
 # 임시 카메라 이미지
 live_temp_*.jpg

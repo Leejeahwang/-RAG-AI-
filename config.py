@@ -3,13 +3,17 @@ import os
 # ── 시스템 전역 설정 ──
 APP_NAME = "엣지 세이버 (Edge Saver)"
 DEBUG = True
+SIMPLE_UI = False  # 라즈베리파이/VNC 터미널 환경 최적화로 툴바 UI 사용 가능 (False 시 툴바 활성화)
+
 
 # ── LLM & STT 모델 설정 ──
-# [v35] Ollama Native 호출을 위한 모델명 (속도와 정확도를 위한 명작 qwen2.5 탑재)
-LLM_MODEL = "qwen2.5:1.5b"  # 매뉴얼 기반의 똑똑하고 긴 답변을 위해 1.5B로 상향 복귀
+# [v35] Ollama Native 호출을 위한 모델명 (라즈베리파이 0.5B 초가속 적용)
+LLM_MODEL = "qwen2.5:0.5b"  # 최종 대응 지침 생성용 초경량 가속 모델 (0.5B)
+USE_LLM = True  # True: 0.5B 모델로 답변 생성, False: Reranker 검색 청크를 원본 그대로 즉시 출력 (Zero-LLM RAG)
+KEYWORD_MODEL = "qwen2.5:1.5b"  # 시맨틱 쿼리 키워드 고속 추출용 똑똑한 모델 (1.5B)
 STT_ENABLED = False  # [v48] 라즈베리파이 오디오 드라이버(ALSA) 세그멘테이션 오류 방지를 위해 비활성화
 STT_ENGINE = "WHISPER"
-STT_GEMMA_MODEL = "qwen2.5:1.5b"
+STT_GEMMA_MODEL = "qwen2.5:0.5b"
 STT_WHISPER_MODEL = "large-v3-turbo"
 NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
@@ -27,6 +31,13 @@ FAISS_INDEX_DIR = "faiss_db"
 DATA_DIR = "data"
 CHUNK_SIZE = 250    # [초고속 최적화] 지식 조각당 길이를 절반 이하로 줄여 AI 읽기 시간 50% 단축
 CHUNK_OVERLAP = 50
+
+# ── Reranker 설정 ──
+USE_RERANKER = True
+RERANKER_MODEL_NAME = "BAAI/bge-reranker-base"
+RAG_TOP_K = 2  # 0.5B 초소형 모델의 컨텍스트 병목과 인지 부하를 줄이기 위해 상위 청크 반환 개수를 2개로 제한
+
+
 
 # ── 센서 임계값 설정 ──
 SENSOR_THRESHOLDS = {

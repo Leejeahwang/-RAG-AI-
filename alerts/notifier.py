@@ -21,11 +21,14 @@ def send_alert(zone, risk_level, sensor_details, ai_guidance=""):
         - Phase 2: MQTT 프로토콜로 관제실 대시보드에 실시간 전송
         - Phase 3: RPi 간 메시 네트워크 연쇄 경보
     """
-    print("\n" + "=" * 55)
-    print(f"📱 [관제실 알림 전송]")
-    print(f"   위치: {zone}")
-    print(f"   위험도: Level {risk_level}")
-    print(f"   센서: {sensor_details}")
+    lines = [
+        "\n" + "=" * 55,
+        "📱 [관제실 알림 전송]",
+        f"   위치: {zone}",
+        f"   위험도: Level {risk_level}",
+        f"   센서: {sensor_details}"
+    ]
     if ai_guidance:
-        print(f"   AI 대응 지침: {ai_guidance[:100]}...")
-    print("=" * 55)
+        lines.append(f"   AI 대응 지침: {ai_guidance[:100]}...")
+    lines.append("=" * 55)
+    print("\n".join(lines))
