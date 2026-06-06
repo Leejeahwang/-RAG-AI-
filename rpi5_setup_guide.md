@@ -40,7 +40,7 @@ sudo apt install -y python3-opencv libportaudio2 libopenblas-dev espeak git curl
 
 1. **저장소 복제**:
    ```bash
-   git clone <깃허브 저장소 URL>
+   git clone https://github.com/Leejeahwang/-RAG-AI-.git
    cd -RAG-AI--dev_park
    ```
 2. **Python 가상환경 생성 및 활성화**:
