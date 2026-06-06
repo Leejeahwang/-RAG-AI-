@@ -418,7 +418,7 @@ class EdgeSaverTest:
                             print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
                             continue
                         print("\n🎤 말씀해 주세요...")
-                        query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream)
+                        query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream, use_wake_word=False)
                         if not query: continue
                         print(f"🎤 인식: {query}")
                     elif query.lower() in ['q', 'exit', 'quit']:
@@ -458,7 +458,7 @@ class EdgeSaverTest:
                                         print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
                                         continue
                                     print("\n🎤 말씀해 주세요...")
-                                    query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream)
+                                    query, lang = listen_once(model=self.stt_model, pa=self.pa, stream=self.stt_stream, use_wake_word=False)
                                     if not query: continue
                                     print(f"🎤 인식: {query}")
                                 elif query.lower() in ['q', 'exit', 'quit']:
