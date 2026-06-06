@@ -80,7 +80,7 @@ class TTSHelper:
                                 'zh': 'Tingting'
                             }
                             voice_name = voice_map.get(lang, 'Yuna')
-                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 5.0 else int(speed)
                             
                             # 발화 속도가 rate 단위(WPM)이므로 say 명령어에도 전달
                             cmd = ['say', '-v', voice_name, '-r', str(current_rate), text]
@@ -105,7 +105,7 @@ class TTSHelper:
                             self._active_engine = temp_engine
                             
                             # 위험 수치에 따른 동적 속도 조절 반영
-                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 3.0 else self._rate
+                            current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 5.0 else int(speed)
                             temp_engine.setProperty('rate', current_rate)
                             temp_engine.setProperty('volume', self._volume)
                             
@@ -176,7 +176,7 @@ class TTSHelper:
     def speak(self, text, lang='ko', speed=None):
         """텍스트를 큐에 추가하여 순차적으로 음성 출력. speed가 지정되지 않으면 객체 생성시의 기본값 사용."""
         if not text: return
-        target_speed = speed if speed is not None else self._rate
+        target_speed = speed if speed is not None else 1.0
         self._queue.put((text, lang, target_speed))
 
     def speak_async(self, text, lang='ko', speed=None):

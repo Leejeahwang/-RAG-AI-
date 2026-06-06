@@ -19,33 +19,33 @@ MODEL_DIR = os.path.join(BASE_DIR, "models")
 
 # 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # 최신 타겟 (라즈베리파이 최적화 INT8)
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # 최신 타겟 원본
-    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 구형 INT8
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 최신 타겟 (라즈베리파이 5 최종 배포 모델 - YOLOv8 INT8)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # YOLOv10 최적화 INT8
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # YOLOv10 원본
     os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
     os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
+    os.path.join(MODEL_DIR, "best_nano_111.pt"),  # 신규 추가된 경량 가중치
     os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.10  # 40% 이상의 확신이 있을 때만 화재로 간주
+CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
-try:
-    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
-    loaded_model_path = None
-    for m_path in POSSIBLE_MODELS:
-        if os.path.exists(m_path):
-            loaded_model_path = m_path
+# 존재하는 모델 중 로드에 성공하는 첫 번째 모델을 채택 (순차적 폴백 로직)
+for m_path in POSSIBLE_MODELS:
+    if os.path.exists(m_path):
+        try:
+            print(f"🔄 [Vision AI] 오프라인 화재 모델 로드 시도: {os.path.basename(m_path)}")
+            model = YOLO(m_path)
+            print(f"✅ [Vision AI] 모델 로드 완료: {os.path.basename(m_path)}")
             break
-            
-    if loaded_model_path:
-        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
-        model = YOLO(loaded_model_path)
-    else:
-        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
-except Exception as e:
-    print(f"❌ [에러] 모델 초기화 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ [경고] 모델 로드 실패 ({os.path.basename(m_path)}): {e}. 다음 후보를 시도함.")
+            model = None
+
+if model is None:
+    print(f"❌ [에러] 모든 모델 로드에 실패함. {MODEL_DIR}의 모델 파일들과 라이브러리 설치 상태를 확인하시오.")
 
 @contextmanager
 def silence_fd():

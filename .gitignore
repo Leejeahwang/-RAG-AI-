@@ -23,3 +23,6 @@ chroma_db/
 # 임시 카메라 이미지
 live_temp_*.jpg
 temp_capture.jpg
+
+# 로컬 빌드 RAG DB
+faiss_db/

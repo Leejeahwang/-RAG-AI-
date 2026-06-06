@@ -209,7 +209,7 @@ class EdgeSaver:
                             time.sleep(1.0)
                             continue
                         
-                        speed = 1.3 if self.current_level >= 5 else 1.2
+                        speed = 1.0
                         # 무한 대피 방송용 안내 멘트 조합
                         broadcast_text = f"비상 대피 방송입니다. {self._cached_evac_guidance}"
                         self.tts.speak_async(broadcast_text, lang='ko', speed=speed)
@@ -252,8 +252,8 @@ class EdgeSaver:
             
             ai_response = ""
             first_token = True
-            # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달
-            for token in call_ollama_native(prompt=context_text, question=prompt):
+            # 최신 Chat API 구조에 맞게 context와 question 파라미터 분리 전달 (긴급 상황인 경우 is_emergency=True 지정)
+            for token in call_ollama_native(prompt=context_text, question=prompt, is_emergency=True):
                 if first_token:
                     # AI 첫 토큰이 출력되는 즉시 사이렌 경보음을 정지합니다.
                     stop_siren()
