@@ -15,31 +15,28 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
+# 지원하는 모델 확장자 및 디렉토리
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
-    os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model")          # OpenVINO INT8 (라즈베리파이 5 CPU 최적화)
 ]
 
 model = None
 CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
 
-try:
-    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
-    loaded_model_path = None
-    for m_path in POSSIBLE_MODELS:
-        if os.path.exists(m_path):
-            loaded_model_path = m_path
+# 가장 가볍고 최적화된 포맷부터 순서대로 로드를 시도합니다.
+for m_path in POSSIBLE_MODELS:
+    if os.path.exists(m_path):
+        try:
+            print(f"🔄 [Vision AI] 모델 로드 시도 중: {os.path.basename(m_path)}")
+            loaded_model = YOLO(m_path, task="detect")
+            model = loaded_model
+            print(f"✅ [Vision AI] 오프라인 화재 모델 로드 완료: {os.path.basename(m_path)}")
             break
-            
-    if loaded_model_path:
-        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
-        model = YOLO(loaded_model_path)
-    else:
-        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
-except Exception as e:
-    print(f"❌ [에러] 모델 초기화 실패: {e}")
+        except Exception as e:
+            print(f"⚠️ [경고] '{os.path.basename(m_path)}' 로드 실패, 다음 옵션으로 전환합니다. 에러: {e}")
+
+if model is None:
+    print(f"❌ [에러] 어떠한 모델 파일도 로드하지 못했습니다. {MODEL_DIR} 디렉토리의 모델 파일들을 확인하세요.")
 
 def detect_fire(image_path):
     """
