@@ -58,6 +58,8 @@ def camera_worker_thread():
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # 💡 [초점 해결] 라즈베리파이 카메라 모듈 3의 연속 자동 초점(AF) 강제 활성화
+            os.system("v4l2-ctl -d /dev/video0 -c focus_automatic_continuous=1 > /dev/null 2>&1")
             
     if not cap.isOpened():
         # 3순위: 최종 일반 장치 오픈
