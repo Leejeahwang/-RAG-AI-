@@ -295,6 +295,9 @@ class EdgeSaver:
         finally:
             # 예외 등으로 첫 토큰 체크에 실패하더라도 무한 사이렌을 원천 차단
             stop_siren()
+            # 윈도우/SIMPLE_UI 환경의 경우, 백그라운드 경보 출력으로 인해 화면 밖으로 밀려난 질문 프롬프트를 재출력
+            if getattr(config, "SIMPLE_UI", False) or platform.system() == "Windows":
+                print("\n❓ 질문: ", end="", flush=True)
 
     def _monitor_sensors(self):
         """백그라운드 센서 및 비전 감시 (툴바 수치 갱신 전용)"""
