@@ -62,11 +62,12 @@ LLMItem = Tuple[int, int, str, str, str, dict]
 # ════════════════════════════════════════════════════════════════
 
 def _speed_for_level(level: int) -> float:
-    """위험 단계별 TTS 발화 속도 (Lv5: 1.3x, Lv4: 1.2x, 그 외 1.0x)."""
-    if level >= 5:
-        return 1.3
-    if level >= 4:
-        return 1.2
+    """위험 단계별 TTS 발화 속도 (TTS_SPEED_SCALING 비활성화 시 1.0x 표준 속도 유지)."""
+    if getattr(config, 'TTS_SPEED_SCALING', False):
+        if level >= 5:
+            return 1.3
+        if level >= 4:
+            return 1.2
     return 1.0
 
 

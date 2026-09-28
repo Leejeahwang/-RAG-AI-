@@ -4,7 +4,10 @@ LangChain 없이 직접 Ollama와 통신하여 속도를 극대화합니다.
 """
 import requests
 import json
+import logging
 import config
+
+_LOGGER = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an emergency response expert 'Edge Saver'.
 Your ONLY task is to copy and paste the relevant guidelines from the [참고 매뉴얼] exactly as they are written.
@@ -69,9 +72,10 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
         # 라즈베리파이 환경을 고려하여 타임아웃을 300초(5분)로 연장
         with requests.post(url, json=payload, stream=True, timeout=300) as response:
             if response.status_code != 200:
-                yield f"[시스템 에러] Ollama 서버 응답 실패 ({response.status_code})"
-                return
+                raise RuntimeError(f"Ollama 서버 응답 실패 ({response.status_code})")
                 
+            stream_done = False
+            token_count = 0
             for line in response.iter_lines():
                 if line:
                     chunk = json.loads(line.decode("utf-8"))
@@ -81,15 +85,23 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
                     token = msg.get("content", "")
                     thinking_token = msg.get("thinking", "")
                     
-                    if thinking_token:
-                        yield thinking_token
-                    elif token:
+                    # thinking과 content가 같은 청크에 함께 오면 content를 우선한다.
+                    # 기존 if/elif는 thinking이 존재할 때 실제 답변 content를 버릴 수 있었다.
+                    if token:
+                        token_count += 1
                         yield token
+                    elif thinking_token:
+                        # content가 아직 없는 reasoning 청크는 사용자 답변/TTS에 내보내지 않는다.
+                        pass
                         
                     if chunk.get("done", False):
+                        stream_done = True
                         break
+            if not stream_done:
+                _LOGGER.warning("[Ollama] 스트림이 done 플래그 없이 종료됨 (content 청크 %d개 수신)", token_count)
     except Exception as e:
-        yield f"[시스템 에러] 통신 실패: {e}"
+        _LOGGER.exception("[Ollama] 스트리밍 요청/파싱 실패")
+        raise RuntimeError(f"Ollama 스트리밍 실패: {e}") from e
 
 def load_llm():
     """호환성을 위해 남겨둔 함수 (실제로는 call_ollama_native 사용)"""

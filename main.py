@@ -228,7 +228,9 @@ class EdgeSaver:
                             time.sleep(1.0)
                             continue
                         
-                        speed = 1.3 if self.current_level >= 5 else 1.2
+                        speed = 1.0
+                        if getattr(config, 'TTS_SPEED_SCALING', False):
+                            speed = 1.3 if self.current_level >= 5 else 1.2
                         # 무한 대피 방송용 안내 멘트 조합
                         broadcast_text = f"비상 대피 방송입니다. {self._cached_evac_guidance}"
                         self.tts.speak_async(broadcast_text, lang='ko', speed=speed)
@@ -435,10 +437,11 @@ class EdgeSaver:
         from rag.chain import SYSTEM_PROMPT
         formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
         
-        # 위험 단계에 따른 발화 속도 계산 (4단계: 1.2x, 5단계: 1.3x)
+        # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)
         speed = 1.0
-        if self.current_level >= 5: speed = 1.3
-        elif self.current_level >= 4: speed = 1.2
+        if getattr(config, 'TTS_SPEED_SCALING', False):
+            if self.current_level >= 5: speed = 1.3
+            elif self.current_level >= 4: speed = 1.2
         
         print("-" * 55)
         sentence_buffer = ""
@@ -447,7 +450,6 @@ class EdgeSaver:
         
         try:
             from rag.chain import call_ollama_native
-            completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
             
             # [v35] 직접 스트리밍 호출 (/api/chat용으로 파라미터 분리)
             for token in call_ollama_native(prompt=context_text, question=query):
@@ -457,30 +459,24 @@ class EdgeSaver:
                 print(token, end="", flush=True)
                 sentence_buffer += token
                 
+                # [TTS 단어 누락 수정] 문장부호(. ! ? \n)에서만 분할하여 TTS에 완전한 문장 전달
                 is_split_point = any(p in token for p in ".!?\n")
                 if is_split_point and "." in token:
+                    # 숫자 뒤의 마침표(예: "3.")는 문장 끝이 아니므로 분할하지 않음
                     if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
                         is_split_point = False
                 
-                # [v28] 번개 분할: 첫 구절은 25자만 넘어도 즉시 음성 출력
+                # 콤마 분할은 버퍼가 충분히 길 때만 (짧은 문장 조각 방지)
                 if not is_split_point:
-                    if "," in token and len(sentence_buffer) > 15:
-                        is_split_point = True
-                    elif len(sentence_buffer) > 25 and " " in token:
+                    if "," in token and len(sentence_buffer) > 60:
                         is_split_point = True
                 
                 if is_split_point:
-                    clean_sent = sentence_buffer.strip()
-                    # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
-                    if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                        sentence_buffer = ""
-                        break
-                    
-                    if len(clean_sent) > 6:
-                        completed_sentences.append(clean_sent)
-                        
                     self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
                     sentence_buffer = ""
+        except Exception as e:
+            # 스트림이 중간에 끊겨도 이미 받은 마지막 문장 조각은 아래에서 보존한다.
+            print(f"\n⚠️ [LLM 스트리밍 중단] {type(e).__name__}: {e}")
         finally:
             self._is_generating = False # [v28] 감시 모드 다시 활성화
         
@@ -488,6 +484,8 @@ class EdgeSaver:
         if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
             self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
         
+        if not self.tts.wait_until_idle(timeout=600):
+            print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
         print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)

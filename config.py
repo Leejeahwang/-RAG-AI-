@@ -20,9 +20,14 @@ NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 N
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
 
 # ── TTS(음성 출력) 설정 ──
-# [v47] Piper 공식 한국어 모델 부재로 인해, 즉각적인 오프라인 반응이 가능한 SAPI5 기반으로 임시 롤백
-TTS_ENGINE = "PYTTSX3"
+# 옵션:
+#  - "PPASO": 초경량 21MB 한국어 온디바이스 엔진 (ONNXRuntime, 빠른 반응과 또렷한 딕션, 권장)
+#  - "PYTTSX3": 즉각적인 오프라인 반응 (SAPI5/espeak 기반, 초경량 기본음)
+#  - "MELO": 고품질 딥러닝 음성 (MeloTTS 기반, 고성능 가속기 권장)
+TTS_ENGINE = "PPASO"
 TTS_RATE = 190  # SAPI5(pyttsx3)의 부드러운 표준 속도 (기본 150~200)
+TTS_SPEED_SCALING = False  # 위험 단계별 배속(1.2x~1.3x) 활성화 여부 (False: 1.0x 표준 속도 고정)
+PPASO_MODEL_DIR = "models/ppaso"
 PIPER_MODEL = "models/piper/piper-kss-korean.onnx"
 PIPER_CONFIG = "models/piper/piper-kss-korean.onnx.json"
 

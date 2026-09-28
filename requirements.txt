@@ -34,3 +34,5 @@ faster-whisper
 pyttsx3
 pygame
 pyaudio
+soundfile
+python-mecab-ko

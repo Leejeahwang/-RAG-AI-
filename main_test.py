@@ -215,7 +215,7 @@ class EdgeSaverTest:
         alarm_handled = False
         while self._monitor_running:
             try:
-                # 만약 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이라면 
+                # 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이면
                 # 음성 겹침과 오버헤드를 막기 위해 센서 체크를 잠시 양보합니다.
                 if getattr(self, '_is_generating', False) and self.current_level < 4:
                     time.sleep(1.0)
@@ -319,9 +319,11 @@ class EdgeSaverTest:
         from rag.chain import SYSTEM_PROMPT
         formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
         
+        # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)
         speed = 1.0
-        if self.current_level >= 5: speed = 1.3
-        elif self.current_level >= 4: speed = 1.2
+        if getattr(config, 'TTS_SPEED_SCALING', False):
+            if self.current_level >= 5: speed = 1.3
+            elif self.current_level >= 4: speed = 1.2
         
         print("-" * 55)
         sentence_buffer = ""
@@ -330,7 +332,6 @@ class EdgeSaverTest:
         
         try:
             from rag.chain import call_ollama_native
-            completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
             
             for token in call_ollama_native(prompt=context_text, question=query):
                 if getattr(self, '_interrupt_generation', False):
@@ -339,35 +340,35 @@ class EdgeSaverTest:
                 print(token, end="", flush=True)
                 sentence_buffer += token
                 
-                is_split_point = any(p in token for p in ".!?\n")
+                # [TTS 단어 누락 수정] 문장부호(. ! ? \n)에서만 분할하여 TTS에 완전한 문장 전달
+                has_terminal_punctuation = any(p in token for p in ".!?")
+                has_newline = "\n" in token
+                # 줄바꿈은 표/목록의 짧은 셀도 자주 끊으므로, 짧은 조각은 다음 줄과 합친다.
+                is_split_point = has_terminal_punctuation or (has_newline and len(sentence_buffer.strip()) >= 20)
                 if is_split_point and "." in token:
+                    # 숫자 뒤의 마침표(예: "3.")는 문장 끝이 아니므로 분할하지 않음
                     if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
                         is_split_point = False
                 
+                # 콤마 분할은 버퍼가 충분히 길 때만 (짧은 문장 조각 방지)
                 if not is_split_point:
-                    if "," in token and len(sentence_buffer) > 15:
-                        is_split_point = True
-                    elif len(sentence_buffer) > 25 and " " in token:
+                    if "," in token and len(sentence_buffer) > 60:
                         is_split_point = True
                 
                 if is_split_point:
-                    clean_sent = sentence_buffer.strip()
-                    # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
-                    if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                        sentence_buffer = ""
-                        break
-                    
-                    if len(clean_sent) > 6:
-                        completed_sentences.append(clean_sent)
-                        
                     self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
                     sentence_buffer = ""
+        except Exception as e:
+            # 스트림 중간 예외가 나도 이미 받은 마지막 조각을 버리지 않고 아래에서 TTS 큐에 넣는다.
+            print(f"\n⚠️ [LLM 스트리밍 중단] {type(e).__name__}: {e}")
         finally:
             self._is_generating = False 
         
         if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
             self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
         
+        if not self.tts.wait_until_idle(timeout=600):
+            print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
         print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)

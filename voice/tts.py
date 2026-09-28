@@ -8,10 +8,13 @@ import time
 import tempfile
 import platform
 import subprocess
+import logging
 import pygame
 import pyttsx3
 import config
-from voice.melo_wrapper import MeloEngine
+from voice.ppaso_wrapper import PpasoEngine
+
+_LOGGER = logging.getLogger(__name__)
 
 class TTSHelper:
     """
@@ -19,6 +22,7 @@ class TTSHelper:
     ======================================================================
     - [PYTTSX3]: 즉각적인 반응 속도 (SAPI5 기반, 오프라인 전용)
     - [MELO]: 고품질 딥러닝 음성 (MeloTTS 기반, 가속기 권장)
+    - [PPASO]: 초경량 21MB 온디바이스 음성 (Ppaso-TTS 기반, NPU/CPU 친화)
     - 대기열(Queue) 방식을 통해 문장 단위의 실시간 발화 지원
     """
     def __init__(self, rate=None, volume=1.0):
@@ -38,12 +42,22 @@ class TTSHelper:
         
         # 엔진별 초기화
         self._melo_engine = None
+        self._ppaso_engine = None
         self._sapi_engine = None
         
         if self._engine_type == "MELO":
+            # Melo 래퍼는 import 시 Windows MeCab 모듈을 교체하므로,
+            # PPASO가 사용하는 실제 G2P/MeCab import에 영향을 주지 않도록 필요할 때만 로드한다.
+            from voice.melo_wrapper import MeloEngine
             self._melo_engine = MeloEngine()
             try: pygame.mixer.init()
-            except: pass
+            except Exception:
+                _LOGGER.exception("[TTS] pygame mixer 초기화 실패")
+        elif self._engine_type == "PPASO":
+            self._ppaso_engine = PpasoEngine()
+            try: pygame.mixer.init()
+            except Exception:
+                _LOGGER.exception("[TTS] pygame mixer 초기화 실패")
         
         self._worker_thread = threading.Thread(target=self._worker, daemon=True)
         self._worker_thread.start()
@@ -57,9 +71,12 @@ class TTSHelper:
     def _worker(self):
         """백그라운드에서 큐를 처리하며 음성을 생성합니다."""
         while not self._stop_event.is_set():
+            item = None
             try:
                 item = self._queue.get(timeout=0.2)
-                if item is None: break
+                if item is None:
+                    self._queue.task_done()
+                    break
                 
                 text, lang, speed = item if len(item) == 3 else (*item, 1.0)
                 text = self._sanitize_text(text)
@@ -68,6 +85,7 @@ class TTSHelper:
                     continue
                 
                 self._is_speaking = True
+
                 
                 if self._engine_type == "PYTTSX3":
                     if platform.system() == "Darwin":
@@ -89,13 +107,14 @@ class TTSHelper:
                             self._active_process = subprocess.Popen(cmd)
                             self._active_process.wait()
                         except Exception as mac_ex:
+                            _LOGGER.warning("[TTS] macOS 지정 음성 재생 실패, 기본 음성으로 재시도: %s", mac_ex)
                             # 만약 특정 목소리가 없거나 에러 시 기본 목소리로 폴백
                             try:
                                 cmd = ['say', '-r', str(current_rate), text]
                                 self._active_process = subprocess.Popen(cmd)
                                 self._active_process.wait()
-                            except:
-                                pass
+                            except Exception:
+                                _LOGGER.exception("[TTS] macOS 기본 음성 재생도 실패")
                         finally:
                             self._active_process = None
                     else:
@@ -118,15 +137,39 @@ class TTSHelper:
                                 # [자원 해제] 명시적 중단 및 소멸
                                 temp_engine.stop()
                             except Exception as sapi_ex:
-                                pass
+                                _LOGGER.exception("[TTS] PYTTSX3 발화 실패: %s", sapi_ex)
                             finally:
                                 self._active_engine = None
                                 try:
                                     del temp_engine
                                 except:
                                     pass
+                elif self._engine_type == "PPASO":
+                    # 2. 초경량 온디바이스 합성 엔진 (Ppaso-TTS)
+                    temp_file = os.path.join(self._temp_dir, f"ppaso_{int(time.time()*1000)}.wav")
+                    target_speed = speed if isinstance(speed, (int, float)) and speed < 3.0 else 1.0
+                    if self._ppaso_engine and self._ppaso_engine.speak_to_file(text, temp_file, lang=lang, speed=target_speed):
+                        try:
+                            pygame.mixer.music.load(temp_file)
+                            pygame.mixer.music.play()
+                            while pygame.mixer.music.get_busy():
+                                if self._stop_event.is_set():
+                                    pygame.mixer.music.stop()
+                                    break
+                                time.sleep(0.05)
+                            pygame.mixer.music.unload()
+                            os.remove(temp_file)
+                        except Exception:
+                            _LOGGER.exception("[TTS] PPASO 오디오 재생 실패 (file=%s)", temp_file)
+                            try:
+                                pygame.mixer.music.stop()
+                                pygame.mixer.music.unload()
+                            except Exception:
+                                pass
+                    else:
+                        _LOGGER.error("[TTS] PPASO 합성 실패 (text=%r)", text[:100])
                 else:
-                    # 2. 고품질 합성 엔진 (MeloTTS)
+                    # 3. 고품질 합성 엔진 (MeloTTS)
                     temp_file = os.path.join(self._temp_dir, f"melo_{int(time.time()*1000)}.wav")
                     if self._melo_engine.speak_to_file(text, temp_file, lang=lang, speed=speed):
                         try:
@@ -139,14 +182,29 @@ class TTSHelper:
                                 time.sleep(0.05)
                             pygame.mixer.music.unload()
                             os.remove(temp_file)
-                        except: pass
+                        except Exception:
+                            _LOGGER.exception("[TTS] MELO 오디오 재생 실패 (file=%s)", temp_file)
+                            try:
+                                pygame.mixer.music.stop()
+                                pygame.mixer.music.unload()
+                            except Exception:
+                                pass
+                    else:
+                        _LOGGER.error("[TTS] MELO 합성 실패 (text=%r)", text[:100])
                 
                 self._is_speaking = False
                 self._queue.task_done()
+                item = None
                 
             except queue.Empty: continue
             except Exception as e:
-                print(f"[TTS] 워커 에러: {e}")
+                _LOGGER.exception("[TTS] 워커 처리 실패: %s", e)
+                self._is_speaking = False
+                if item is not None:
+                    try:
+                        self._queue.task_done()
+                    except ValueError:
+                        pass
                 time.sleep(1)
 
     def _sanitize_text(self, text):
@@ -192,6 +250,8 @@ class TTSHelper:
             # 딥러닝 기반 모델은 미리 메모리에 로드
             self._melo_engine.get_model('ko')
             self._melo_engine.get_model('en')
+        elif self._engine_type == "PPASO" and self._ppaso_engine:
+            pass  # Ppaso-TTS는 초기화 시점에 ONNX 모델이 메모리에 즉시 준비됩니다.
         elif self._engine_type == "PYTTSX3":
             # SAPI 엔진은 가벼운 빈 문장으로 초기화 확인
             self.speak_async(" ")
@@ -200,12 +260,25 @@ class TTSHelper:
         """현재 음성이 합성/재생 중이거나 대기열에 작업이 남아있는지 확인합니다."""
         return self._is_speaking or not self._queue.empty()
 
+    def wait_until_idle(self, timeout=None, poll_interval=0.05):
+        """대기열과 현재 합성이 모두 끝날 때까지 대기. timeout 초과면 False 반환."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            # Queue.unfinished_tasks에는 현재 처리 중인 항목도 포함된다.
+            with self._queue.mutex:
+                pending = self._queue.unfinished_tasks
+            if pending == 0 and not self._is_speaking:
+                return True
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_interval)
+
     def stop(self):
         """현재 진행 중인 재생을 즉시 멈추고 대기열을 비웁니다."""
         # 1. 대기열 비우기
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                item = self._queue.get_nowait()
                 self._queue.task_done()
             except queue.Empty:
                 break
