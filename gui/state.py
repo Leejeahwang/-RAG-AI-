@@ -132,6 +132,8 @@ class RuntimeState:
         self._logs: deque = deque(maxlen=LOG_MAX)
 
         self._last_answer: str = ""
+        self._last_provider: str = ""
+        self._last_generated_at: float = 0.0
         self._is_generating: bool = False
         self._first_alert: bool = True
 
@@ -289,6 +291,15 @@ class RuntimeState:
     def get_last_answer(self) -> str:
         with self._lock:
             return self._last_answer
+
+    def set_answer_source(self, provider: str) -> None:
+        with self._lock:
+            self._last_provider = provider
+            self._last_generated_at = time.time()
+
+    def get_answer_source(self) -> tuple[str, float]:
+        with self._lock:
+            return self._last_provider, self._last_generated_at
 
     def set_generating(self, flag: bool) -> None:
         with self._lock:

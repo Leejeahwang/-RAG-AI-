@@ -6,121 +6,107 @@
 
 ## 🚀 프로젝트 소개
 
-기존 화재경보기의 높은 오경보율, 단순 ON/OFF 알림 한계를 극복하는 **엣지 AI 화재 감시 시스템**입니다. 연기·가스·온도 센서와 카메라 AI를 결합하여 화재를 정확히 판별하고, LLM+RAG가 건물 매뉴얼을 검색하여 **맞춤형 대응 지침을 자연어로 즉시 생성**합니다.
+연기·가스·온도 센서와 카메라 AI로 위험을 감시하는 **엣지 AI 화재 감시 시스템**입니다. 로컬 RAG가 매뉴얼을 검색하고, Gemini API 또는 로컬 Ollama가 검색 결과를 바탕으로 대응 안내를 생성합니다.
 
 **핵심 차별점:**
-- 🎯 **AI 오경보 필터링:** 센서 반응 시 카메라 AI가 2차 검증 → 거짓 경보 대폭 감소
-- 🧠 **건물 맞춤 자연어 안내:** RAG가 건물 DB를 검색, LLM이 "CO2 소화기 사용, 서쪽 계단으로 대피" 등 구체적 지침 생성
-- 📡 **완전 오프라인:** 화재로 통신 인프라가 다운되어도 엣지 AI가 독립 동작
-- 💰 **저비용 대량 배치:** 라즈베리파이 기반으로 기존 스마트 시스템 대비 1/10 비용
+- 🎯 **센서·영상 결합:** 센서 반응과 카메라 분석을 함께 사용해 위험을 판단
+- 🧠 **매뉴얼 기반 안내:** 로컬에서 검색한 문서와 구역별 대피경로를 답변의 근거로 사용
+- 📡 **연결 장애 대응:** 센서·영상 판정, 사이렌, 첫 비상 안내는 로컬에서 동작하며 Gemini 요청이 실패하면 Ollama로 전환
+- 🔊 **로컬 음성 안내:** 기본 TTS 엔진으로 PPASO 사용
 
 ---
 
-## 🛠️ 설치 및 실행
+## 🛠️ 설치
+
+[Ollama](https://ollama.com/)를 설치하고 실행한 뒤 로컬 답변 모델을 준비합니다.
+
+Debian/Ubuntu에서 `requirements.txt`의 PyAudio를 빌드해 설치한다면 먼저 PortAudio 개발 패키지를 설치합니다. 이 패키지는 실행용 `libportaudio2`도 함께 설치합니다.
 
 ```bash
-# 1. 필수 라이브러리 설치 (RAG, Vision, Voice)
-pip install -r requirements.txt
-
-# 2. 로컬 LLM 서버 (Ollama) 설치 및 모델 다운로드
-# https://ollama.com 에서 설치 후 아래 명령 실행
-ollama pull qwen2.5:1.5b    # 초고속 대응 지침 생성 모델 (추천)
-ollama pull bge-m3          # 고성능 임베딩 모델
-
-# 3. 추가 시스템 의존성
-# - Windows: HWP 파싱을 위해 olefile 패키지 사용 (전용 한글 프로그램 없이 동작)
-# - Linux: sudo apt install libportaudio2 (PyAudio 용)
+sudo apt install portaudio19-dev python3-dev
 ```
 
-## 🚀 퀵 스타트 가이드 (Quick Start)
-
-본 프로젝트는 저사양 노트북부터 고성능 데스크탑까지 유연하게 대응하도록 설계되었습니다.
-
-### 1. 공통 의존성 설치
 ```bash
 pip install -r requirements.txt
+
+ollama pull qwen2.5:0.5b
 ```
 
-### 2. 하드웨어 환경별 PyTorch 설치 (필수)
-본인의 기기 환경에 맞는 명령어를 선택하여 실행하세요.
+검색어 재작성 기능이나 `rag/parser.py`의 AI 문서 정제를 사용할 경우 `qwen2.5:1.5b`도 준비합니다.
 
-*   **💻 저사양 노트북 / 그래픽카드 없음 (CPU-only)**
-    ```bash
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-    ```
+```bash
+ollama pull qwen2.5:1.5b
+```
 
-*   **🎮 고사양 데스크탑 / NVIDIA GPU (CUDA 가속)**
-    ```bash
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-    ```
+PyTorch가 환경에 맞게 설치되지 않은 경우에는 사용 중인 OS와 GPU에 맞는 빌드를 설치하세요. 이미 설치된 PyAudio 실행 중 `libportaudio2`가 없다는 오류가 나면 `sudo apt install libportaudio2`로 실행용 라이브러리를 설치할 수 있습니다. 현재 `config.py`는 Linux에서 음성 인식(STT)을 기본적으로 비활성화합니다. 기본 음성 출력에는 `config.py`가 지정한 `models/ppaso` 모델 파일도 필요합니다.
 
 ---
 
-## 🛠️ 운영 워크플로우 (Working Workflow)
+## 🤖 AI 답변 설정
 
-시스템 부하를 최소화하기 위해 지식 베이스 구축(빌드)과 실제 서비스(실행) 단계를 분리하여 운영합니다.
+1. [Google AI Studio](https://aistudio.google.com/apikey)에서 Gemini API 키를 발급받습니다.
+2. `.env.example`을 프로젝트 루트의 `.env`로 복사하고 `GEMINI_API_KEY`에 키를 입력합니다. `.env`는 Git에서 제외됩니다.
+3. `.env`의 `AI_PROVIDER`로 시작 모드를 정합니다.
 
-### 📁 지식 베이스 업데이트 (빌드 단계)
-새로운 매뉴얼(`.pdf`, `.hwp`, `.txt`)을 `data/raw_documents` 폴더에 넣은 후 아래 명령어를 실행하세요. 바뀐 파일만 골라 똑똑하게 인덱싱합니다.
-```bash
-python -m rag.pipeline
-```
+| `AI_PROVIDER` | 동작 |
+|---|---|
+| `auto` (기본값) | Gemini를 먼저 사용합니다. 키가 없거나 요청이 실패하면 Ollama로 전환하고, API 실패 후에는 일정 시간 재시도를 기다립니다. |
+| `gemini` | 요청마다 Gemini를 우선 시도합니다. 실패하면 Ollama로 전환합니다. |
+| `local` | 답변 생성에 Ollama만 사용합니다. |
 
-### 🚑 애플리케이션 실행 (서비스 단계)
-구축된 지식 베이스를 바탕으로 실시간 대응을 시작합니다. (저사양 환경에서도 빠르게 부팅됩니다.)
+실행 중 터미널(`main.py`, `main_test.py`)에서는 `/ai auto`, `/ai api`(`gemini`), `/ai local`로 전환할 수 있습니다. 대시보드에서는 **자동 / Gemini 우선 / 로컬 고정** 버튼을 사용합니다. 변경은 다음 요청부터 적용되며 재시작하면 `.env`의 설정으로 돌아갑니다.
+
+질문이 들어오면 로컬 RAG가 매뉴얼을 검색하고, 선택한 모델이 검색 결과를 바탕으로 답합니다. Gemini에는 질문과 검색된 매뉴얼 내용이 전송됩니다. Gemini 답변이 검색 근거와 맞지 않거나 API 요청이 실패하면 Ollama로 전환합니다. 위험 감지 시 첫 비상 안내와 사이렌은 API 답변을 기다리지 않습니다.
+
+`A구역 대피경로`처럼 구역과 경로를 명시한 질문에는 해당 `data/zone_*_layout.txt` 파일을 답변 문맥에 추가합니다. 구역을 특정하지 않으면 경로를 임의로 고르지 않습니다. 로컬 Ollama에는 이 정보가 제공되지만 Gemini 전송은 기본적으로 꺼져 있습니다. Gemini에도 보내려면 `.env`에 `GEMINI_SEND_LAYOUT=true`를 설정하고 앱을 재시작하세요. 현장 정보를 전송하기 전에 [Gemini API 요금과 데이터 사용 조건](https://ai.google.dev/gemini-api/docs/pricing)을 확인하세요.
+
+## 🚀 실행 및 매뉴얼
+
 ```bash
 python main.py
 ```
+
+비상 경보 개입 없이 질문·답변을 확인하려면 `python main_test.py`를 실행합니다.
+
+첫 실행에서 `faiss_db/` 인덱스가 없으면 `data/chunked_manuals.json`과 `data/` 하위 `.txt` 파일을 읽어 인덱스를 생성합니다. 인덱스가 이미 있으면 기존 것을 로드하므로 매뉴얼 파일만 추가하거나 바꿔도 검색 결과에 자동 반영되지는 않습니다. 현재 매뉴얼 재색인을 위한 별도 실행 명령은 없습니다.
+
+음성 안내는 기본적으로 로컬 PPASO 엔진을 사용합니다. TTS 전처리에서 짧은 제목·항목의 줄 경계를 문장 사이 쉼으로 바꿔, PDF에서 추출된 제목과 본문이 붙어 발화되는 현상을 줄입니다.
 
 ---
 
 ## 📂 프로젝트 구조
 
 ```text
--RAG-AI-/
-├── config.py                    # 전역 설정 (센서 임계값, 모델, 최적화 옵션)
-├── main.py                      # [MAIN] 통합 실행 진입점 (STT + RAG + Sensor)
-│
-├── sensors/                     # 센서 모듈 (재황)
-│   ├── smoke.py                 #   MQ-2 연기 감지
-│   ├── gas.py                   #   MQ-135 가스 감지
-│   ├── temperature.py           #   DHT22 온도/습도
-│   └── fusion.py                #   멀티센서 퓨전 & 위험도 산정
-│
-├── vision/                      # Vision AI (규태)
-│   ├── camera.py                #   카메라 캡처
-│   └── fire_detector.py         #   화재/연기 영상 판별 AI
-│
-├── rag/                         # RAG 엔진 (승훈+종화)
-│   ├── pipeline.py              #   [CORE] 데이터 동기화 및 전체 파이프라인 관리
-│   ├── parser.py                #   문서 파싱 (PDF, HWP, TXT) 및 Poison Pill 필터 (무결성 확보)
-│   ├── chunker.py               #   시맨틱 분할 및 LaTeX 기호 원천 차단 엔진
-│   ├── loader.py                #   가공된 JSON 데이터 로딩
-│   ├── native_retriever.py      #   FAISS & 의도 기반 2단계 리랭킹 엔진 (v4)
-│   └── chain.py                 #   QA 체인 및 프롬프트 최적화
-│
-├── voice/                       # 음성 모듈 (종화)
-│   ├── stt.py                   #   실시간 음성 인식 (OpenAI Whisper)
-│   ├── stt_vad.py               #   VAD 기반 정밀 음성 감지
-│   ├── tts.py                   #   음성 안내 출력 제어
-│   └── melo_wrapper.py          #   고성능 오프라인 MeloTTS 엔진 연동
-│
-├── gui/                         # GUI 모듈 (승훈)
-│   └── dashboard.py             #   관제 대시보드
-│
-├── data/                        # 데이터 저장소
-│   ├── raw_documents/           #   원본 매뉴얼 보관 (PDF, HWP, TXT)
-│   ├── chunked_manuals.json     #   최종 정제된 지식 베이스 데이터
-│   ├── pipeline_state.json      #   증분 동기화 상태 기록 파일
-│   └── preview_chunks.md        #   [Auto] 100% 평문화된 지식 베이스 미리보기
-│
-├── faiss_db/                    # 초경량/고속 벡터 데이터베이스 (FAISS)
-│
-├── alerts/                      # 경보 모듈 (재황)
-│   ├── alarm.py                 #   부저/LED 경보 출력
-│   └── notifier.py              #   관제실 알림 전송
-│
-└── PROJECT_PROPOSAL.md          # 프로젝트 최종 계획서
+SW2026-2/
+├── .env.example                 # Gemini 및 답변 모드 설정 예시
+├── config.py                    # 센서·모델·TTS 설정
+├── main.py                      # 통합 실행
+├── main_test.py                 # 비상 경보 개입을 끈 테스트 실행
+├── sensors/                     # 센서 수집과 위험도 계산
+├── vision/
+│   ├── cctv_service.py          # CCTV 영상 서비스
+│   └── fire_detector.py         # 화재 영상 판별
+├── rag/
+│   ├── loader.py                # JSON·TXT 매뉴얼 로드
+│   ├── native_retriever.py      # FAISS 검색 및 인덱스 생성
+│   ├── layout.py                # 구역별 대피경로 선택
+│   ├── provider.py              # Gemini/Ollama 선택과 장애 시 전환
+│   └── chain.py                 # 로컬 Ollama 답변
+├── voice/
+│   ├── stt.py                   # 음성 인식
+│   ├── tts.py                   # 음성 출력 및 발화 전처리
+│   └── ppaso_wrapper.py         # PPASO 합성 엔진
+├── gui/
+│   ├── dashboard.py             # 관제 대시보드
+│   ├── components.py            # 화면 구성 요소
+│   ├── state.py                 # 화면 상태
+│   └── workers.py               # 백그라운드 작업
+├── data/
+│   ├── raw_documents/           # 원본 매뉴얼
+│   ├── chunked_manuals.json     # 가공된 매뉴얼 청크
+│   └── zone_*_layout.txt        # 구역별 대피경로
+├── faiss_db/                    # 로컬 검색 인덱스
+└── alerts/                      # 사이렌·알림
 ```
 
 ---

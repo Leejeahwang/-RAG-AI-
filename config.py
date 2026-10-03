@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # ── 시스템 전역 설정 ──
 APP_NAME = "엣지 세이버 (Edge Saver)"
 DEBUG = True
@@ -18,6 +22,14 @@ STT_GEMMA_MODEL = "qwen2.5:0.5b"
 STT_WHISPER_MODEL = "large-v3-turbo"
 NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
+AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").lower()  # auto | gemini | local
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_CONNECT_TIMEOUT = float(os.getenv("GEMINI_CONNECT_TIMEOUT", "2"))
+GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "8"))
+GEMINI_RETRY_COOLDOWN = float(os.getenv("GEMINI_RETRY_COOLDOWN", "60"))
+GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "false").lower() == "true"
+OLLAMA_EMERGENCY_TIMEOUT = float(os.getenv("OLLAMA_EMERGENCY_TIMEOUT", "15"))
 
 # ── TTS(음성 출력) 설정 ──
 # 옵션:

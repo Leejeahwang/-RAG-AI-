@@ -44,6 +44,7 @@ from voice.tts import TTSHelper
 from rag.native_retriever import rag_manager
 
 import config
+from rag.provider import ai_mode_label, mode_command_response
 from vision import cctv_service, fire_detector
 from sensors import fusion
 from sensors.temperature import read_temperature, is_temperature_abnormal
@@ -199,13 +200,13 @@ class EdgeSaverTest:
         if self.current_level >= 4:
             return HTML(
                 f'<style bg="ansired" fg="white">'
-                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | '
+                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | AI: {ai_mode_label()} | '
                 f'{self.current_risk_stats}'
                 f'</style>'
             )
         return HTML(
             f'<style bg="ansiblue" fg="white">'
-            f' [EDGE SAVER TEST - RERANKER ACTIVE] | '
+            f' [EDGE SAVER TEST - RERANKER ACTIVE] | AI: {ai_mode_label()} | '
             f'{self.current_risk_stats}'
             f'</style>'
         )
@@ -289,13 +290,9 @@ class EdgeSaverTest:
         start_t = time.time()
         
         from rag.native_retriever import rag_manager
-        from rag.chain import rewrite_query_ollama
-        
+        # 검색은 로컬 인덱스에서 수행하되, 온라인 Gemini 사용 시
+        # Ollama 키워드 추출을 기다리지 않도록 원본 질문을 그대로 검색한다.
         search_query = query
-        keywords = rewrite_query_ollama(query)
-        if keywords:
-            search_query = f"{query} {keywords}"
-            print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
             
         # BGE-Base Reranker가 내부적으로 자동 작동하여 상위 4개 엄선
         source_docs = rag_manager.search(search_query)
@@ -314,10 +311,10 @@ class EdgeSaverTest:
             cleaned_content = "\n".join(clean_lines).strip()
             if cleaned_content:
                 cleaned_chunks.append(cleaned_content)
-        context_text = "\n\n".join(cleaned_chunks)
-        
-        from rag.chain import SYSTEM_PROMPT
-        formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
+        from rag.layout import layout_for_question
+        layout_text = layout_for_question(query)
+        manual_context = "\n\n".join(cleaned_chunks)
+        context_text = layout_text + manual_context
         
         # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)
         speed = 1.0
@@ -326,46 +323,24 @@ class EdgeSaverTest:
             elif self.current_level >= 4: speed = 1.2
         
         print("-" * 55)
-        sentence_buffer = ""
         self._is_generating = True 
         self._interrupt_generation = False 
         
         try:
-            from rag.chain import call_ollama_native
+            from rag.provider import generate_guidance
             
-            for token in call_ollama_native(prompt=context_text, question=query):
-                if getattr(self, '_interrupt_generation', False):
-                    print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
-                    break
-                print(token, end="", flush=True)
-                sentence_buffer += token
-                
-                # [TTS 단어 누락 수정] 문장부호(. ! ? \n)에서만 분할하여 TTS에 완전한 문장 전달
-                has_terminal_punctuation = any(p in token for p in ".!?")
-                has_newline = "\n" in token
-                # 줄바꿈은 표/목록의 짧은 셀도 자주 끊으므로, 짧은 조각은 다음 줄과 합친다.
-                is_split_point = has_terminal_punctuation or (has_newline and len(sentence_buffer.strip()) >= 20)
-                if is_split_point and "." in token:
-                    # 숫자 뒤의 마침표(예: "3.")는 문장 끝이 아니므로 분할하지 않음
-                    if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
-                        is_split_point = False
-                
-                # 콤마 분할은 버퍼가 충분히 길 때만 (짧은 문장 조각 방지)
-                if not is_split_point:
-                    if "," in token and len(sentence_buffer) > 60:
-                        is_split_point = True
-                
-                if is_split_point:
-                    self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-                    sentence_buffer = ""
+            cloud_context = context_text if config.GEMINI_SEND_LAYOUT else manual_context
+            result = generate_guidance(context_text, query, cloud_context=cloud_context)
+            print(f"[AI: {result.provider} · {time.strftime('%H:%M:%S')}] ", end="", flush=True)
+            if getattr(self, '_interrupt_generation', False):
+                print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
+            else:
+                print(result.text, end="", flush=True)
+                self.tts.speak_async(result.text, lang=lang, speed=speed)
         except Exception as e:
-            # 스트림 중간 예외가 나도 이미 받은 마지막 조각을 버리지 않고 아래에서 TTS 큐에 넣는다.
-            print(f"\n⚠️ [LLM 스트리밍 중단] {type(e).__name__}: {e}")
+            print(f"\n⚠️ [답변 생성 오류] {type(e).__name__}: {e}")
         finally:
             self._is_generating = False 
-        
-        if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
-            self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
         
         if not self.tts.wait_until_idle(timeout=600):
             print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
@@ -389,6 +364,7 @@ class EdgeSaverTest:
             print("       - 안전 모드(SIMPLE_UI)가 적용되었습니다. (실시간 상태가 줄 단위로 출력됨)")
         else:
             print("       - 화면 꼬임 방지를 위한 '하단 고정 툴바 UI'가 적용되었습니다.")
+        print("       - /ai auto, /ai api, /ai local 명령으로 답변 엔진을 즉시 전환합니다.")
         print("       - 'q' 입력 시 종료됩니다.\n")
 
         self._monitor_running = True
@@ -412,6 +388,11 @@ class EdgeSaverTest:
                     print(f"\n📢 [실시간 상태] {self.current_risk_stats}")
                     query = input("❓ 질문: ").strip()
                     
+                    mode_response = mode_command_response(query)
+                    if mode_response is not None:
+                        print(mode_response)
+                        continue
+
                     if self.tts: self.tts.stop()
                     
                     if query == "" or query.lower() in ['v', 'voice']:
@@ -452,6 +433,11 @@ class EdgeSaverTest:
                                     query = re.sub(r'❓\s*질문:\s*', '', query)
                                     query = query.strip()
                                     
+                                mode_response = mode_command_response(query)
+                                if mode_response is not None:
+                                    print(mode_response)
+                                    continue
+
                                 if self.tts: self.tts.stop()
                                 
                                 if query == "" or query.lower() in ['v', 'voice']:

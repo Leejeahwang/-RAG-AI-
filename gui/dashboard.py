@@ -37,6 +37,7 @@ from alerts.alarm import stop_alarm  # noqa: E402
 
 from gui.state import RUNTIME, MQTT_MODE  # noqa: E402
 from gui import workers as W, components as C  # noqa: E402
+from rag.provider import get_ai_mode, set_ai_mode, ai_mode_label  # noqa: E402
 
 
 @st.cache_resource(show_spinner="🔥 EDGE SAVER 시스템 기동 중...")
@@ -84,6 +85,21 @@ llm_queue = W.start_workers(qa, stt_bundle, tts_helper)
 C.render_header(on_theme_toggle=_on_theme_toggle)
 C.render_emergency_banner()
 C.render_status_bar()
+
+
+def _render_ai_mode_control() -> None:
+    """답변 공급자를 앱 재시작 없이 바꾼다."""
+    current = get_ai_mode()
+    st.caption(f"답변 엔진 · 현재: {ai_mode_label(current)}")
+    cols = st.columns(3)
+    for col, (mode, label) in zip(cols, (("auto", "자동"), ("gemini", "Gemini 우선"), ("local", "로컬 고정"))):
+        if col.button(label, key=f"ai_mode_{mode}", type="primary" if current == mode else "secondary", use_container_width=True):
+            set_ai_mode(mode)
+            RUNTIME.add_log(f"🤖 AI 모드 변경: {ai_mode_label(mode)}")
+            st.rerun()
+
+
+_render_ai_mode_control()
 
 
 @st.fragment

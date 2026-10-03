@@ -528,9 +528,11 @@ def render_ai_panel(llm_queue) -> None:
         ans = RUNTIME.get_last_answer()
         text = ans if ans else "안전 상태 유지 중입니다. (지침 대기 중)"
 
+    provider, generated_at = RUNTIME.get_answer_source()
+    source_label = f"<small>생성: {escape_html(provider)} · {time.strftime('%H:%M:%S', time.localtime(generated_at))}</small>" if provider and generated_at else ""
     st.markdown(
         f"<div class='es-panel'><div class='es-panel-title'>🤖 AI 지침</div>"
-        f"<div class='{cls}'>{escape_html(text)}</div></div>",
+        f"<div class='{cls}'>{escape_html(text)}</div>{source_label}</div>",
         unsafe_allow_html=True,
     )
 

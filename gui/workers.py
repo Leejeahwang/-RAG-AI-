@@ -73,14 +73,8 @@ def _speed_for_level(level: int) -> float:
 
 def _resolve_layout_text(zone: str) -> str:
     """zone 문자열에서 A/B/C를 추출해 해당 평면도 파일을 RAG 1순위 컨텍스트로 반환."""
-    import re
-    m = re.search(r"([ABC])\s*구역", zone or "") or re.search(r"\b([ABC])\b", zone or "")
-    zone_id = m.group(1) if m else "A"
-    path = os.path.join(config.DATA_DIR, f"zone_{zone_id}_layout.txt")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
-    return ""
+    from rag.layout import layout_for_zone
+    return layout_for_zone(zone)
 
 
 def _current_emergency_level() -> int:
@@ -92,7 +86,7 @@ def _current_emergency_level() -> int:
 
 
 # ════════════════════════════════════════════════════════════════
-#  Native RAG QA 어댑터 (FAISS + BM25 + Ollama 스트리밍)
+#  Native RAG QA 어댑터 (FAISS + BM25 + Gemini/Ollama)
 # ════════════════════════════════════════════════════════════════
 
 class NativeQA:
@@ -128,16 +122,20 @@ class NativeQA:
         ]
         return "\n".join(keep)
 
-    def invoke(self, prompt: str, layout_text: str = "") -> dict:
-        from rag.chain import call_ollama_native
+    def invoke(self, prompt: str, layout_text: str = "", emergency: bool = False) -> dict:
+        from rag.provider import generate_guidance
+        from rag.layout import layout_for_question
 
         docs = self._rag.search(prompt)
         context = "\n\n".join(self._clean(d) for d in docs)
         # 평면도가 있으면 컨텍스트 맨 앞(1순위)에 강제 주입 (비상 시 대피로 우선 참조)
+        if not layout_text:
+            layout_text = layout_for_question(prompt)
         if layout_text:
             context = layout_text + context
-        answer = "".join(call_ollama_native(prompt=context, question=prompt))
-        return {"result": answer.strip()}
+        cloud_context = context if config.GEMINI_SEND_LAYOUT else "\n\n".join(self._clean(d) for d in docs)
+        result = generate_guidance(context, prompt, emergency=emergency, cloud_context=cloud_context)
+        return {"result": result.text, "provider": result.provider, "fallback_reason": result.fallback_reason}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -282,35 +280,30 @@ def llm_worker(
         try:
             layout_text = ""
             if kind == "emergency":
-                trigger_alarm(meta.get("level", 0), meta.get("details", ""))
-                try:
-                    tts_helper.stop()
-                except Exception:
-                    pass
                 # 해당 구역 평면도를 RAG 컨텍스트 1순위로 주입
                 layout_text = _resolve_layout_text(meta.get("zone", ""))
-            res = qa.invoke(prompt, layout_text=layout_text)
+                from rag.provider import EMERGENCY_GUIDANCE
+            res = qa.invoke(prompt, layout_text=layout_text, emergency=(kind == "emergency"))
+            if kind != "emergency" and _current_emergency_level() >= ALERT_THRESHOLD:
+                RUNTIME.add_log("⚠️ [LLM] 비상 상황으로 일반 답변 폐기")
+                continue
             answer = res.get("result", "").strip() if isinstance(res, dict) else str(res)
+            provider = res.get("provider", "unknown") if isinstance(res, dict) else "unknown"
+            reason = res.get("fallback_reason", "") if isinstance(res, dict) else ""
+            RUNTIME.add_log(f"🤖 [AI] {provider}" + (f" (Gemini 전환: {reason})" if reason else ""))
             RUNTIME.set_last_answer(answer)
+            RUNTIME.set_answer_source(provider)
 
             if kind == "emergency":
-                try:
-                    send_alert(
-                        zone=meta.get("zone", "A구역"),
-                        risk_level=meta.get("level", 0),
-                        sensor_details=meta.get("sensor_info", ""),
-                        ai_guidance=answer,
-                    )
-                except Exception as e:
-                    RUNTIME.add_log(f"❌ [알림] {e}")
                 # 주기적 비상 방송 워커가 반복 송출하도록 대피 지침 캐싱
                 RUNTIME.set_evac_guidance(answer)
-                RUNTIME.add_log("📢 [LLM] 비상 지침 생성 완료, TTS 시작")
-                try:
-                    speed = _speed_for_level(meta.get("level", 0))
-                    tts_helper.speak(f"비상 상황 발생! {answer}", lang="ko", speed=speed)
-                except Exception as e:
-                    RUNTIME.add_log(f"❌ [TTS] {e}")
+                if answer != EMERGENCY_GUIDANCE:
+                    RUNTIME.add_log("📢 [LLM] 추가 비상 지침 생성 완료, TTS 시작")
+                    try:
+                        speed = _speed_for_level(meta.get("level", 0))
+                        tts_helper.speak(f"추가 안내입니다. {answer}", lang="ko", speed=speed)
+                    except Exception as e:
+                        RUNTIME.add_log(f"❌ [TTS] {e}")
             else:
                 RUNTIME.add_log("✅ [LLM] 응답 완료")
                 try:
@@ -515,6 +508,25 @@ def enqueue_emergency(
         f"온도:{sensors.temperature}°C / 가스:{sensors.gas} / 연기:{sensors.smoke}"
         if sensors else "센서 데이터 없음"
     )
+    # LLM 워커가 일반 질문이나 API 호출로 바빠도 경보와 첫 안내는 즉시 실행한다.
+    from rag.provider import EMERGENCY_GUIDANCE
+    RUNTIME.set_last_answer(EMERGENCY_GUIDANCE)
+    RUNTIME.set_answer_source("로컬 기본 안내")
+    RUNTIME.set_evac_guidance(EMERGENCY_GUIDANCE)
+    try:
+        trigger_alarm(risk.level, risk.details)
+    except Exception as exc:
+        RUNTIME.add_log(f"❌ [경보] {exc}")
+    try:
+        send_alert(zone=zone, risk_level=risk.level, sensor_details=sensor_info)
+    except Exception as exc:
+        RUNTIME.add_log(f"❌ [알림] {exc}")
+    if _emergency_tts is not None:
+        try:
+            _emergency_tts.stop()
+            _emergency_tts.speak(f"비상 상황 발생! {EMERGENCY_GUIDANCE}", lang="ko")
+        except Exception as exc:
+            RUNTIME.add_log(f"❌ [TTS] {exc}")
     item: LLMItem = (
         LLM_PRIORITY_EMERGENCY,
         next(_seq),
@@ -564,18 +576,20 @@ def enqueue_query(q: "queue.PriorityQueue[LLMItem]", text: str, lang: str) -> No
 
 _threads: list = []
 _llm_queue: Optional["queue.PriorityQueue[LLMItem]"] = None
+_emergency_tts: Any = None
 _started = False
 
 
 def start_workers(qa: Any, stt_bundle: tuple, tts_helper: Any) -> "queue.PriorityQueue[LLMItem]":
     """모든 워커를 시작. 중복 호출 방지 (idempotent)."""
-    global _threads, _llm_queue, _started
+    global _threads, _llm_queue, _emergency_tts, _started
     if _started and _llm_queue is not None:
         return _llm_queue
 
     stt_model, pa, stream = stt_bundle
     stop_event = RUNTIME.stop_event()
     _llm_queue = queue.PriorityQueue(maxsize=8)
+    _emergency_tts = tts_helper
 
     if not MQTT_MODE:
         cam_t = threading.Thread(target=cctv_service.camera_worker_thread, daemon=True, name="cam")
@@ -614,6 +628,8 @@ def start_workers(qa: Any, stt_bundle: tuple, tts_helper: Any) -> "queue.Priorit
 
 def shutdown_workers(stt_bundle: Optional[tuple] = None, tts_helper: Any = None) -> None:
     """모든 워커에 종료 신호 + 외부 자원 정리."""
+    global _emergency_tts
+    _emergency_tts = None
     RUNTIME.request_shutdown()
     if tts_helper is not None:
         try:

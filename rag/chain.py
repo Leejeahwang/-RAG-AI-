@@ -25,7 +25,7 @@ Your ONLY task is to copy and paste the relevant guidelines from the [참고 매
 
 답변:"""
 
-def call_ollama_native(prompt, system_prompt="", context="", question=""):
+def call_ollama_native(prompt, system_prompt="", context="", question="", timeout=None):
     """requests를 사용하여 Ollama에 직접 스트리밍 요청을 보냅니다. (Chat API 사용)"""
     url = f"{config.OLLAMA_BASE_URL}/api/chat"
     
@@ -70,7 +70,7 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
     
     try:
         # 라즈베리파이 환경을 고려하여 타임아웃을 300초(5분)로 연장
-        with requests.post(url, json=payload, stream=True, timeout=300) as response:
+        with requests.post(url, json=payload, stream=True, timeout=timeout or 300) as response:
             if response.status_code != 200:
                 raise RuntimeError(f"Ollama 서버 응답 실패 ({response.status_code})")
                 

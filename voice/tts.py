@@ -210,6 +210,26 @@ class TTSHelper:
     def _sanitize_text(self, text):
         """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거 및 발음 최적화"""
         if not text: return ""
+
+        # PDF의 짧은 제목/항목은 줄 경계를 잃으면 다음 단어와 붙어 들린다.
+        # 긴 줄의 줄바꿈은 문장 중간의 자동 줄바꿈일 수 있어 공백으로만 잇는다.
+        text = re.sub(r'(?im)^\s*[-–—]*\s*PAGE BREAK\s*[-–—]*\s*$', '', text)
+        lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        joined = []
+        previous = ""
+        blank_line = False
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                blank_line = True
+                continue
+            if joined:
+                end_of_phrase = blank_line or (len(previous) <= 20 and not re.search(r'[.!?。]$', previous))
+                joined.append('. ' if end_of_phrase else ' ')
+            joined.append(line)
+            previous = line
+            blank_line = False
+        text = ''.join(joined)
         
         # [품질 향상] 목록 번호 발음 최적화: "1." -> "1번", "2." -> "2번"
         # 묵음 현상을 방지하고 더 자연스러운 안내를 제공합니다.
