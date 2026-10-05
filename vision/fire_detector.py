@@ -32,6 +32,19 @@ model = None
 CONFIDENCE_THRESHOLD = 0.10  # 40% 이상의 확신이 있을 때만 화재로 간주
 
 try:
+    from vision.smoke_motion import SmokeMotionAnalyzer
+except ImportError:
+    from smoke_motion import SmokeMotionAnalyzer
+
+# 모션 분석기 싱글톤 인스턴스 (연속 프레임 모션 추적용)
+_motion_analyzer = SmokeMotionAnalyzer(
+    min_motion_mag=0.4,
+    static_motion_ratio=0.04,
+    upward_ratio_threshold=0.50,
+    required_consecutive_frames=3
+)
+
+try:
     # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
     loaded_model_path = None
     for m_path in POSSIBLE_MODELS:
@@ -128,6 +141,7 @@ def detect_fire(image_path):
         # 감지된 객체 분석
         max_conf = 0.0
         detected_classes = set()
+        smoke_box = None
         
         # 클래스 이름 딕셔너리 (예: {0: 'fire', 1: 'smoke'})
         names = result.names 
@@ -140,13 +154,61 @@ def detect_fire(image_path):
             detected_classes.add(cls_name)
             if conf > max_conf:
                 max_conf = conf
+            
+            if "SMOKE" in cls_name and smoke_box is None:
+                smoke_box = [int(v) for v in box.xyxy[0]]
+
+        # 모션 분석기(Optical Flow)를 통한 정지 사진 오탐 검증 및 훈소 연기 판정
+        is_real_smoke = False
+        is_static_photo = False
+        motion_status = "NO_MOTION_CHECK"
+
+        try:
+            import cv2
+            curr_img = cv2.imread(image_path)
+            if curr_img is not None:
+                target_box = smoke_box if smoke_box is not None else [int(v) for v in boxes[0].xyxy[0]]
+                motion_res = _motion_analyzer.analyze(curr_img, target_box, class_name="smoke" if smoke_box else "fire")
+                is_real_smoke = motion_res.is_real_smoke
+                is_static_photo = motion_res.is_static_photo
+                motion_status = motion_res.status
+        except Exception:
+            pass
 
         classes_str = ", ".join(detected_classes)
+
+        # 1. 정지 사진(모니터/스마트폰) 감지 시 오경보 차단!
+        if is_static_photo and not is_real_smoke:
+            return {
+                "fire_detected": False,
+                "confidence": round(max_conf, 2),
+                "description": f"🛡️ [사진 오탐 차단] 정지된 영상/사진 감지 (움직임 없음 - 오경보 차단)",
+                "is_real_smoke": False,
+                "is_static_photo": True,
+                "detected_classes": list(detected_classes),
+                "status": motion_status
+            }
+
+        # 2. 미세 연기 상방 대류 감지 시 (초기 훈소 화재 조기 포착)
+        if is_real_smoke:
+            return {
+                "fire_detected": True,
+                "confidence": round(max_conf, 2),
+                "description": f"🚨 [조기 감지] 미세 연기 상방 확산 포착 (확신도: {max_conf*100:.1f}%)",
+                "is_real_smoke": True,
+                "is_static_photo": False,
+                "detected_classes": list(detected_classes),
+                "status": motion_status
+            }
 
         return {
             "fire_detected": True,
             "confidence": round(max_conf, 2),
-            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)"
+            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)",
+            "is_real_smoke": is_real_smoke,
+            "is_static_photo": is_static_photo,
+            "detected_classes": list(detected_classes),
+            "status": motion_status
         }
 
     except Exception as e:

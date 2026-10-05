@@ -250,7 +250,8 @@ class EdgeSaverTest:
                     smoke_val = 550                  
                     gas_val = 600                    
 
-                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
+                vision_info = analysis if ('analysis' in locals() and isinstance(analysis, dict)) else fire_detected
+                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, vision_info)
                 level = risk['level']
                 self.current_level = level  
                 

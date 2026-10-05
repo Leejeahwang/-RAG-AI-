@@ -57,3 +57,51 @@
 ### 4. 차주 계획 (Next Action Items)
 1. 실물 웹캠 및 다양한 연무 환경(가습기, 연기 스프레이 등)에서의 모션 임계값(`min_motion_mag`, `upward_ratio_threshold`) 정밀 튜닝.
 2. 클라우드 VLM API(GPT-4o-mini / Gemini Flash) 연동을 통한 화재 전조 상황(전열기 무인 방치 등) 인지 모듈(`vision/vlm_analyzer.py`) 기초 설계.
+
+---
+
+## 📅 2026-10-05 (월) — 비전 모션 통합, 센서 퓨전 엔진 개편 및 클라우드 VLM 모듈 개발
+
+### 1. 작업 배경 및 목표
+* 비전 단독 테스트(`test_early_detection.py`)로 검증된 모션 분석기를 기존 메인 파이프라인(`vision/fire_detector.py`, `sensors/fusion.py`, `main.py`)에 정식 통합.
+* 센서가 울리기 전 비전 조기 감지 신호(`Level 2`) 및 사진 오탐 차단 신호(`Level 0`)를 시스템 전체에 반영.
+* 평상시 온라인 환경에서 화재 전조 위험을 진단하는 클라우드 VLM 연동 모듈(`vision/vlm_analyzer.py`) 프로토타입 구현.
+
+---
+
+### 2. 세부 개발 내역
+
+#### ① `vision/fire_detector.py` 모션 분석기 통합
+* `detect_fire()` 내부에 `SmokeMotionAnalyzer`를 결합하여 감지된 연기/불꽃 박스의 모션 연속 검증 수행.
+* **정지 사진 감지 시:** `is_static_photo=True`, `fire_detected=False`로 오경보를 사전 무력화.
+* **미세 연기 상방 확산 감지 시:** `is_real_smoke=True`, `description`에 조기 감지 태그 부여.
+
+#### ② 센서 퓨전 엔진 개편 (`sensors/fusion.py`)
+* 비전 분석 결과 딕셔너리를 받아 세분화된 위험도 산정:
+  * **사진 오탐 시:** `Level 0 (정상)` 유지 (오경보 차단).
+  * **미세 훈소 연기 조기 감지 시 (센서 수치 0일 때):** `Level 2 (경고: 비전 초기 훈소 연기 조기 포착!)` 선제 발령.
+  * **화재 전조 위험 감지 시 (VLM):** `Level 1 (주의: 화재 전조 주의)` 발령.
+  * 기존 boolean 인자(`fire_detected_by_camera`)와 100% 하위 호환성 유지.
+
+#### ③ 클라우드 VLM 화재 전조 진단 모듈 개발 (`vision/vlm_analyzer.py`)
+* OpenAI `gpt-4o-mini` API 연동을 통해 CCTV 영상의 환경적 화재 전조(전열기 무인 방치, 배전반 앞 가연물 적치 등) 진단 구조 설계.
+* 네트워크 단절 및 API 키 부재 시 안전하게 폴백하는 방어 로직과 시연/테스트용 모의 함수(`simulate_hazard`) 구현.
+
+#### ④ 메인 시스템 (`main.py`, `main_test.py`) 연동
+* 비전 분석 상세 객체를 퓨전 엔진으로 직결 전달하도록 파이프라인 갱신.
+
+---
+
+### 3. 검증 결과
+* 단위 테스트 4종 전원 통과:
+  1. 사진 오탐 차단: `Level 0 정상` (성공)
+  2. 비전 미세 연기 조기 감지 (센서 0일 때): `Level 2 경고 | early: True` (성공)
+  3. 클라우드 VLM 전열기 방치 진단: `Level 1 주의 | early: True` (성공)
+  4. 기존 레거시 호출 호환성: `Level 2 경고` (성공)
+
+---
+
+### 4. 다음 단계 (Next Action Items)
+1. 팀원(이승훈 님)에게 `Level 2 (조기 감지)` 상태가 GUI 대시보드 타이머 위젯에 연동될 수 있도록 인터페이스 공유.
+2. 실제 웹캠 환경에서 전열기 방치 및 연무 발생 모의 시연 테스트 진행.
+
