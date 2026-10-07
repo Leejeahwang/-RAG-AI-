@@ -18,6 +18,8 @@
 
 ## 🛠️ 설치
 
+**라즈베리파이 설치·USB 이전은 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 따르세요.** Pi에서는 가상환경에서 `python -m pip install -r requirements_rpi.txt`를 사용합니다. 이 파일은 공통 의존성과 GPIO 패키지를 함께 설치합니다.
+
 [Ollama](https://ollama.com/)를 설치하고 실행한 뒤 로컬 답변 모델을 준비합니다.
 
 Debian/Ubuntu에서 `requirements.txt`의 PyAudio를 빌드해 설치한다면 먼저 PortAudio 개발 패키지를 설치합니다. 이 패키지는 실행용 `libportaudio2`도 함께 설치합니다.
@@ -31,6 +33,10 @@ pip install -r requirements.txt
 
 ollama pull qwen2.5:0.5b
 ```
+
+PPASO 파일이 없으면 `python download_models.py --target ppaso`로 준비하고, 검색 모델은 `python download_models.py --target rag`로 캐시에 받습니다. 이미 옮긴 PPASO 파일은 `python download_models.py --target ppaso --check`로 확인할 수 있습니다. 파일 확인 후 실제 합성은 `python tools/benchmark_tts.py --engines ppaso --repeats 1`로 확인하세요. 다운로드 스크립트는 Ollama·영상 모델을 받지 않습니다.
+
+준비된 JSON/TXT 매뉴얼 검색에는 OCR 패키지가 필요하지 않습니다. `rag/parser.py`로 원본 문서를 가공할 때는 `python -m pip install -r requirements_documents.txt`도 실행합니다.
 
 검색어 재작성 기능이나 `rag/parser.py`의 AI 문서 정제를 사용할 경우 `qwen2.5:1.5b`도 준비합니다.
 
@@ -68,7 +74,13 @@ python main.py
 
 비상 경보 개입 없이 질문·답변을 확인하려면 `python main_test.py`를 실행합니다.
 
-첫 실행에서 `faiss_db/` 인덱스가 없으면 `data/chunked_manuals.json`과 `data/` 하위 `.txt` 파일을 읽어 인덱스를 생성합니다. 인덱스가 이미 있으면 기존 것을 로드하므로 매뉴얼 파일만 추가하거나 바꿔도 검색 결과에 자동 반영되지는 않습니다. 현재 매뉴얼 재색인을 위한 별도 실행 명령은 없습니다.
+터미널 질문 처리 후 `[시간] 검색 …초 / 답변 …초 / 음성 …초`가 출력됩니다. 검색은 RAG 호출, 답변은 Gemini·Ollama 호출(내부 전환 포함), 음성은 출력 요청부터 완료 대기까지의 시간입니다. 모델 초기화 시간은 별도이며, 음성 시간에는 실제 재생 시간이 포함됩니다. `main.py`의 자동 비상 알림 경로는 이 질문 처리 로그의 측정 대상이 아닙니다.
+
+첫 실행에서 `faiss_db/` 인덱스가 없으면 `data/chunked_manuals.json`과 `data/` 하위 `.txt` 파일을 읽어 인덱스를 생성합니다. 인덱스가 이미 있으면 기존 것을 로드합니다. 문서가 변경되면 갱신 필요 메시지가 표시되며, 앱을 종료한 뒤 `python tools/rebuild_rag_index.py`로 인덱스를 백업하고 재구축합니다. `python tools/check_rag_quality.py`로 기본 검색 확인을 실행할 수 있습니다. BGE 재정렬 사용 여부는 `config.py`의 `USE_RERANKER`로 설정하며, 비교 측정 방법은 [RAG_BENCHMARK.md](RAG_BENCHMARK.md)를 참조하세요.
+
+현재 BGE 재정렬은 기본으로 사용하되 `RERANKER_POLICY="selective"`로 명확한 CPR·출혈·골절 질문에 해당 근거가 확보된 경우 추론을 생략합니다. 구역·화재 등 다른 질문에는 계속 적용합니다. 모든 후보에 적용하려면 `RERANKER_POLICY="full"`로 바꾸고 재시작합니다. 모델은 계속 미리 로드하므로 추론 생략만으로 메모리가 줄지는 않습니다.
+
+Windows PC의 28개 질문 근거 검색 시험에서 첫 번째 결과 적중은 BGE 끔 23/28, 전체 적용 28/28이었으며, 대표 검색 시간은 각각 약 0.039초와 2.696초였습니다. 이 수치는 최종 답변 정확도나 라즈베리파이 성능을 의미하지 않습니다. 조건·메모리·질문별 결과와 선택적 적용 후 확인은 [RAG_RERANKER_COMPARISON.md](RAG_RERANKER_COMPARISON.md)에 정리했습니다.
 
 음성 안내는 기본적으로 로컬 PPASO 엔진을 사용합니다. TTS 전처리에서 짧은 제목·항목의 줄 경계를 문장 사이 쉼으로 바꿔, PDF에서 추출된 제목과 본문이 붙어 발화되는 현상을 줄입니다.
 
@@ -118,6 +130,10 @@ SW2026-2/
 - **화학식 평문화:** 모든 화학 반응식과 단위는 특수 기호 없이 표준 텍스트(예: NaHCO3, CO2)로만 저장되어 검색 정확도를 극대화합니다.
 
 ---
+
+## TTS 벤치마크
+
+`python tools/benchmark_tts.py --repeats 5`로 pyttsx3·PPASO·MeloTTS의 CPU 합성 시간, RTF, 최대 프로세스 메모리를 개별 측정할 수 있습니다. 결과는 `scratch/tts_benchmark/`에 CSV·JSON·WAV로 저장됩니다. 설치 준비와 Raspberry Pi 측정 시 주의사항은 [TTS_BENCHMARK.md](TTS_BENCHMARK.md)를 참고하세요.
 
 ## 👥 팀원
 

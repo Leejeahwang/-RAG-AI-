@@ -36,3 +36,9 @@ pygame
 pyaudio
 soundfile
 python-mecab-ko
+onnxruntime
+huggingface-hub
+
+# --- Dashboard ---
+streamlit
+pandas

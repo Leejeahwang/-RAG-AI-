@@ -1,35 +1,63 @@
-﻿import requests
+"""현재 앱의 PPASO 파일 및 RAG 모델 캐시 준비. import 시 다운로드하지 않습니다."""
+import argparse
 import os
+from pathlib import Path
 
-def download_file(url, path):
-    print(f"{path} 다운로드 중...", end=" ", flush=True)
-    try:
-        r = requests.get(url, allow_redirects=True, stream=True)
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-        size = os.path.getsize(path)
-        print(f"완료 ({size} bytes)")
-    except Exception as e:
-        print(f"실패: {e}")
+ROOT = Path(__file__).resolve().parent
+PPASO_REPO = "akamotaco/ppaso-tts-v1"
+PPASO_FILES = (
+    "config.json", "example/ppaso_tts.py",
+    "runtime/data/g2p_mfa.py", "runtime/data/phoneme_mfa.py",
+    "runtime/data/ko_normalize.py", "runtime/dict/korean_mfa.dict",
+    "onnx/text_encoder.onnx", "onnx/variance.onnx",
+    "onnx/acoustic.onnx", "onnx/vocoder.onnx",
+    "onnx/text_encoder.onnx.data", "onnx/variance.onnx.data",
+    "onnx/acoustic.onnx.data", "onnx/vocoder.onnx.data",
+)
 
-# 폴더 생성
-os.makedirs("models/piper", exist_ok=True)
 
-# 다운로드
-onnx = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ko/ko_KR/kyutae/medium/ko_KR-kyutae-medium.onnx"
-json_url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ko/ko_KR/kyutae/medium/ko_KR-kyutae-medium.onnx.json"
+def check_ppaso(directory):
+    missing = [name for name in PPASO_FILES
+               if not (directory / name).is_file() or (directory / name).stat().st_size == 0]
+    for name in missing:
+        print(f"Missing: {directory / name}")
+    print("PPASO files: " + ("missing" if missing else "ok"))
+    return not missing
 
-download_file(onnx, "models/piper/ko_KR-kyutae-medium.onnx")
-download_file(json_url, "models/piper/ko_KR-kyutae-medium.onnx.json")
 
-# config.py 자동 수정
-config_path = "config.py"
-if os.path.exists(config_path):
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    content = content.replace("piper-kss-korean.onnx", "ko_KR-kyutae-medium.onnx")
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print("config.py 수정 완료!")
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", choices=("ppaso", "rag", "all"), default="all")
+    parser.add_argument("--check", action="store_true", help="네트워크 없이 파일/RAG 모델 로드 확인")
+    args = parser.parse_args()
+    os.chdir(ROOT)
+    if args.check:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    import config
+    directory = Path(config.PPASO_MODEL_DIR).resolve()
+    ok = True
+    if args.target in ("ppaso", "all"):
+        if not args.check:
+            from huggingface_hub import snapshot_download
+            snapshot_download(PPASO_REPO, local_dir=str(directory),
+                              allow_patterns=["config.json", "example/**", "runtime/**", "onnx/**"])
+        ok = check_ppaso(directory) and ok
+    if args.target in ("rag", "all"):
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+        models = [(SentenceTransformer, config.NATIVE_EMBEDDING_MODEL)]
+        if config.USE_RERANKER:
+            models.append((CrossEncoder, config.RERANKER_MODEL_NAME))
+        for cls, name in models:
+            try:
+                model = cls(name, device="cpu", local_files_only=args.check)
+                print(f"RAG model ready: {name}")
+                del model
+            except Exception as exc:
+                print(f"RAG model failed: {name}: {type(exc).__name__}: {exc}")
+                ok = False
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

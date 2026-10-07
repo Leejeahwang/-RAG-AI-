@@ -402,11 +402,16 @@ class EdgeSaver:
     def _process_query(self, query, lang):
         print("\n[분석] 대응 지침 생성 중...")
         start_t = time.time()
+        self.last_query_timings = {"rag_s": 0.0, "llm_s": 0.0, "tts_s": 0.0}
+        rag_started = time.perf_counter()
+        tts_started = None
+        llm_started = None
         
         # [1.5B 키워드 추출 제거] 라즈베리파이5 연산 병목 제거를 위해 LLM 쿼리 재작성 레이어 제거 (원본 쿼리 직송)
         search_query = query
             
         source_docs = rag_manager.search(search_query)
+        self.last_query_timings["rag_s"] = time.perf_counter() - rag_started
         
         # LLM 앵무새 증후군 방지: 컨텍스트 내의 메타데이터 헤더([위치:], [출처:]) 텍스트 강제 삭제
         cleaned_chunks = []
@@ -442,21 +447,29 @@ class EdgeSaver:
             from rag.provider import generate_guidance
             
             cloud_context = context_text if config.GEMINI_SEND_LAYOUT else manual_context
+            llm_started = time.perf_counter()
             result = generate_guidance(context_text, query, cloud_context=cloud_context)
+            self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
             print(f"[AI: {result.provider} · {time.strftime('%H:%M:%S')}] ", end="", flush=True)
             if getattr(self, '_interrupt_generation', False):
                 print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
             else:
                 print(result.text, end="", flush=True)
+                tts_started = time.perf_counter()
                 self.tts.speak_async(result.text, lang=lang, speed=speed)
         except Exception as e:
             print(f"\n⚠️ [답변 생성 오류] {type(e).__name__}: {e}")
+            if llm_started is not None and not self.last_query_timings["llm_s"]:
+                self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
         finally:
             self._is_generating = False # [v28] 감시 모드 다시 활성화
         
         if not self.tts.wait_until_idle(timeout=600):
             print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
+        if tts_started is not None:
+            self.last_query_timings["tts_s"] = time.perf_counter() - tts_started
         print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
+        print(f"[시간] 검색 {self.last_query_timings['rag_s']:.3f}초 / 답변 {self.last_query_timings['llm_s']:.3f}초 / 음성 {self.last_query_timings['tts_s']:.3f}초")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)
             print(f"[참고 문헌] {sources}")

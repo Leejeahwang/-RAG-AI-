@@ -10,6 +10,7 @@ import math
 import numpy as np
 import faiss
 import pickle
+import json
 from sentence_transformers import SentenceTransformer
 try:
     from sentence_transformers.cross_encoder import CrossEncoder
@@ -18,6 +19,8 @@ except ImportError:
 from typing import List, Dict, Any
 import config
 from collections import Counter
+from rag.layout import zone_from_text
+from rag.search_intent import medical_intent, matches_medical_content
 
 class SimpleBM25:
     """
@@ -84,6 +87,9 @@ class NativeRAGManager:
         self.bm25 = None
         self.metadata = []
         self.reranker = None
+        self.last_search_status = "not_searched"
+        self.last_rerank_status = "not_searched"
+        self.index_needs_refresh = False
         self.model_name = config.NATIVE_EMBEDDING_MODEL
         self.index_dir = config.FAISS_INDEX_DIR
         self.index_file = os.path.join(self.index_dir, "index.faiss")
@@ -107,6 +113,14 @@ class NativeRAGManager:
                     self.bm25 = pickle.load(f)
             
             print(f"[NativeRAG] 로드 완료 (데이터: {len(self.metadata)}개)")
+            from rag.loader import document_fingerprint
+            manifest = os.path.join(self.index_dir, "documents.json")
+            self.index_needs_refresh = True
+            if os.path.isfile(manifest):
+                with open(manifest, encoding="utf-8") as file:
+                    self.index_needs_refresh = json.load(file) != document_fingerprint()
+            if self.index_needs_refresh:
+                print("[NativeRAG] 문서 변경 또는 갱신 기록 없음: python tools/rebuild_rag_index.py 실행 필요")
             
             # Reranker 모델 CPU 사전 로드 기작
             if getattr(config, "USE_RERANKER", False) and CrossEncoder is not None:
@@ -159,6 +173,10 @@ class NativeRAGManager:
             pickle.dump(self.metadata, f)
         with open(self.bm25_file, 'wb') as f:
             pickle.dump(self.bm25, f)
+        from rag.loader import document_fingerprint
+        with open(os.path.join(self.index_dir, "documents.json"), "w", encoding="utf-8") as file:
+            json.dump(document_fingerprint(), file, ensure_ascii=False, indent=2)
+        self.index_needs_refresh = False
         
         print(f"[NativeRAG] 인덱스 구축 및 저장 완료: {self.index_file}, {self.bm25_file}")
 
@@ -167,6 +185,22 @@ class NativeRAGManager:
         if self.index is None:
             print("[NativeRAG] 에러: 인덱스가 로드되지 않았습니다.")
             return []
+
+        self.last_search_status = "ok"
+        self.last_rerank_status = "not_applied"
+        target_zone = zone_from_text(query)
+        medical_kind = medical_intent(query)
+        exact_indices = []
+        if target_zone:
+            exact_indices = [i for i, doc in enumerate(self.metadata)
+                             if f"zone_{target_zone.lower()}_layout" in doc.get("source", "").lower()]
+            if not exact_indices:
+                self.last_search_status = "missing_zone_document"
+                print(f"[NativeRAG] {target_zone}구역 경로 문서가 인덱스에 없습니다.")
+                return []
+        elif medical_kind:
+            exact_indices = [i for i, doc in enumerate(self.metadata)
+                             if matches_medical_content(doc.get("page_content", ""), medical_kind)]
 
         # 1. FAISS 검색 수행
         query_vec = self.model.encode([query]).astype('float32')
@@ -200,6 +234,10 @@ class NativeRAGManager:
             
         sorted_candidates = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         selected_candidates = [doc_idx for doc_idx, _ in sorted_candidates[:top_k]]
+        # Explicit zone and medical evidence must survive candidate truncation.
+        selected_candidates = list(dict.fromkeys(exact_indices + selected_candidates))
+        if target_zone or (medical_kind and exact_indices):
+            selected_candidates = exact_indices
 
         # 4. 주제/장소 하드 필터링 (v28 logic porting)
         CONFLICT_MAP = {
@@ -255,7 +293,8 @@ class NativeRAGManager:
             valid_results.append(doc)
 
         if not valid_results:
-            return [self.metadata[i] for i in selected_candidates[:1]] if selected_candidates else []
+            self.last_search_status = "no_matching_documents"
+            return []
 
         # 5. 단일 소스 집중 (v24 logic)
         source_scores = Counter()
@@ -285,7 +324,7 @@ class NativeRAGManager:
             is_critical_topic_source = False
             if "아파트" in query and "아파트" in src:
                 is_critical_topic_source = True
-            elif any(k in query for k in ["숨", "CPR", "심폐", "응급"]) and any(k in src.lower() for k in ["119", "응급", "cpr", "saver"]):
+            elif medical_kind and matches_medical_content(d.get('page_content', ''), medical_kind):
                 is_critical_topic_source = True
             
             if src in winner_sources or is_matched_critical_zone or is_critical_topic_source:
@@ -293,7 +332,7 @@ class NativeRAGManager:
 
         
         # 6. 검색 의도(Intent) 기반 Lexical 리랭킹 (실전 vs 연습 구분)
-        is_medical_query = any(k in query.lower() for k in ["cpr", "심폐", "소생", "압박", "의식", "호흡", "지혈", "출혈", "골절", "부목", "상처", "응급"])
+        is_medical_query = medical_kind is not None
         
         if is_medical_query:
             intent_keywords = ["소생술", "cpr", "압박", "의식", "호흡", "지혈", "출혈", "골절", "부목", "상처", "인공호흡"]
@@ -344,7 +383,19 @@ class NativeRAGManager:
         super_final_docs = [d for score, d in reranked_docs]
         
         # 7. BGE Reranker를 통한 2차 시맨틱 정밀 리랭킹 및 Lexical 가중치 융합
-        if self.reranker is not None and super_final_docs:
+        # The bounded medical evidence path already restricts candidates by
+        # topic. Keep full neural ranking available for quality comparisons.
+        skip_medical_rerank = (
+            self.reranker is not None
+            and getattr(config, "RERANKER_POLICY", "full") == "selective"
+            and medical_kind in {"cpr", "bleeding", "injury"}
+            and bool(exact_indices) and bool(super_final_docs)
+            and all(matches_medical_content(doc.get("page_content", ""), medical_kind)
+                    for doc in super_final_docs)
+        )
+        if skip_medical_rerank:
+            self.last_rerank_status = "medical_evidence_bypass"
+        if self.reranker is not None and super_final_docs and not skip_medical_rerank:
             try:
                 # 엣지 CPU 오버헤드 방지를 위해 최정예 후보 10개 컷오프
                 candidates = super_final_docs[:10]
@@ -352,6 +403,7 @@ class NativeRAGManager:
                 
                 # 시맨틱 가중치 계산
                 bge_scores = self.reranker.predict(pairs)
+                self.last_rerank_status = "bge_applied"
                 
                 hybrid_candidates = []
                 for bge_score, doc in zip(bge_scores, candidates):
@@ -375,6 +427,7 @@ class NativeRAGManager:
                 return final_sorted_docs[:getattr(config, 'RAG_TOP_K', 4)]
             except Exception as e:
                 print(f"[NativeRAG] Reranker 추론 실패 (Lexical Fallback 가동): {e}")
+                self.last_rerank_status = "bge_failed"
                 return super_final_docs[:getattr(config, 'RAG_TOP_K', 4)]
         
         return super_final_docs[:getattr(config, 'RAG_TOP_K', 4)] # 속도와 품질의 타협점인 4개로 지식 전달량 조정

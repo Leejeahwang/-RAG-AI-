@@ -79,7 +79,7 @@ class TTSHelper:
                     break
                 
                 text, lang, speed = item if len(item) == 3 else (*item, 1.0)
-                text = self._sanitize_text(text)
+                text = self._sanitize_text(text, lang=lang)
                 if not text:
                     self._queue.task_done()
                     continue
@@ -207,9 +207,17 @@ class TTSHelper:
                         pass
                 time.sleep(1)
 
-    def _sanitize_text(self, text):
+    def _sanitize_text(self, text, lang='ko'):
         """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거 및 발음 최적화"""
         if not text: return ""
+
+        # Emergency numbers are digit names, not a cardinal quantity. Preserve
+        # quantities, decimal numbers, larger numbers and identifiers.
+        if lang == 'ko':
+            text = re.sub(
+                r'(?<![0-9A-Za-z_.])(?<!\d,)119(?![0-9A-Za-z_]|\.\d)'
+                r'(?!\s*(?:명|개|건|원|조|항|호|층|미터|킬로|센티|초|분|시간|도|퍼센트|%|℃|°|kg\b|cm\b|km\b|m\b))',
+                '일일구', text)
 
         # PDF의 짧은 제목/항목은 줄 경계를 잃으면 다음 단어와 붙어 들린다.
         # 긴 줄의 줄바꿈은 문장 중간의 자동 줄바꿈일 수 있어 공백으로만 잇는다.
@@ -233,7 +241,7 @@ class TTSHelper:
         
         # [품질 향상] 목록 번호 발음 최적화: "1." -> "1번", "2." -> "2번"
         # 묵음 현상을 방지하고 더 자연스러운 안내를 제공합니다.
-        text = re.sub(r'(\d+)\.\b', r'\1번', text)
+        text = re.sub(r'(\d+)\.(?!\d)\b', r'\1번', text)
         
         # 1. 마크다운 강조 기호(*) 및 기타 기호 제거
         text = text.replace('*', '')

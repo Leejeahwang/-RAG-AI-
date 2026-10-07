@@ -5,10 +5,26 @@
 import json
 import os
 import glob
+import hashlib
 from langchain_core.documents import Document
 from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import config
+
+
+def document_fingerprint():
+    """Track inputs actually consumed by this loader."""
+    paths = glob.glob(os.path.join(config.DATA_DIR, "**/*.txt"), recursive=True)
+    json_path = os.path.join(config.DATA_DIR, "chunked_manuals.json")
+    if os.path.isfile(json_path):
+        paths.append(json_path)
+    return {os.path.relpath(path, config.DATA_DIR).replace("\\", "/"):
+            hashlib.sha256(open_bytes(path)).hexdigest() for path in sorted(paths)}
+
+
+def open_bytes(path):
+    with open(path, "rb") as file:
+        return file.read()
 
 def load_and_split():
     """

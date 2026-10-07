@@ -1,96 +1,174 @@
-# 🍓 라즈베리파이(Raspberry Pi) 이식 가이드
+# 라즈베리파이 설치·이전 가이드
 
-지금까지 구축하신 '엣지 세이버(Edge Saver)'는 라즈베리파이 같은 엣지 디바이스에서 작동하도록 설계되었습니다. 현재 맥(Mac)에서 작동하는 이 프로젝트를 라즈베리파이로 완벽하게 이식하기 위한 단계별 가이드입니다.
+프로젝트 루트에서 실행합니다. 64비트 Raspberry Pi OS와 충분한 저장 공간을 준비하세요. Python 의존성, 모델 파일, 시스템 라이브러리는 각각 필요합니다. 아래 명령은 Pi 터미널용입니다.
 
-## 1. 필수 시스템 환경 (OS)
-> [!IMPORTANT]
-> **반드시 64-bit OS를 설치해야 합니다.** 
-> Ollama 자체와 음성 인식 모델(faster-whisper) 등 최신 AI 패키지는 32-bit를 지원하지 않습니다. 
-> * 추천 OS: **Raspberry Pi OS (64-bit)** (Bookworm 버전 권장) 또는 **Ubuntu 24.04 (64-bit)**
+## 1. 프로젝트 가져오기
 
-## 2. 코드 다운로드 (Git Clone)
-라즈베리파이 터미널을 열고 지금 깃허브에 올리신(Push) 최신 코드를 다운로드합니다.
+USB로 최신 프로젝트를 옮겼다면 해당 폴더에서 시작합니다.
+
 ```bash
-cd ~
-git clone https://github.com/Leejeahwang/-RAG-AI-.git
-cd ./-RAG-AI-
+cd /home/raspi/Desktop/SW2026-2
 ```
 
-## 3. 시스템 의존성 및 패키지 설치
-라즈베리파이는 macOS나 Windows와 달리 특정 하드웨어(오디오, GPIO) 접근을 위한 시스템 패키지를 OS 단에서 먼저 설치해 주어야 합니다.
+Git을 사용할 때는 작업 브랜치를 지정합니다. 아직 Git에 올리지 않은 PC 수정 사항은 USB로 옮겨야 합니다.
 
-### A. 오디오 및 필수 라이브러리 설치
-음성 인식(STT/마이크)과 음성 출력(TTS/스피커)을 원활하게 쓰기 위해 설치합니다.
+```bash
+cd ~/Desktop
+git clone --branch feature/RAG https://github.com/Leejeahwang/-RAG-AI-.git SW2026-2
+cd SW2026-2
+```
+
+이미 같은 이름의 폴더가 있으면 clone 대신 기존 폴더를 사용하세요.
+
+### USB에 함께 넣을 파일
+
+- 프로젝트 코드, requirements 파일, `config.py`
+- `data/` 전체, `faiss_db/` 전체(매뉴얼과 인덱스가 같은 버전이어야 함)
+- `models/ppaso/` 전체: ONNX 가중치뿐 아니라 `example/`, `runtime/`, 사전, `config.json`도 필요
+- `vision/models/`의 화재·연기 전용 모델. 기본 YOLO 모델로 대체하면 안 됨
+- Gemini를 사용할 경우 직접 관리하는 `.env`(API 키 포함, Git에 올리지 않음)
+
+Windows의 `venv`, `.venv`, `__pycache__`는 옮겨서 사용하지 않습니다. Pi에서 이미 동작하는 기존 가상환경은 원래 위치에 두고 활성화해 새 프로젝트를 실행할 수 있지만 추가 의존성은 설치해야 합니다.
+
+완전한 오프라인 실행에는 SBERT/BGE의 Hugging Face 캐시와 Ollama 모델도 필요합니다. 기본 HF 위치는 `~/.cache/huggingface/hub`이며 설정에 따라 달라집니다. 캐시를 옮길 때 실제 가중치와 링크 대상까지 포함하세요. Ollama 모델은 서비스 계정·`OLLAMA_MODELS` 설정에 따라 저장 위치가 다르므로 기존 Pi 모델을 유지하거나 온라인에서 아래 모델을 먼저 받으세요. Windows의 Python 패키지와 Ollama 실행 바이너리는 Pi용으로 다시 설치해야 합니다.
+
+## 2. 시스템 패키지
+
 ```bash
 sudo apt update
-sudo apt install -y python3-pyaudio portaudio19-dev python3-rpi.gpio flac espeak ffmpeg libespeak1 swig python3-dev
+sudo apt install -y python3-venv python3-dev build-essential git curl \
+  portaudio19-dev libsndfile1 ffmpeg libopenblas-dev libgl1 libglib2.0-0 swig
 ```
 
-### B. 파이썬 가상환경 및 패키지 설치
-라즈베리파이 OS (Bookworm 이상)에서는 가상환경 사용이 강제됩니다.
+PyAudio 빌드에는 `portaudio19-dev`가 필요합니다. 실행용 `libportaudio2`만 설치하면 개발 헤더가 부족할 수 있습니다.
+
+pyttsx3 비교 시험을 할 경우 추가 설치합니다(PPASO 합성에는 eSpeak가 필요하지 않음).
+
 ```bash
-# 가상환경 생성 및 접속
-python3 -m venv venv
-source venv/bin/activate
-
-# 깃허브에서 가져온 requirement.txt 설치
-pip install -r requirements.txt
-
-# (선택) 라즈베리파이용 하드웨어 제어 라이브러리 추가 설치
-pip install RPi.GPIO
+sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1
 ```
-> [!TIP]
-> 현재 맥에서 `⚠️ [경고] RPi.GPIO 라이브러리가 없습니다. (시뮬레이션 모드로 작동합니다)` 라는 메시지가 뜨지만, 라즈베리파이에서는 이 라이브러리가 정상적으로 깔리면서 **진짜 센서 모드**로 작동하게 됩니다!
 
-## 4. 로컬 AI 모델 (Ollama) 설치 및 구동
-라즈베리파이의 ARM 아키텍처에 맞게 Ollama를 설치하고 1.5B 모델을 올립니다.
-*(주의: 라즈베리파이 5 8GB 모델을 적극 권장합니다. 메모리가 작으면 매우 느릴 수 있습니다.)*
+## 3. 가상환경과 Python 패키지
+
+새 환경을 만드는 경우:
 
 ```bash
-# Ollama 설치
+python3 -m venv .venv
+source .venv/bin/activate
+python --version
+python -m pip install --upgrade pip wheel
+python -m pip install -r requirements_rpi.txt
+```
+
+이미 동작하는 Pi 환경을 재사용하는 경우에는 첫 두 명령 대신 그 환경의 `bin/activate`를 지정합니다. 예:
+
+```bash
+source /home/raspi/Desktop/RAG/-RAG-AI-/.venv/bin/activate
+cd /home/raspi/Desktop/SW2026-2
+python -m pip install -r requirements_rpi.txt
+```
+
+`requirements_rpi.txt`는 공통 `requirements.txt`와 GPIO 패키지를 함께 설치합니다. OpenCV 배포판을 두 개 설치하지 않도록 일반 `opencv-python`을 사용합니다. 설치가 실패하면 마지막 오류를 해결한 뒤 다시 설치하세요. FAISS의 Python 모듈은 `faiss-cpu`입니다. `libfaiss-dev`만 설치하는 것으로 Python `import faiss`를 대체할 수 없습니다.
+
+Python 3.13에서 ARM64 wheel이 없는 패키지는 소스 빌드로 넘어갈 수 있습니다. 해당 오류가 발생하면 패키지 지원 버전을 확인하고 별도 Python 3.11 환경을 고려하세요. OS에 따라 `apt install python3.11`은 제공되지 않을 수 있습니다. 현재 동작하는 환경을 지우지는 마세요. 이 목록은 버전 잠금 파일이 아니므로 새 설치의 모든 조합을 보장하지 않습니다.
+
+원본 PDF/OCR 문서를 다시 가공할 때만 추가 설치:
+
+```bash
+python -m pip install -r requirements_documents.txt
+```
+
+MeloTTS는 기본 앱의 필수 패키지가 아닙니다. 비교 시험은 별도 환경을 사용하는 방법을 [TTS_BENCHMARK.md](TTS_BENCHMARK.md)에서 확인하세요.
+
+## 4. PPASO·검색 모델 준비
+
+USB로 모델을 옮겼으면 먼저 파일을 확인합니다(다운로드 없음).
+
+```bash
+python download_models.py --target ppaso --check
+```
+
+PPASO 파일이 없을 때만 인터넷에 연결해 받습니다. 기존 런타임을 수정한 경우에는 다운로드로 덮어쓰지 말고 해당 수정본을 옮기세요.
+
+```bash
+python download_models.py --target ppaso
+python download_models.py --target rag
+```
+
+다운로드 파일은 `config.PPASO_MODEL_DIR`(기본 `models/ppaso`)에, 검색 모델은 Hugging Face 캐시에 저장됩니다. SBERT와 `USE_RERANKER=True`일 때 BGE를 준비합니다. Ollama·화재 영상 모델·STT 모델은 이 스크립트가 받지 않습니다.
+
+### MeCab 확인
+
+```bash
+python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하십시오'))"
+```
+
+`python-mecab-ko`의 호환 wheel이 있으면 native 라이브러리까지 제공됩니다. `mecab-config not found`로 소스 빌드가 실패하면 **한국어 mecab-ko**를 먼저 설치해야 합니다. 일본어용 `mecab-python3`는 PPASO 의존성을 대체하지 않습니다. [공식 설치 문서](https://python-mecab-ko.readthedocs.io/en/latest/install/)의 소스 설치 절차를 사용하세요.
+
+native mecab-ko를 가상환경 내부에 설치했다면 그 환경을 활성화하고 다음 설정 후 Python 바인딩을 설치합니다.
+
+```bash
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+python -m pip install python-mecab-ko
+```
+
+새 터미널에서도 native 라이브러리 경로가 필요할 수 있습니다. 설치 스크립트 다운로드 중 `Network is unreachable`이 뜨면 해당 호스트 연결 실패이며 설치 성공으로 볼 수 없습니다.
+
+## 5. Ollama·Gemini 설정
+
+Ollama가 없다면 [공식 설치 안내](https://ollama.com/download/linux)에 따라 설치합니다.
+
+```bash
 curl -fsSL https://ollama.com/install.sh | sh
-
-# Ollama 백그라운드 서버 실행 (이미 실행 중일 수 있음)
-# 모델 다운로드 및 실행
-ollama run qwen2.5:1.5b
+ollama pull qwen2.5:0.5b
+ollama list
 ```
-다운로드가 끝나고 프롬프트가 뜨면 `/bye`를 입력해 빠져나오세요. 이제 백그라운드에 1.5B 모델이 항시 대기 중 상태가 됩니다!
 
-## 5. 하드웨어 설정 변경 (config.py)
-이제 파일 코드를 라즈베리파이 실제 선 연결(핀 번호)에 맞게 살짝 수정해야 합니다.
+현재 답변 모델은 `qwen2.5:0.5b`입니다. 검색어 재작성이나 AI 문서 정제를 사용할 때만 `qwen2.5:1.5b`도 받으세요. Ollama 서비스가 실행되어 있어야 로컬 답변을 생성할 수 있습니다.
 
-* **GPIO 세팅:** `config.py`를 열고, 부저(Buzzer)나 LED가 연결된 실제 PIN 번동이 맞는지 확인합니다.
-  ```python
-  ALERT_BUZZER_PIN = 18
-  ALERT_LED_PIN = 23
-  ```
-* **마이크 및 스피커:** USB 마이크나 3.5mm 스피커를 꽂은 뒤 음성 인식이 잘 안 된다고 느껴지면 터미널에서 `alsamixer`를 쳐서 마이크 볼륨이 꺼져있지 않은지 확인합니다.
+기존 `.env`가 없을 때만 예시를 복사하고 편집합니다.
 
----
+```bash
+test -f .env || cp .env.example .env
+nano .env
+```
 
-## 🚀 6. 최종 실행
-모든 준비가 끝났습니다! 가상환경(`(venv)`)이 켜진 상태에서 메인 파이프라인을 기동합니다.
+`GEMINI_API_KEY`와 사용 가능한 `GEMINI_MODEL`, `AI_PROVIDER=auto` 또는 `local`을 설정합니다. API 키가 없어도 로컬 모드를 사용할 수 있습니다.
+
+## 6. 실행 전 확인
+
+```bash
+python -c "import cv2, faiss, onnxruntime, soundfile, streamlit, pandas, gpiozero; print('imports ok')"
+python download_models.py --target rag --check
+python tools/benchmark_tts.py --engines ppaso --repeats 1
+python tools/check_rag_quality.py
+python main_test.py
+```
+
+PPASO 파일 확인 성공은 음성 합성 성공을 뜻하지 않습니다. 벤치마크의 `ppaso: ok`와 생성 WAV까지 확인하세요. 실패 원인은 출력된 결과 폴더의 `ppaso/worker.log`에서 확인합니다. 스피커 재생은 `main_test.py`에서 별도로 확인합니다.
+
+문서 변경 경고가 나오면 앱을 종료하고 인덱스를 갱신합니다.
+
+```bash
+python tools/rebuild_rag_index.py
+```
+
+확인 후 통합 실행 또는 대시보드 실행:
 
 ```bash
 python main.py
-```
-이제 라즈베리파이가 센서 값을 읽어오고 열을 감지하며, 엣지 상에서 AI가 비상 상황을 판단해 안내방송을 송출하게 될 것입니다!
-
----
-
-## 🛠️ 7. 흔하게 발생하는 에러 해결 (Troubleshooting)
-
-### Q1. `RuntimeError: Cannot determine SOC peripheral base address` 에러가 뜹니다.
-라즈베리파이 5(또는 최신 Bookworm OS)에서 구형 `RPi.GPIO` 라이브러리가 새 칩셋을 인식하지 못해 발생합니다. 코드를 수정할 필요 없이, 최신 호환 패키지인 `rpi-lgpio`로 교체해 주면 깔끔하게 해결됩니다.
-```bash
-# 가상환경이 켜진 상태에서 터미널에 입력
-pip uninstall -y RPi.GPIO
-pip install rpi-lgpio
+python -m streamlit run gui/dashboard.py
 ```
 
-### Q2. 한글 글씨가 네모 박스(□□□)나 이상한 특수문자로 다 깨져서 나옵니다.
-라즈베리파이 OS는 기본적으로 영문 환경이라 한글 폰트가 빠져있어서 생기는 시각적인 현상입니다. 한글 폰트를 시스템에 설치하고 껐다 켜주시면 바로 예쁜 한글이 나옵니다.
-```bash
-sudo apt update
-sudo apt install -y fonts-nanum fonts-unfonts-core
-```
+두 명령은 실행 방법의 선택지입니다. 하드웨어 점검 시 하나씩 실행하세요. 현재 Linux에서 STT는 기본 비활성화됩니다.
+
+## 7. 실제 센서와 영상 점검
+
+- 연기·가스 센서는 `gpiozero.MCP3008`을 사용합니다. SPI 활성화, ADC 배선·채널, GPIO 접근 권한을 확인하세요. Pi 설정에서 SPI를 활성화하고 재부팅합니다.
+- 온도 센서 코드(`sensors/temperature.py`)는 현재 `Adafruit_DHT.DHT11`과 GPIO 4를 사용합니다. DHT22로 설명한 옛 가이드는 맞지 않습니다. 이 구형 드라이버의 Pi 5 지원은 별도 검증·수정이 필요합니다. 패키지 설치만으로 실제 센서 동작을 보장하지 않습니다.
+- 센서 라이브러리가 없거나 읽기에 실패하면 일부 코드가 모의 값을 반환합니다. 앱이 켜지는 것만으로 센서 정상 동작을 판단하지 마세요.
+- 현재 사이렌은 pygame 오디오 출력입니다. 옛 가이드의 `ALERT_BUZZER_PIN`, `ALERT_LED_PIN`은 현재 설정 항목이 아닙니다.
+- `vision/fire_detector.py`는 존재하는 모델 중 OpenVINO 변환본을 먼저 선택합니다. 각 변환 형식의 실행 라이브러리는 별도입니다. Pi에서 해당 형식을 실행할 수 있는지 확인하고, 필요하면 `.pt` 모델만 있는 배포 폴더를 준비하세요. OpenVINO가 항상 Pi에서 동작한다고 가정하지 마세요.
+
+폰트가 깨지면 `sudo apt install fonts-nanum`을 사용합니다. 모델·센서·스피커 확인은 실제 Pi에서 수행해야 합니다.

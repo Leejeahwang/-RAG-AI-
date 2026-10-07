@@ -288,14 +288,19 @@ class EdgeSaverTest:
     def _process_query(self, query, lang):
         print("\n[분석] 대응 지침 생성 중...")
         start_t = time.time()
+        self.last_query_timings = {"rag_s": 0.0, "llm_s": 0.0, "tts_s": 0.0}
+        rag_started = time.perf_counter()
+        tts_started = None
+        llm_started = None
         
         from rag.native_retriever import rag_manager
         # 검색은 로컬 인덱스에서 수행하되, 온라인 Gemini 사용 시
         # Ollama 키워드 추출을 기다리지 않도록 원본 질문을 그대로 검색한다.
         search_query = query
             
-        # BGE-Base Reranker가 내부적으로 자동 작동하여 상위 4개 엄선
+        # 검색 정책에 따라 BGE를 적용하거나 명확한 의료 근거에서는 생략한다.
         source_docs = rag_manager.search(search_query)
+        self.last_query_timings["rag_s"] = time.perf_counter() - rag_started
         
         cleaned_chunks = []
         seen_sources = set()  
@@ -330,24 +335,32 @@ class EdgeSaverTest:
             from rag.provider import generate_guidance
             
             cloud_context = context_text if config.GEMINI_SEND_LAYOUT else manual_context
+            llm_started = time.perf_counter()
             result = generate_guidance(context_text, query, cloud_context=cloud_context)
+            self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
             print(f"[AI: {result.provider} · {time.strftime('%H:%M:%S')}] ", end="", flush=True)
             if getattr(self, '_interrupt_generation', False):
                 print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
             else:
                 print(result.text, end="", flush=True)
+                tts_started = time.perf_counter()
                 self.tts.speak_async(result.text, lang=lang, speed=speed)
         except Exception as e:
             print(f"\n⚠️ [답변 생성 오류] {type(e).__name__}: {e}")
+            if llm_started is not None and not self.last_query_timings["llm_s"]:
+                self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
         finally:
             self._is_generating = False 
         
         if not self.tts.wait_until_idle(timeout=600):
             print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
+        if tts_started is not None:
+            self.last_query_timings["tts_s"] = time.perf_counter() - tts_started
         print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
+        print(f"[시간] 검색 {self.last_query_timings['rag_s']:.3f}초 / 답변 {self.last_query_timings['llm_s']:.3f}초 / 음성 {self.last_query_timings['tts_s']:.3f}초")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)
-            print(f"[참고 문헌 (BGE-Base Reranker 정렬 적용)] {sources}")
+            print(f"[참고 문헌 · 검색 처리: {rag_manager.last_rerank_status}] {sources}")
         print("-" * 55)
 
     def run(self):
