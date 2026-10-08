@@ -101,6 +101,8 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         if require_quotes else
         "질문에 관련된 내용을 요약하고 자연스러운 한국어로 바꾸어 설명해도 됩니다. "
         "핵심 행동을 최대 6개의 짧은 항목으로 안내하고 서론은 생략하십시오. "
+        "같은 조건에서 같은 행동은 한 번만 설명하고 비슷한 문장을 반복하지 마십시오. "
+        "공통 행동은 묶되, 대피 가능 여부나 화재 위치 등 조건이 다른 지침은 구분해서 유지하십시오. "
     )
     payload = {
         "systemInstruction": {"parts": [{"text": (

@@ -29,6 +29,8 @@ class ProviderTests(unittest.TestCase):
         self.assertFalse(provider._is_grounded("물을 사용", "물을 사용하지 마십시오."))
         self.assertFalse(provider._is_grounded("**", "매뉴얼"))
 
+    @patch.object(config, "GEMINI_CONNECT_TIMEOUT", 5)
+    @patch.object(config, "GEMINI_READ_TIMEOUT", 15)
     @patch.object(config, "GEMINI_MAX_OUTPUT_TOKENS", 1024)
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")
@@ -43,6 +45,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.text, "안전한 곳으로 대피하십시오.")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
         self.assertEqual(post.call_args.kwargs["json"]["generationConfig"]["maxOutputTokens"], 1024)
+        self.assertEqual(post.call_args.kwargs["timeout"], (5, 15))
         local.assert_not_called()
 
     @patch.object(config, "AI_PROVIDER", "auto")
@@ -95,6 +98,8 @@ class ProviderTests(unittest.TestCase):
         local.assert_not_called()
         prompt = post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"]
         self.assertIn("요약", prompt)
+        self.assertIn("같은 행동은 한 번만", prompt)
+        self.assertIn("조건이 다른 지침은 구분", prompt)
 
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")

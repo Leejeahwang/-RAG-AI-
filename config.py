@@ -25,8 +25,8 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해
 AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").lower()  # auto | gemini | local
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_CONNECT_TIMEOUT = float(os.getenv("GEMINI_CONNECT_TIMEOUT", "2"))
-GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "8"))
+GEMINI_CONNECT_TIMEOUT = float(os.getenv("GEMINI_CONNECT_TIMEOUT", "5"))
+GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "15"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "2048"))
 GEMINI_RETRY_COOLDOWN = float(os.getenv("GEMINI_RETRY_COOLDOWN", "60"))
 GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "false").lower() == "true"
