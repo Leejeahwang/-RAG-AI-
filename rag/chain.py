@@ -28,12 +28,15 @@ def call_ollama_native(prompt, system_prompt="", context="", question="", is_eme
     if is_emergency:
         # 긴급 화재 안내를 위한 극단적 요약 프롬프트
         combined_prompt = (
-            "너는 재난 대응 전문가인 '엣지 세이버'야. 화재 상황이 발생했어.\n"
-            "제공된 [참고 매뉴얼]을 바탕으로 아래의 3가지 항목 형식으로만 답변을 작성해.\n"
-            "인사말, 주의 문구, 부가 설명 등 잡다한 군더더기 내용은 전부 생략하고, 오직 아래 번호의 형식으로만 간결하게 한두 문장씩 작성해줘.\n\n"
-            "1. 화재 발생, 화재 발생 종류, 화재 발생 장소\n"
-            "2. 종류에 맞는 화재 대치 방법, 관련 소방 제품 위치\n"
-            "3. 대피경로, 대피로\n\n"
+            "너는 재난 대응 전문가 '엣지 세이버'야. 화재 상황이 발생했어.\n"
+            "제공된 [참고 매뉴얼]을 바탕으로 아래의 3가지 항목 형식으로만 답변을 작성하십시오. 다른 인사말이나 잡다한 군더더기 설명은 절대 하지 마십시오.\n\n"
+            "1. 화재 발생 종류 및 장소:\n"
+            "2. 대피 경로 및 대피로:\n"
+            "3. 종류에 맞는 화재 대치 방법 및 관련 소방 제품 위치:\n\n"
+            "[작성 규칙]\n"
+            "- 1번 항목에는 화재 발생 구역과 종류를 작성합니다.\n"
+            "- 2번 항목에는 대피 경로, 비상계단, 대피로 정보만 작성합니다. (소화기 정보 작성 금지)\n"
+            "- 3번 항목에는 초기 대처 방법, 물 사용 금지 여부, 소화기 위치 정보만 작성합니다. (대피로 정보 작성 금지)\n\n"
             f"[참고 매뉴얼]\n{prompt}\n\n"
             f"상황 질문: {question}\n\n"
             "답변:"
@@ -55,19 +58,26 @@ def call_ollama_native(prompt, system_prompt="", context="", question="", is_eme
         {"role": "user", "content": combined_prompt}
     ]
 
+    options = {
+        "temperature": 0.1,
+        "repeat_penalty": 1.15,   # [Option A 적용] 무한 반복 앵무새 버그를 억제하기 위해 페널티 재강화
+        "num_predict": 800,       # [길이 제한 해제] 긴 매뉴얼 답변이 잘리지 않도록 300자에서 800자로 대폭 확장
+        "num_ctx": 2048,
+        "num_thread": 4,
+        "use_mlock": True
+    }
+
+    if is_emergency:
+        options["repeat_penalty"] = 1.30
+        options["stop"] = ["4.", "4. ", "\n\n\n"]
+        options["num_predict"] = 400
+
     payload = {
         "model": config.LLM_MODEL,
         "messages": messages,
         "stream": True,
         "keep_alive": "24h",
-        "options": {
-            "temperature": 0.1,
-            "repeat_penalty": 1.15,   # [Option A 적용] 무한 반복 앵무새 버그를 억제하기 위해 페널티 재강화
-            "num_predict": 800,       # [길이 제한 해제] 긴 매뉴얼 답변이 잘리지 않도록 300자에서 800자로 대폭 확장
-            "num_ctx": 2048,
-            "num_thread": 4,
-            "use_mlock": True
-        }
+        "options": options
     }
     
     try:

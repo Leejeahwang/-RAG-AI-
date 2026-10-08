@@ -12,6 +12,11 @@ import os
 import time
 import datetime
 import threading
+import platform
+import subprocess
+import numpy as np
+import config
+
 try:
     from vision.fire_detector import detect_fire
 except ModuleNotFoundError:
@@ -23,6 +28,7 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 # 전역 변수: 항상 최신 프레임을 1개만 기억
 latest_frame = None
 camera_running = True
+camera_offline = False
 
 # PC에서 테스트할 때 카메라 화면을 띄워보고 싶다면 True 로 변경하세요!
 # 라즈베리파이(서버) 환경으로 넘어갈 때는 무조건 False 여야 합니다.
@@ -70,80 +76,130 @@ def camera_worker_thread():
     """
     아무리 AI 추론이 느려져도 카메라 영상이 '지연(Lag)' 되지 않도록,
     계속해서 센서의 최신 화면만 덮어쓰기하는 백그라운드 스레드입니다.
+    - macOS: AVFOUNDATION 백엔드로 즉시 연동 (인덱스 1)
+    - Linux: GStreamer -> V4L2 -> 기본 폴백 시도 후, 최종 실패 시 rpicam-jpeg 명령어로 구동
     """
-    global latest_frame, camera_running
+    global latest_frame, camera_running, camera_offline
     
     cap = None
     success = False
+    use_rpicam = False
+    is_linux = (platform.system() == 'Linux')
     
-    # 1. GStreamer 우선 시도
-    gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
-    try:
-        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-        success, _ = try_read_frame(cap)
+    if not is_linux:
+        # 🍏 macOS 환경: 타 백엔드를 타지 않고 AVFOUNDATION으로 즉시 다이렉트 연동
+        try:
+            cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+            success, _ = try_read_frame(cap)
+            if not success:
+                if cap:
+                    cap.release()
+                cap = None
+        except Exception as e:
+            print(f"⚠️ macOS 카메라 초기화 실패: {e}")
+            if cap:
+                cap.release()
+            cap = None
+    else:
+        # 🐧 리눅스(라즈베리파이) 환경: 순차 폴백 시도
+        # 1. GStreamer 우선 시도
+        gst_pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, format=RGB ! videoconvert ! appsink drop=true"
+        try:
+            cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+            success, _ = try_read_frame(cap)
+            if not success:
+                cap.release()
+                cap = None
+        except Exception:
+            if cap:
+                cap.release()
+            cap = None
+            
+        # 2. V4L2 드라이버로 폴백 시도
         if not success:
-            cap.release()
-            cap = None
-    except Exception:
-        if cap:
-            cap.release()
-        cap = None
-        
-    # 2. V4L2 드라이버로 폴백 시도
-    if not success:
-        try:
-            cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-            success, _ = try_read_frame(cap)
-            if not success:
-                cap.release()
+            try:
+                cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_V4L2)
+                success, _ = try_read_frame(cap)
+                if not success:
+                    cap.release()
+                    cap = None
+            except Exception:
+                if cap:
+                    cap.release()
                 cap = None
-        except Exception:
-            if cap:
-                cap.release()
-            cap = None
-            
-    # 3. 기본 VideoCapture(0) 폴백 시도
-    if not success:
-        try:
-            cap = cv2.VideoCapture(0)
-            success, _ = try_read_frame(cap)
-            if not success:
-                cap.release()
+                
+        # 3. 기본 VideoCapture 폴백 시도
+        if not success:
+            try:
+                cap = cv2.VideoCapture(config.CAMERA_INDEX)
+                success, _ = try_read_frame(cap)
+                if not success:
+                    cap.release()
+                    cap = None
+            except Exception:
+                if cap:
+                    cap.release()
                 cap = None
-        except Exception:
-            if cap:
-                cap.release()
-            cap = None
             
+    # 4. 라즈베리파이 5 전용 rpicam-jpeg 도구 폴백 판단
     if not success or cap is None:
-        print("❌ [에러] 카메라 디바이스를 열 수 없습니다.")
-        camera_running = False
-        return
+        if is_linux:
+            print("⚠️ [경고] OpenCV로 카메라 장치를 열 수 없습니다. 라즈베리파이 5 전용 'rpicam-jpeg' 백엔드로 전환합니다.")
+            use_rpicam = True
+            camera_offline = False
+        else:
+            print("❌ [에러] 카메라 디바이스를 열 수 없습니다. 감시 기능 없이 센서 모드로 작동합니다.")
+            camera_offline = True
+            camera_running = False
+            return
+    else:
+        camera_offline = False
         
     print("📷 [백그라운드] 카메라 수집 스레드가 켜졌습니다. (화면이 뜨지 않습니다)")
     
+    rpicam_fail_count = 0
+    
     while camera_running:
-        success_read, frame = try_read_frame(cap)
-        if success_read and frame is not None:
-            # 해상도를 640 너비로 리사이즈 (저장 및 AI 처리 속도 향상)
-            h, w = frame.shape[:2]
-            target_w = 640
-            target_h = int(h * (target_w / w))
-            resized_frame = cv2.resize(frame, (target_w, target_h))
-            
-            latest_frame = resized_frame
-            
-            # PC 테스트용 디버그 화면 (빠른 화면 갱신을 위해 스레드 내부에서 처리)
-            if DEBUG_MODE:
-                cv2.imshow("CCTV_DEBUG_PREVIEW", resized_frame)
-                # 'q' 키를 누르면 프로세스 완전 종료
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("\n🛑 q 키 입력 감지! 무인 감시 모드를 강제 종료합니다.")
-                    os._exit(0)
+        if not use_rpicam:
+            success_read, frame = try_read_frame(cap)
+            if success_read and frame is not None:
+                # 해상도를 640 너비로 리사이즈
+                h, w = frame.shape[:2]
+                target_w = 640
+                target_h = int(h * (target_w / w))
+                resized_frame = cv2.resize(frame, (target_w, target_h))
+                latest_frame = resized_frame
+            else:
+                time.sleep(0.1)
         else:
-            time.sleep(0.1) # 프레임 깨짐/CPU 독점 방지
+            try:
+                # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (라즈베리파이 5 최적화)
+                cmd = ["rpicam-jpeg", "-t", "1", "-n", "-o", "-", "--width", "640", "--height", "480"]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                
+                if result.returncode == 0 and result.stdout:
+                    image_array = np.frombuffer(result.stdout, dtype=np.uint8)
+                    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        latest_frame = frame
+                        rpicam_fail_count = 0  # 성공 시 카운트 리셋
+                else:
+                    raise FileNotFoundError("rpicam-jpeg returned non-zero code or empty stdout")
+            except Exception as e:
+                rpicam_fail_count += 1
+                if rpicam_fail_count <= 3:
+                    print(f"❌ [에러] rpicam 캡처 실패: {e}")
+                elif rpicam_fail_count == 4:
+                    print("❌ [에러] rpicam 캡처 오류가 계속되어 로그 출력을 제한하고 대기 주기를 늘립니다.")
+                
+                sleep_time = 5.0 if rpicam_fail_count > 3 else 0.5
+                time.sleep(sleep_time)
+                continue
+                
+            time.sleep(0.5)
             
-    cap.release()
+    if not use_rpicam and cap is not None and cap.isOpened():
+        cap.release()
 
 def start_cctv_service(scan_interval_sec=5):
     """
