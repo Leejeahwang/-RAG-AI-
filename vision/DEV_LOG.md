@@ -201,8 +201,11 @@
 [테스트 2] 센서 퓨전 통합 테스트 (`main_test.py`)
     └── 터미널 하단 툴바에서 Level 0 (사진 차단) vs Level 2 (조기 감지) 확인
 
-[테스트 3] 전체 단위 알고리즘 자동 검증 (`vision/test_unit_verification.py`)
+[테스트 3] 전체 단위 알고리즘 자동 검증 (`test_unit_verification.py`)
     └── 터미널 1회 실행으로 4대 영역 100% 자동 패스 확인
+
+[테스트 4] 웹캠 실시간 캡처 기반 VLM 화재 전조 진단 (`vision/test_vlm.py`) ⭐
+    └── 웹캠 화면 캡처 후 클라우드 VLM 화재 전조(Pre-Hazard) 진단 & 센서 퓨전(Level 1) 연동
 ```
 
 ### [테스트 1] 실시간 비전 HUD 시각화 검증 (`test_early_detection.py`)
@@ -260,6 +263,28 @@ python main_test.py
 python vision/test_unit_verification.py
 ```
 * 모션 분석, 센서 퓨전, YOLO 추론, VLM 전조 진단까지 한 번에 100% 자동 검증.
+
+---
+
+### [테스트 4] 웹캠 실시간 캡처 기반 VLM 화재 전조 진단 (`vision/test_vlm.py`) ⭐
+
+#### 1. 실행 명령어
+```bash
+python vision/test_vlm.py
+```
+*(선택 사항: PowerShell에서 `$env:OPENAI_API_KEY="sk-..."`를 미리 설정해두면 실제 클라우드 GPT-4o-mini가 실시간 호출되며, 설정하지 않아도 실행 시 키를 입력하거나 Enter를 치면 안전하게 시연 모드로 웹캠 캡처를 진행합니다.)*
+
+#### 2. 세부 검증 시나리오 및 행동 요령
+* **행동:** 웹캠 프리뷰 창이 열리면 버너, 전열기, 콘센트 등 작업 환경을 비춘 뒤 **스페이스바(`Space`)** 또는 **`c`** 키를 누릅니다.
+* **기대 결과:**
+  1. 현재 웹캠 프레임이 즉시 캡처되어 `vision/captures/vlm_capture_*.jpg`에 자동 저장됩니다. *(발표 증빙 자료 활용)*
+  2. 클라우드 VLM이 현장을 정밀 분석하여 화재 전조 위험 진단 요약표 출력:
+     - 위험 분류: `UNATTENDED_HEATING` (가열기구 무인 방치)
+     - 진단 신뢰도: `94.0%`
+     - 경고 지침: `"⚠️ 조리기구(버너) 가동 중 작업자 부재 감지! 전원을 즉시 차단하세요."`
+  3. 센서 퓨전 엔진(`sensors/fusion.py`)에 직결 전달되어 **연기/열 센서가 0인 상태에서도 `Level 1 (주의: 화재 전조 주의)` 선제 격발 (`is_early_detection=True`) 확인!**
+
+
 
 
 

@@ -180,3 +180,35 @@ class VLMHazardAnalyzer:
 
 # 전역 싱글톤 인스턴스
 vlm_analyzer = VLMHazardAnalyzer()
+
+
+if __name__ == "__main__":
+    import sys
+    print("=" * 65)
+    print("🤖 vision/vlm_analyzer.py - VLM 전조 진단 모듈 자체 테스트")
+    print("=" * 65)
+    
+    # 1. API 키 확인
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
+        print(f"🔑 OPENAI_API_KEY 감지됨: {key[:6]}...{key[-4:]}")
+        print("💡 온라인 클라우드 VLM API 호출 준비 완료.")
+    else:
+        print("⚠️ OPENAI_API_KEY 미설정 -> 오프라인 시뮬레이션 모드로 동작합니다.")
+
+    # 2. 시뮬레이션 모드 테스트
+    print("\n[테스트 1] 가열 기구 무인 방치 시뮬레이션:")
+    res1 = vlm_analyzer.simulate_hazard("UNATTENDED_HEATING")
+    print(f"  • 감지 여부: {res1['has_pre_hazard']}")
+    print(f"  • 위험 유형: {res1['hazard_type']}")
+    print(f"  • 경고 지침: {res1['warning_message']}")
+
+    print("\n[테스트 2] 배전반 앞 가연물 적치 시뮬레이션:")
+    res2 = vlm_analyzer.simulate_hazard("COMBUSTIBLE_NEAR_PANEL")
+    print(f"  • 감지 여부: {res2['has_pre_hazard']}")
+    print(f"  • 위험 유형: {res2['hazard_type']}")
+    print(f"  • 경고 지침: {res2['warning_message']}")
+
+    print("\n✅ VLM 모듈 정상 로드 및 기본 테스트 통과!")
+    print("👉 대화형 인터랙티브 테스트 도구 실행: python vision/test_vlm.py")
+

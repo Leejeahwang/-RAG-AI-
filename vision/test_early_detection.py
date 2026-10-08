@@ -26,6 +26,8 @@ if ROOT_DIR not in sys.path:
 
 from ultralytics import YOLO
 from vision.smoke_motion import SmokeMotionAnalyzer, MotionAnalysisResult
+from vision.vlm_analyzer import vlm_analyzer
+
 
 # 지원하는 모델 목록 (인식률이 높은 최신 모델 우선 탐색)
 MODEL_DIR = os.path.join(ROOT_DIR, "vision", "models")
@@ -432,6 +434,19 @@ def main():
             save_path = os.path.join(save_dir, f"test_capture_{int(time.time())}.jpg")
             cv2.imwrite(save_path, display_frame)
             print(f"📸 현재 화면이 저장되었습니다: {save_path}")
+        elif key == ord('v'):
+            print("\n" + "=" * 65)
+            print("🤖 [VLM 화재 전조 진단 요청] 현재 웹캠 화면 분석 요청 중...")
+            vlm_res = vlm_analyzer.analyze_frame_online(frame)
+            if not vlm_res.get("has_pre_hazard") and vlm_res.get("warning_message") == "VLM_API_KEY_NOT_SET":
+                print("💡 (OPENAI_API_KEY 미설정 -> 가열기구 방치 시뮬레이션으로 시연 진단)")
+                vlm_res = vlm_analyzer.simulate_hazard("UNATTENDED_HEATING")
+            print(f"  • 감지 여부: {vlm_res.get('has_pre_hazard')}")
+            print(f"  • 위험 분류: {vlm_res.get('hazard_type')}")
+            print(f"  • 경고 지침: {vlm_res.get('warning_message')}")
+            print(f"  • 상세 내용: {vlm_res.get('description')}")
+            print("=" * 65 + "\n")
+
 
     cap.release()
     cv2.destroyAllWindows()
