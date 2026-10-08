@@ -206,7 +206,7 @@ class EdgeSaverTest:
             )
         return HTML(
             f'<style bg="ansiblue" fg="white">'
-            f' [EDGE SAVER TEST - RERANKER {"ON" if config.USE_RERANKER else "OFF"}] | AI: {ai_mode_label()} | '
+            f' [EDGE SAVER TEST] | AI: {ai_mode_label()} | '
             f'{self.current_risk_stats}'
             f'</style>'
         )
