@@ -302,23 +302,10 @@ class EdgeSaverTest:
         source_docs = rag_manager.search(search_query)
         self.last_query_timings["rag_s"] = time.perf_counter() - rag_started
         
-        cleaned_chunks = []
-        seen_sources = set()  
-        for doc in source_docs:
-            src = doc.get('source', '')
-            if src:
-                if src in seen_sources:
-                    continue
-                seen_sources.add(src)
-                
-            lines = doc.get('page_content', '').split('\n')
-            clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-            cleaned_content = "\n".join(clean_lines).strip()
-            if cleaned_content:
-                cleaned_chunks.append(cleaned_content)
+        from rag.context import build_manual_context
+        manual_context = build_manual_context(source_docs)
         from rag.layout import layout_for_question
         layout_text = layout_for_question(query)
-        manual_context = "\n\n".join(cleaned_chunks)
         context_text = layout_text + manual_context
         
         # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)

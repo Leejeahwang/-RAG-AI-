@@ -264,12 +264,8 @@ class EdgeSaver:
             # 위험 상황에 맞는 매뉴얼 검색
             source_docs = rag_manager.search(prompt)
             
-            # 메타데이터 헤더 삭제 (앵무새 방지)
-            cleaned_chunks = []
-            for doc in source_docs:
-                lines = doc.get('page_content', '').split('\n')
-                clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-                cleaned_chunks.append("\n".join(clean_lines))
+            from rag.context import build_manual_context
+            manual_context = build_manual_context(source_docs)
             
             # [평면도 주입] 선택된 Zone의 평면도를 컨텍스트 맨 위(1순위)에 강제 주입
             layout_text = ""
@@ -278,9 +274,9 @@ class EdgeSaver:
                 with open(layout_path, "r", encoding="utf-8") as f:
                     layout_text = f"[현재 현장 평면도 및 대피로]\n{f.read()}\n\n"
                     
-            context_text = layout_text + "\n\n".join(cleaned_chunks)
+            context_text = layout_text + manual_context
             
-            cloud_context = context_text if config.GEMINI_SEND_LAYOUT else "\n\n".join(cleaned_chunks)
+            cloud_context = context_text if config.GEMINI_SEND_LAYOUT else manual_context
             result = generate_guidance(context_text, prompt, emergency=True, cloud_context=cloud_context)
             ai_response = result.text
             print(f"[AI 공급자 {time.strftime('%H:%M:%S')}] {result.provider}" + (f" (전환: {result.fallback_reason})" if result.fallback_reason else ""))
@@ -413,24 +409,10 @@ class EdgeSaver:
         source_docs = rag_manager.search(search_query)
         self.last_query_timings["rag_s"] = time.perf_counter() - rag_started
         
-        # LLM 앵무새 증후군 방지: 컨텍스트 내의 메타데이터 헤더([위치:], [출처:]) 텍스트 강제 삭제
-        cleaned_chunks = []
-        seen_sources = set()  # 동일 소스 파일 중복 방지 필터 (Attention Bloat 차단)
-        for doc in source_docs:
-            src = doc.get('source', '')
-            if src:
-                if src in seen_sources:
-                    continue
-                seen_sources.add(src)
-                
-            lines = doc.get('page_content', '').split('\n')
-            clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-            cleaned_content = "\n".join(clean_lines).strip()
-            if cleaned_content:
-                cleaned_chunks.append(cleaned_content)
+        from rag.context import build_manual_context
+        manual_context = build_manual_context(source_docs)
         from rag.layout import layout_for_question
         layout_text = layout_for_question(query)
-        manual_context = "\n\n".join(cleaned_chunks)
         context_text = layout_text + manual_context
         
         # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)
