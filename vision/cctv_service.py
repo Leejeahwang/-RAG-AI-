@@ -170,7 +170,7 @@ def camera_worker_thread():
                 resized_frame = cv2.resize(frame, (target_w, target_h))
                 latest_frame = resized_frame
             else:
-                time.sleep(0.1)
+                time.sleep(0.01)
         else:
             try:
                 # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (라즈베리파이 5 최적화)
@@ -196,7 +196,8 @@ def camera_worker_thread():
                 time.sleep(sleep_time)
                 continue
                 
-            time.sleep(0.5)
+            time.sleep(0.02)  # 불필요한 0.5초 대기 제거하여 프레임 갱신율 극대화
+
             
     if not use_rpicam and cap is not None and cap.isOpened():
         cap.release()

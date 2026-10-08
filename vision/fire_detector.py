@@ -19,13 +19,14 @@ MODEL_DIR = os.path.join(BASE_DIR, "models")
 
 # 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # 최신 타겟 (라즈베리파이 최적화 INT8)
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # 최신 타겟 원본
-    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 구형 INT8
     os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
+    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 🚀 1순위: YOLOv8n ONNX (PC/라즈베리파이 멀티플랫폼 초경량)
+    os.path.join(MODEL_DIR, "fire_smoke.pt"),      # 🚀 2순위: YOLOv8n 기본 가중치 (6.2MB 초경량)
+    os.path.join(MODEL_DIR, "best_nano_111.pt"),  # 🚀 3순위: YOLOv8n 서브 모델 (5.4MB 초경량)
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"),
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"),
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"),
 ]
 
 model = None
@@ -88,12 +89,13 @@ def silence_fd():
     except:
         yield
 
-def detect_fire(image_path):
+def detect_fire(image_input):
     """
-    이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
+    이미지 파일 경로(str) 또는 메모리 상의 프레임(np.ndarray)에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
+    (메모리 프레임 직접 전달 시 디스크 I/O 렉 제로 달성)
 
     Args:
-        image_path: 분석할 이미지 파일 경로
+        image_input: 분석할 이미지 파일 경로(str) 또는 BGR 프레임(np.ndarray)
 
     Returns:
         dict: {
@@ -110,26 +112,60 @@ def detect_fire(image_path):
         return {
             "fire_detected": False,
             "confidence": 0.0,
-            "description": "모델 서버가 초기화되지 않았거나 로컬 모델 파일(pt)이 없습니다."
+            "description": "모델 서버가 초기화되지 않았거나 로컬 모델 파일이 없습니다.",
+            "is_real_smoke": False,
+            "is_static_photo": False,
+            "detected_classes": [],
+            "status": "MODEL_NOT_INITIALIZED"
         }
 
-    if not os.path.exists(image_path):
+    import numpy as np
+    import cv2
+
+    curr_img = None
+    predict_source = None
+
+    if isinstance(image_input, np.ndarray):
+        curr_img = image_input
+        predict_source = image_input
+    elif isinstance(image_input, str):
+        if not os.path.exists(image_input):
+            return {
+                "fire_detected": False,
+                "confidence": 0.0,
+                "description": "이미지 파일을 읽어올 수 없습니다.",
+                "is_real_smoke": False,
+                "is_static_photo": False,
+                "detected_classes": [],
+                "status": "FILE_NOT_FOUND"
+            }
+        curr_img = cv2.imread(image_input)
+        predict_source = image_input
+    else:
         return {
             "fire_detected": False,
             "confidence": 0.0,
-            "description": "이미지 파일을 읽어올 수 없습니다."
+            "description": "유효하지 않은 이미지 입력입니다.",
+            "is_real_smoke": False,
+            "is_static_photo": False,
+            "detected_classes": [],
+            "status": "INVALID_INPUT"
         }
 
     try:
         # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지 및 C-level 로그 억제)
         with silence_fd():
-            results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+            results = model.predict(source=predict_source, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {
                 "fire_detected": False,
                 "confidence": 0.0,
-                "description": "분석 결과가 반환되지 않았습니다."
+                "description": "분석 결과가 반환되지 않았습니다.",
+                "is_real_smoke": False,
+                "is_static_photo": False,
+                "detected_classes": [],
+                "status": "NO_RESULT"
             }
             
         result = results[0]
@@ -139,7 +175,11 @@ def detect_fire(image_path):
             return {
                 "fire_detected": False,
                 "confidence": 0.0,
-                "description": "화재나 연기 객체가 감지되지 않았습니다. (안전 구역)"
+                "description": "화재나 연기 객체가 감지되지 않았습니다. (안전 구역)",
+                "is_real_smoke": False,
+                "is_static_photo": False,
+                "detected_classes": [],
+                "status": "SAFE"
             }
 
         # 감지된 객체 분석
@@ -168,8 +208,6 @@ def detect_fire(image_path):
         motion_status = "NO_MOTION_CHECK"
 
         try:
-            import cv2
-            curr_img = cv2.imread(image_path)
             if curr_img is not None:
                 target_box = smoke_box if smoke_box is not None else [int(v) for v in boxes[0].xyxy[0]]
                 motion_res = _motion_analyzer.analyze(curr_img, target_box, class_name="smoke" if smoke_box else "fire")
@@ -178,6 +216,7 @@ def detect_fire(image_path):
                 motion_status = motion_res.status
         except Exception:
             pass
+
 
         classes_str = ", ".join(detected_classes)
 

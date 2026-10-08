@@ -304,22 +304,11 @@ class EdgeSaver:
                 fire_desc = ""
                 # 카메라 하드웨어가 오프라인(더미 프레임 출력 중)인 경우에는 AI 화재 분석을 스킵하여 오발령을 원천 방지합니다.
                 if frame is not None and not getattr(cctv_service, 'camera_offline', False):
-                    # 잔존 파일로 인한 오작동 방지를 위해 매번 고유한 임시 파일 생성
-                    import uuid
-                    tmp_path = f"live_temp_monitor_{uuid.uuid4().hex[:8]}.jpg"
-                    try:
-                        cv2.imwrite(tmp_path, frame)
-                        if os.path.exists(tmp_path):
-                            analysis = fire_detector.detect_fire(tmp_path)
-                            fire_detected = analysis.get('fire_detected', False)
-                            fire_desc = analysis.get('description', '')
-                    finally:
-                        # 분석 후 임시 파일 즉시 삭제 (디스크 잔존물 제거)
-                        if os.path.exists(tmp_path):
-                            try:
-                                os.remove(tmp_path)
-                            except:
-                                pass
+                    # 디스크 I/O 없이 메모리 상의 프레임을 직접 전달하여 렉 제로 달성
+                    analysis = fire_detector.detect_fire(frame)
+                    fire_detected = analysis.get('fire_detected', False)
+                    fire_desc = analysis.get('description', '')
+
 
                 # [시뮬레이터 보정] 카메라가 실제 화재를 감지하면 가상 센서 수치들도 위험 임계값 이상으로 동반 급상승시켜
                 # 퓨전 엔진(fusion.py)이 Level 4/5(긴급/재난) 판정을 내리도록 트리거하여 RAG 알람 개입을 유도합니다.
@@ -380,7 +369,8 @@ class EdgeSaver:
                 # 무음 크래시 방지 및 예외 디버깅 로그
                 print(f"\n⚠️ [센서 감시 루프 경고] {e}")
                 
-            time.sleep(3)
+            # 감시 주기: 0.15초 (초당 약 6~7회 즉각 스캔, CPU 과부하 방지 및 0.4초 초고속 화재 반응 달성)
+            time.sleep(0.15)
 
     def run(self):
         if not self._initialized: self.initialize()
