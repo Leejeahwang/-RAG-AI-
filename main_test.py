@@ -347,7 +347,7 @@ class EdgeSaverTest:
         print(f"[시간] 검색 {self.last_query_timings['rag_s']:.3f}초 / 답변 {self.last_query_timings['llm_s']:.3f}초 / 음성 {self.last_query_timings['tts_s']:.3f}초")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)
-            print(f"[참고 문헌 · 검색 처리: {rag_manager.last_rerank_status}] {sources}")
+            print(f"[참고 문헌] {sources}")
         print("-" * 55)
 
     def run(self):
