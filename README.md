@@ -20,6 +20,8 @@
 
 **라즈베리파이 설치·USB 이전은 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 따르세요.** Pi에서는 가상환경에서 `python -m pip install -r requirements_rpi.txt`를 사용합니다. 이 파일은 공통 의존성과 GPIO 패키지를 함께 설치합니다.
 
+Pi의 새 가상환경에서는 `python -m pip install -r requirements_torch_cpu.txt`로 CPU PyTorch를 먼저 설치한 뒤 Pi 목록을 설치합니다. 기본 앱에서 사용하지 않는 Roboflow SDK는 OpenCV 배포판 중복을 피하기 위해 기본 목록에서 제외했습니다.
+
 [Ollama](https://ollama.com/)를 설치하고 실행한 뒤 로컬 답변 모델을 준비합니다.
 
 Debian/Ubuntu에서 `requirements.txt`의 PyAudio를 빌드해 설치한다면 먼저 PortAudio 개발 패키지를 설치합니다. 이 패키지는 실행용 `libportaudio2`도 함께 설치합니다.

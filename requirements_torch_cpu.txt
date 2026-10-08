@@ -1,0 +1,7 @@
+# Pi CPU 환경용 PyTorch. 다른 requirements와 별도로 먼저 설치합니다.
+# python -m pip install -r requirements_torch_cpu.txt
+# 이 인덱스를 앱 전체 requirements 설치에 적용하지 마세요.
+--index-url https://download.pytorch.org/whl/cpu
+torch
+torchaudio
+torchvision

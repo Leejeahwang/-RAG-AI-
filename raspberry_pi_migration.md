@@ -57,6 +57,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python --version
 python -m pip install --upgrade pip wheel
+python -m pip install -r requirements_torch_cpu.txt
 python -m pip install -r requirements_rpi.txt
 ```
 
@@ -68,7 +69,9 @@ cd /home/raspi/Desktop/SW2026-2
 python -m pip install -r requirements_rpi.txt
 ```
 
-`requirements_rpi.txt`는 공통 `requirements.txt`와 GPIO 패키지를 함께 설치합니다. OpenCV 배포판을 두 개 설치하지 않도록 일반 `opencv-python`을 사용합니다. 설치가 실패하면 마지막 오류를 해결한 뒤 다시 설치하세요. FAISS의 Python 모듈은 `faiss-cpu`입니다. `libfaiss-dev`만 설치하는 것으로 Python `import faiss`를 대체할 수 없습니다.
+`requirements_rpi.txt`는 공통 `requirements.txt`와 GPIO 패키지를 함께 설치합니다. 새 환경에서는 반드시 앞 단계의 CPU PyTorch 설치가 성공한 뒤 진행하세요. `requirements_torch_cpu.txt`는 [PyTorch 공식 CPU 인덱스](https://pytorch.org/get-started/locally/)를 지정합니다. 호환 wheel이 없으면 Python 버전과 `uname -m` 출력(aarch64)을 확인하고, 일반 PyPI GPU 빌드로 우회하지 마세요. 기존 CUDA 빌드를 CPU 빌드로 교체하는 작업은 새 환경 설치와 별개입니다.
+
+OpenCV는 일반 `opencv-python`만 사용합니다. Roboflow SDK는 현재 앱에서 사용하지 않고 headless OpenCV를 추가 설치하므로 기본 목록에서 제외했습니다. 데이터셋 작업에 필요하면 별도 작업 환경에 설치하세요. 설치가 실패하면 마지막 오류를 해결한 뒤 다시 설치합니다. FAISS의 Python 모듈은 `faiss-cpu`입니다. `libfaiss-dev`만 설치하는 것으로 Python `import faiss`를 대체할 수 없습니다.
 
 Python 3.13에서 ARM64 wheel이 없는 패키지는 소스 빌드로 넘어갈 수 있습니다. 해당 오류가 발생하면 패키지 지원 버전을 확인하고 별도 Python 3.11 환경을 고려하세요. OS에 따라 `apt install python3.11`은 제공되지 않을 수 있습니다. 현재 동작하는 환경을 지우지는 마세요. 이 목록은 버전 잠금 파일이 아니므로 새 설치의 모든 조합을 보장하지 않습니다.
 
