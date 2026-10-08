@@ -51,7 +51,7 @@ CHUNK_SIZE = 250    # [초고속 최적화] 지식 조각당 길이를 절반 �
 CHUNK_OVERLAP = 50
 
 # ── Reranker 설정 ──
-USE_RERANKER = True  # 28개 근거 검색 시험에서 Hit@1 23→28: 기본 사용 유지 (RAG_RERANKER_COMPARISON.md)
+USE_RERANKER = False  # Pi 검색 지연 비교를 위해 기본 비활성화. 품질 비교 결과: RAG_RERANKER_COMPARISON.md
 RERANKER_POLICY = "selective"  # selective: 명확한 의료 근거는 생략 / full: 모든 후보 재정렬
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-base"
 RAG_TOP_K = 2  # 0.5B 초소형 모델의 컨텍스트 병목과 인지 부하를 줄이기 위해 상위 청크 반환 개수를 2개로 제한

@@ -20,6 +20,14 @@ cd SW2026-2
 
 이미 같은 이름의 폴더가 있으면 clone 대신 기존 폴더를 사용하세요.
 
+USB 복사 후 필수 코드가 빠지지 않았는지 확인합니다.
+
+```bash
+test -f rag/__init__.py && test -f rag/native_retriever.py && echo 'rag files ok'
+```
+
+`rag files ok`가 나오지 않으면 최신 프로젝트의 `rag/` 폴더를 복원하세요. `No module named 'rag'`는 코드 누락 문제이며 패키지 설치나 모델 다운로드로 해결되지 않습니다.
+
 ### USB에 함께 넣을 파일
 
 - 프로젝트 코드, requirements 파일, `config.py`
@@ -37,10 +45,12 @@ Windows의 `venv`, `.venv`, `__pycache__`는 옮겨서 사용하지 않습니다
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential git curl \
-  portaudio19-dev libsndfile1 ffmpeg libopenblas-dev libgl1 libglib2.0-0 swig
+  portaudio19-dev libsndfile1 ffmpeg libopenblas-dev libgl1 libglib2.0-0 swig liblgpio-dev
 ```
 
 PyAudio 빌드에는 `portaudio19-dev`가 필요합니다. 실행용 `libportaudio2`만 설치하면 개발 헤더가 부족할 수 있습니다.
+
+GPIO용 Python `lgpio`를 소스 빌드할 때는 `liblgpio-dev`가 필요합니다. `/usr/bin/ld: cannot find -llgpio`는 용량 부족이 아니라 링크할 native 라이브러리가 없다는 뜻입니다. `sudo apt install -y liblgpio-dev`가 성공한 뒤 활성화된 가상환경에서 `python -m pip install -r requirements_rpi.txt`를 다시 실행합니다.
 
 pyttsx3 비교 시험을 할 경우 추가 설치합니다(PPASO 합성에는 eSpeak가 필요하지 않음).
 
@@ -56,6 +66,7 @@ sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1
 python3 -m venv .venv
 source .venv/bin/activate
 python --version
+python -c "import sys; assert sys.prefix != sys.base_prefix, '가상환경이 활성화되지 않았습니다'; print(sys.executable)"
 python -m pip install --upgrade pip wheel
 python -m pip install -r requirements_torch_cpu.txt
 python -m pip install -r requirements_rpi.txt
@@ -68,6 +79,8 @@ source /home/raspi/Desktop/RAG/-RAG-AI-/.venv/bin/activate
 cd /home/raspi/Desktop/SW2026-2
 python -m pip install -r requirements_rpi.txt
 ```
+
+명령은 순서대로 실행하고, 오류가 나면 다음 단계로 넘어가지 않습니다. `No space left on device`가 뜨면 `df -h .`로 공간을 확인하고 먼저 확보하세요. 가상환경 생성이 실패하면 `bin/activate`도 없을 수 있습니다. 이 상태에서 pip를 실행하면 시스템 Python의 `externally-managed-environment` 오류가 이어질 수 있으므로 가상환경 생성·활성화부터 다시 확인합니다.
 
 `requirements_rpi.txt`는 공통 `requirements.txt`와 GPIO 패키지를 함께 설치합니다. 새 환경에서는 반드시 앞 단계의 CPU PyTorch 설치가 성공한 뒤 진행하세요. `requirements_torch_cpu.txt`는 [PyTorch 공식 CPU 인덱스](https://pytorch.org/get-started/locally/)를 지정합니다. 호환 wheel이 없으면 Python 버전과 `uname -m` 출력(aarch64)을 확인하고, 일반 PyPI GPU 빌드로 우회하지 마세요. 기존 CUDA 빌드를 CPU 빌드로 교체하는 작업은 새 환경 설치와 별개입니다.
 
@@ -100,23 +113,70 @@ python download_models.py --target rag
 
 다운로드 파일은 `config.PPASO_MODEL_DIR`(기본 `models/ppaso`)에, 검색 모델은 Hugging Face 캐시에 저장됩니다. SBERT와 `USE_RERANKER=True`일 때 BGE를 준비합니다. Ollama·화재 영상 모델·STT 모델은 이 스크립트가 받지 않습니다.
 
-### MeCab 확인
+현재 BGE 재정렬은 Pi 검색 지연 비교를 위해 기본 비활성화(`USE_RERANKER=False`)입니다. FAISS·BM25 검색은 계속 사용합니다. 품질 비교를 위해 BGE를 켜려면 `config.py`를 변경하고 `python download_models.py --target rag`로 모델을 준비한 뒤 앱을 재시작하세요.
+
+### MeCab 확인 및 새 환경의 네이티브 설치
 
 ```bash
 python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하십시오'))"
 ```
 
-`python-mecab-ko`의 호환 wheel이 있으면 native 라이브러리까지 제공됩니다. `mecab-config not found`로 소스 빌드가 실패하면 **한국어 mecab-ko**를 먼저 설치해야 합니다. 일본어용 `mecab-python3`는 PPASO 의존성을 대체하지 않습니다. [공식 설치 문서](https://python-mecab-ko.readthedocs.io/en/latest/install/)의 소스 설치 절차를 사용하세요.
+단어 목록이 나오면 이 설치 단계는 건너뜁니다. `requirements` 설치 성공이나 `Requirement already satisfied`만으로 MeCab 동작을 판단하지 않습니다. Python 패키지가 있어도 네이티브 라이브러리가 없을 수 있습니다. 기존 가상환경을 삭제하고 새로 만들었다면 이전 환경 내부의 라이브러리도 다시 설치해야 합니다.
 
-native mecab-ko를 가상환경 내부에 설치했다면 그 환경을 활성화하고 다음 설정 후 Python 바인딩을 설치합니다.
+다음 오류는 **한국어 mecab-ko** 네이티브 설치가 필요한 경우입니다.
+
+- `mecab-config not found`: 소스 빌드에 필요한 도구를 찾지 못함
+- `ImportError: libmecab.so.2 ... No such file or directory`: 라이브러리가 없거나 로딩 경로가 맞지 않음
+
+두 번째 오류라면 활성화된 가상환경에서 먼저 위치를 확인합니다.
+
+```bash
+find "$VIRTUAL_ENV" /usr/local/lib /usr/lib -name 'libmecab.so*' 2>/dev/null
+```
+
+경로가 나오면 해당 설치의 라이브러리 경로를 확인합니다. 아무 경로도 나오지 않으면 아래 절차로 현재 가상환경에 설치합니다. 일본어용 `mecab-python3`는 PPASO 의존성을 대체하지 않습니다. 아래는 [공식 설치 스크립트](https://raw.githubusercontent.com/jonghwanhyeon/python-mecab-ko/main/scripts/install_mecab_ko.py)의 `--prefix` 옵션을 사용합니다.
+
+```bash
+sudo apt install -y build-essential python3-dev curl
+curl -fL https://raw.githubusercontent.com/jonghwanhyeon/python-mecab-ko/main/scripts/install_mecab_ko.py -o /tmp/install_mecab_ko.py
+```
+
+기존 GNU Savannah HTTP 주소에 연결하지 못했던 경우를 위해 `config.guess`와 `config.sub` 다운로드 주소를 GCC 저장소의 HTTPS 주소로 변경합니다.
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+p = Path("/tmp/install_mecab_ko.py")
+s = p.read_text()
+for name in ("guess", "sub"):
+    old = f"http://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.{name};hb=HEAD"
+    new = f"https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.{name}"
+    s = s.replace(old, new)
+p.write_text(s)
+PY
+
+python /tmp/install_mecab_ko.py --prefix "$VIRTUAL_ENV"
+```
+
+설치 명령이 오류 없이 끝난 뒤 경로를 설정하고 Python 바인딩을 새 환경 기준으로 다시 빌드합니다. 이전 환경에서 빌드한 캐시 wheel을 재사용하지 않도록 합니다.
 
 ```bash
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-python -m pip install python-mecab-ko
+python -m pip install --force-reinstall --no-cache-dir --no-binary=python-mecab-ko python-mecab-ko
+python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하십시오'))"
 ```
 
-새 터미널에서도 native 라이브러리 경로가 필요할 수 있습니다. 설치 스크립트 다운로드 중 `Network is unreachable`이 뜨면 해당 호스트 연결 실패이며 설치 성공으로 볼 수 없습니다.
+단어 목록이 나와야 다음 단계로 진행합니다. 설치 스크립트 다운로드 중 `Network is unreachable`이 뜨면 해당 호스트 연결 실패이며 설치 성공으로 볼 수 없습니다. `make`의 '할 일이 없습니다'는 그 자체로 오류가 아닙니다.
+
+**새 터미널을 열 때도** 환경을 활성화한 뒤 다음 두 경로 설정을 적용하고 앱을 실행합니다. `export` 설정은 현재 셸에만 적용되며, 가상환경을 활성화하는 것만으로 자동 복원되지 않습니다.
+
+```bash
+source .venv/bin/activate
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
 
 ## 5. Ollama·Gemini 설정
 
