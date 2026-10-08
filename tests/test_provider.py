@@ -13,6 +13,22 @@ class ProviderTests(unittest.TestCase):
     def setUp(self):
         provider._failure_until = 0.0
 
+    def test_grounding_accepts_factory_markdown_and_quote_differences(self):
+        source = "* **상황 A: 전기 화재**\n  - '메인 전원(차단기)'을 내린 후, `CO2` 소화기를 사용합니다."
+        answer = '상황 A: 전기 화재\n1. 메인 전원(차단기)을 내린 후, CO2 소화기를 사용합니다.'
+        self.assertTrue(provider._is_grounded(answer, source))
+
+    def test_grounding_preserves_route_numbers_and_prohibitions(self):
+        source = "B동 2번 계단으로 대피하십시오.\n물을 사용하지 마십시오.\n2.5미터 거리를 유지하십시오."
+        for answer in ("B동 3번 계단으로 대피하십시오.", "물을 사용하십시오.", "5미터 거리를 유지하십시오."):
+            with self.subTest(answer=answer):
+                self.assertFalse(provider._is_grounded(answer, source))
+        self.assertTrue(provider._is_grounded("2.5미터 거리를 유지하십시오.", source))
+
+    def test_grounding_rejects_partial_word_and_empty_markup(self):
+        self.assertFalse(provider._is_grounded("물을 사용", "물을 사용하지 마십시오."))
+        self.assertFalse(provider._is_grounded("**", "매뉴얼"))
+
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")
     @patch.object(provider, "_local")
@@ -58,9 +74,51 @@ class ProviderTests(unittest.TestCase):
         post.return_value.json.return_value = {
             "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "없는 서쪽 출구로 가십시오."}]}}]
         }
+        with self.assertLogs(provider._LOG, level="WARNING") as logs:
+            result = provider.generate_guidance("동쪽 계단으로 대피하십시오.", "어디로 가나요?", emergency=True)
+        self.assertEqual(result.provider, "fixed")
+        self.assertEqual(result.text, provider.EMERGENCY_GUIDANCE)
+        self.assertIn("매뉴얼 원문과 일치하지 않습니다", logs.output[0])
+
+    @patch.object(config, "AI_PROVIDER", "auto")
+    @patch.object(config, "GEMINI_API_KEY", "test-key")
+    @patch.object(provider, "_local")
+    @patch("rag.provider.requests.post")
+    def test_normal_question_accepts_paraphrase_without_fallback(self, post, local):
+        post.return_value.json.return_value = {
+            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "안전한 동쪽 계단을 이용해 대피하세요."}]}}]
+        }
         result = provider.generate_guidance("동쪽 계단으로 대피하십시오.", "어디로 가나요?")
+        self.assertEqual(result.provider, "gemini")
+        local.assert_not_called()
+        prompt = post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"]
+        self.assertIn("요약", prompt)
+
+    @patch.object(config, "AI_PROVIDER", "auto")
+    @patch.object(config, "GEMINI_API_KEY", "test-key")
+    @patch.object(provider, "_local", return_value="로컬 답변")
+    @patch("rag.provider.requests.post")
+    def test_empty_text_still_falls_back_in_normal_mode(self, post, local):
+        post.return_value.json.return_value = {
+            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": " "}]}}]
+        }
+        with self.assertLogs(provider._LOG, level="WARNING") as logs:
+            result = provider.generate_guidance("매뉴얼", "질문")
         self.assertEqual(result.provider, "ollama")
-        self.assertEqual(result.text, "로컬 답변")
+        self.assertIn("답변이 비어 있습니다", logs.output[0])
+
+    @patch.object(config, "AI_PROVIDER", "auto")
+    @patch.object(config, "GEMINI_API_KEY", "test-key")
+    @patch.object(provider, "_local", return_value="로컬 답변")
+    @patch("rag.provider.requests.post")
+    def test_truncated_answer_logs_finish_reason_and_falls_back(self, post, local):
+        post.return_value.json.return_value = {
+            "candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "일부 답변"}]}}]
+        }
+        with self.assertLogs(provider._LOG, level="WARNING") as logs:
+            result = provider.generate_guidance("매뉴얼", "질문")
+        self.assertEqual(result.provider, "ollama")
+        self.assertIn("MAX_TOKENS", logs.output[0])
 
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")

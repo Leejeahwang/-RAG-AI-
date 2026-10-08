@@ -80,7 +80,9 @@ python main.py
 
 첫 실행에서 `faiss_db/` 인덱스가 없으면 `data/chunked_manuals.json`과 `data/` 하위 `.txt` 파일을 읽어 인덱스를 생성합니다. 인덱스가 이미 있으면 기존 것을 로드합니다. 문서가 변경되면 갱신 필요 메시지가 표시되며, 앱을 종료한 뒤 `python tools/rebuild_rag_index.py`로 인덱스를 백업하고 재구축합니다. `python tools/check_rag_quality.py`로 기본 검색 확인을 실행할 수 있습니다. BGE 재정렬 사용 여부는 `config.py`의 `USE_RERANKER`로 설정하며, 비교 측정 방법은 [RAG_BENCHMARK.md](RAG_BENCHMARK.md)를 참조하세요.
 
-현재 BGE 재정렬은 기본으로 사용하되 `RERANKER_POLICY="selective"`로 명확한 CPR·출혈·골절 질문에 해당 근거가 확보된 경우 추론을 생략합니다. 구역·화재 등 다른 질문에는 계속 적용합니다. 모든 후보에 적용하려면 `RERANKER_POLICY="full"`로 바꾸고 재시작합니다. 모델은 계속 미리 로드하므로 추론 생략만으로 메모리가 줄지는 않습니다.
+현재 BGE 재정렬은 Pi 검색 지연을 줄이기 위해 기본 비활성화(`USE_RERANKER=False`)이며 FAISS·BM25 검색은 유지합니다. BGE를 켜면 `RERANKER_POLICY="selective"`로 명확한 CPR·출혈·골절 질문에 해당 근거가 확보된 경우 추론을 생략합니다. 모든 후보에 적용하려면 `RERANKER_POLICY="full"`로 바꾸고 재시작합니다. BGE를 켠 상태에서는 모델을 미리 로드하므로 선택적 추론 생략만으로 메모리가 줄지는 않습니다.
+
+일반 질문의 Gemini 답변은 참고 매뉴얼을 요약하거나 바꾸어 설명할 수 있으며, 원문 문자열 불일치만으로 로컬로 전환하지 않습니다. 숫자·장소·조건·금지 사항을 유지하도록 프롬프트로 지시하지만 일반 답변의 의미 일치를 코드로 검증하지는 않습니다. `emergency=True`인 비상 자동 방송은 서식 차이를 허용한 원문 인용 검증을 유지합니다. 빈 응답·정상 종료되지 않은 응답·API 오류는 계속 로컬로 전환하며, 로그에 값 오류의 구체적인 이유를 표시합니다.
 
 Windows PC의 28개 질문 근거 검색 시험에서 첫 번째 결과 적중은 BGE 끔 23/28, 전체 적용 28/28이었으며, 대표 검색 시간은 각각 약 0.039초와 2.696초였습니다. 이 수치는 최종 답변 정확도나 라즈베리파이 성능을 의미하지 않습니다. 조건·메모리·질문별 결과와 선택적 적용 후 확인은 [RAG_RERANKER_COMPARISON.md](RAG_RERANKER_COMPARISON.md)에 정리했습니다.
 

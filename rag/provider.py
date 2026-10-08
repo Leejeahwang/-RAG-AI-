@@ -75,26 +75,39 @@ def mode_command_response(command: str) -> str | None:
 
 
 def _clean_for_match(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
+    """Ignore presentation markup while preserving words, numbers and negation."""
+    lines = []
+    for line in value.splitlines():
+        line = re.sub(r"^\s*(?:[-*•]\s+|\d+[.)]\s+|#{1,6}\s+)", "", line)
+        line = re.sub(r"[*`\"'‘’“”]", "", line)
+        lines.append(line)
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
 
 def _is_grounded(answer: str, context: str) -> bool:
-    """방송할 온라인 답변은 검색 매뉴얼의 문장을 그대로 인용해야 한다."""
+    """Allow formatting differences; require the cited words to remain in the manual."""
     source = _clean_for_match(context)
-    lines = [re.sub(r"^\s*(?:[-*•]\s*|\d+[.)]\s*)", "", line).strip() for line in answer.splitlines()]
-    lines = [_clean_for_match(line) for line in lines if line.strip()]
-    return bool(lines) and all(line in source for line in lines)
+    lines = [_clean_for_match(line) for line in answer.splitlines() if line.strip()]
+    lines = [line for line in lines if line]
+    return bool(lines) and all(re.search(r"(?<!\S)" + re.escape(line) + r"(?!\w)", source) for line in lines)
 
 
-def _call_gemini(context: str, question: str) -> str:
+def _call_gemini(context: str, question: str, require_quotes: bool = False) -> str:
     model = config.GEMINI_MODEL
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise ValueError("Gemini 모델명 형식이 올바르지 않습니다")
+    response_style = (
+        "질문에 관련된 문장을 원문 그대로 한 줄씩 인용하십시오. "
+        if require_quotes else
+        "질문에 관련된 내용을 요약하고 자연스러운 한국어로 바꾸어 설명해도 됩니다. "
+        "핵심 행동을 짧은 항목으로 안내하십시오. "
+    )
     payload = {
         "systemInstruction": {"parts": [{"text": (
-            "당신은 화재 대응 매뉴얼 안내자입니다. 참고 매뉴얼에서 질문에 관련된 문장만 "
-            "원문 그대로 한 줄씩 인용하십시오. 없는 사실, 장소, 대피로를 만들지 마십시오. "
-            "관련 문장이 없으면 빈 답변을 반환하십시오."
+            "당신은 화재 대응 매뉴얼 안내자입니다. 참고 매뉴얼만 근거로 답하십시오. "
+            + response_style +
+            "없는 사실, 장소, 대피로를 만들지 마십시오. 숫자, 장소, 조건과 금지 사항을 바꾸지 마십시오. "
+            "관련 내용이 없으면 빈 답변을 반환하십시오."
         )}]},
         "contents": [{"role": "user", "parts": [{"text":
             f"[참고 매뉴얼]\n{context}\n\n[질문]\n{question}"
@@ -112,11 +125,16 @@ def _call_gemini(context: str, question: str) -> str:
     if not candidates:
         raise ValueError("Gemini 답변이 비어 있습니다")
     first = candidates[0]
-    if first.get("finishReason") not in (None, "STOP"):
-        raise ValueError("Gemini 답변이 완료되지 않았습니다")
+    finish_reason = first.get("finishReason")
+    if finish_reason not in (None, "STOP"):
+        # Log only the API's enum, never response text or request credentials.
+        reason = finish_reason if isinstance(finish_reason, str) and re.fullmatch(r"[A-Z_]{1,40}", finish_reason) else "UNKNOWN"
+        raise ValueError(f"Gemini 답변이 완료되지 않았습니다: {reason}")
     parts = first.get("content", {}).get("parts") or []
     answer = "".join(part.get("text", "") for part in parts).strip()
-    if not answer or not _is_grounded(answer, context):
+    if not answer:
+        raise ValueError("Gemini 답변이 비어 있습니다")
+    if require_quotes and not _is_grounded(answer, context):
         raise ValueError("Gemini 답변이 매뉴얼 원문과 일치하지 않습니다")
     return answer
 
@@ -150,13 +168,25 @@ def generate_guidance(
         fallback_reason = "전송 가능한 매뉴얼 없음"
     elif mode != "local":
         try:
-            answer = _call_gemini(remote_context, question)
+            answer = _call_gemini(remote_context, question, require_quotes=emergency)
             with _failure_lock:
                 _failure_until = 0.0
             return GuidanceResult(answer, "gemini")
         except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
             fallback_reason = type(exc).__name__
-            _LOG.warning("Gemini 사용 실패 (%s), Ollama로 전환", fallback_reason)
+            detail = ""
+            if isinstance(exc, ValueError):
+                message = str(exc)
+                known_messages = {
+                    "Gemini 모델명 형식이 올바르지 않습니다",
+                    "Gemini 답변이 비어 있습니다",
+                    "Gemini 답변이 매뉴얼 원문과 일치하지 않습니다",
+                }
+                if message in known_messages or re.fullmatch(r"Gemini 답변이 완료되지 않았습니다: [A-Z_]{1,40}", message):
+                    detail = f": {message}"
+                else:
+                    detail = ": Gemini 응답 JSON 해석 또는 값 처리 실패"
+            _LOG.warning("Gemini 사용 실패 (%s%s), Ollama로 전환", fallback_reason, detail)
             if mode == "auto":
                 with _failure_lock:
                     _failure_until = time.monotonic() + config.GEMINI_RETRY_COOLDOWN
