@@ -18,6 +18,7 @@ import time
 import argparse
 import cv2
 import numpy as np
+import platform
 
 # 프로젝트 루트 경로 추가
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -127,7 +128,12 @@ def main():
 
     # 2. 카메라 또는 비디오 소스 열기
     src = int(args.source) if args.source.isdigit() else args.source
-    cap = cv2.VideoCapture(src)
+    if isinstance(src, int) and platform.system() == "Windows":
+        cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(src)
+    else:
+        cap = cv2.VideoCapture(src)
     
     if not cap.isOpened():
         print(f"❌ [에러] 영상 소스({args.source})를 열 수 없습니다.")

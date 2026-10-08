@@ -75,8 +75,11 @@ class EdgeSaver:
         self._pa = None
         self._stt_stream = None
         
-        # UI 세션 및 실시간 상태 (여기에 있어야 함)
-        self.session = PromptSession()
+        # UI 세션 및 실시간 상태 (안전한 콘솔 초기화)
+        try:
+            self.session = PromptSession()
+        except Exception:
+            self.session = None
         self.current_risk_stats = "시스템 초기화 중..."
         self.current_level = 0  # 단계별 발화 속도 조절을 위한 상태 저장
         self._interrupt_generation = False
@@ -137,10 +140,10 @@ class EdgeSaver:
 
             # ── 1단계: Native RAG 데이터 로드 [v30] ──
             from rag.native_retriever import rag_manager
-            from rag.loader import load_and_split
             
             rag_manager.load_resources()
             if not rag_manager.index:
+                from rag.loader import load_and_split
                 chunks = load_and_split()
                 rag_manager.build_index(chunks)
             
@@ -172,6 +175,13 @@ class EdgeSaver:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.tts.warmup()
             print("완료")
+
+            print("[시스템] 👁️ Vision AI 모델 예열 중...", end=" ", flush=True)
+            try:
+                fire_detector.warmup()
+                print("완료")
+            except Exception as e:
+                print(f"완료 ({e})")
 
             # 백그라운드 카메라 서비스 가동
             if not cctv_service.camera_running:
@@ -327,7 +337,16 @@ class EdgeSaver:
                     risk['details'] += f" | {fire_desc}"
 
                 # 툴바 데이터 갱신 (터미널 UI 깨짐 방지를 위해 이모지 대신 텍스트/표준 기호 사용)
-                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
+                if fire_detected:
+                    cam_display = f"[FIRE: {fire_desc}]"
+                elif 'analysis' in locals() and analysis and analysis.get('is_static_photo', False):
+                    cam_display = "[BLOCKED: 사진/모니터 감지]"
+                elif 'analysis' in locals() and analysis and analysis.get('status') in ('ANALYZING', 'EVALUATING_FIRE_MOTION', 'EVALUATING_SMOKE_MOTION'):
+                    cam_display = "[ANALYZING]"
+                else:
+                    cam_display = "SAFE"
+
+                self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {cam_display} | {risk['label']}"
                 
                 if level >= 4:
                     if not alarm_handled:
@@ -393,11 +412,14 @@ class EdgeSaver:
         with patch_stdout():
             while True:
                 try:
-                    query = self.session.prompt(
-                        "❓ 질문: ", 
-                        bottom_toolbar=self._get_bottom_toolbar,
-                        refresh_interval=1.0
-                    ).strip()
+                    if self.session is not None:
+                        query = self.session.prompt(
+                            "❓ 질문: ", 
+                            bottom_toolbar=self._get_bottom_toolbar,
+                            refresh_interval=1.0
+                        ).strip()
+                    else:
+                        query = input("❓ 질문: ").strip()
                     
                     if self.tts: self.tts.stop()
                     
@@ -411,6 +433,12 @@ class EdgeSaver:
                         print(f"🎤 인식: {query}")
                     elif query.lower() in ['q', 'exit', 'quit']:
                         break
+                    elif query.lower() in ['test fire', 'fire test', '화재 테스트', '화재실험']:
+                        print("\n🚨 [시뮬레이션] 가상 화재 테스트 신호 발생! Level 4 긴급 상황을 트리거합니다...")
+                        self.current_risk_stats = f"T: 78.5C | G: 520 | S: 610 | CAM: [TEST: 화재 시뮬레이션] | 긴급"
+                        prompt = "[공장 A구역] 화재 위험 지수 4단계 격상 (고온감지, 연기센서, 비전 화재). 인명 피해 방지를 위한 가장 짧고 강력한 대피 지침을 생성해줘."
+                        self._trigger_rag_alert(prompt, "가상 화재 테스트 (고온 78.5C, 연기 610)", "A")
+                        continue
                     else:
                         lang = 'ko' if re.search('[가-힣]', query) else 'en'
 

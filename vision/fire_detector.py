@@ -205,11 +205,11 @@ def detect_fire(image_input):
         # 모션 분석기(Optical Flow)를 통한 정지 사진 오탐 검증 및 훈소 연기 판정
         is_real_smoke = False
         is_static_photo = False
-        motion_status = "NO_MOTION_CHECK"
+        primary_box = [int(v) for v in boxes[0].xyxy[0]] if len(boxes) > 0 else None
 
         try:
             if curr_img is not None:
-                target_box = smoke_box if smoke_box is not None else [int(v) for v in boxes[0].xyxy[0]]
+                target_box = smoke_box if smoke_box is not None else primary_box
                 motion_res = _motion_analyzer.analyze(curr_img, target_box, class_name="smoke" if smoke_box else "fire")
                 is_real_smoke = motion_res.is_real_smoke
                 is_static_photo = motion_res.is_static_photo
@@ -217,6 +217,13 @@ def detect_fire(image_input):
         except Exception:
             pass
 
+        # 시연/테스트 모드: config.BYPASS_MOTION_FILTER=True 시 스마트폰 화면도 화재로 감지 허용
+        try:
+            import config
+            if getattr(config, 'BYPASS_MOTION_FILTER', False):
+                is_static_photo = False
+        except:
+            pass
 
         classes_str = ", ".join(detected_classes)
 
@@ -229,7 +236,8 @@ def detect_fire(image_input):
                 "is_real_smoke": False,
                 "is_static_photo": True,
                 "detected_classes": list(detected_classes),
-                "status": motion_status
+                "status": motion_status,
+                "box": primary_box
             }
 
         # 2. 미세 연기 상방 대류 감지 시 (초기 훈소 화재 조기 포착)
@@ -241,7 +249,8 @@ def detect_fire(image_input):
                 "is_real_smoke": True,
                 "is_static_photo": False,
                 "detected_classes": list(detected_classes),
-                "status": motion_status
+                "status": motion_status,
+                "box": primary_box
             }
 
         # 3. 확신도가 35% 미만인 미약한 감지인데 진짜 연기 상승도 아닌 경우 -> 오탐 차단 (안전 유지)
@@ -253,7 +262,8 @@ def detect_fire(image_input):
                 "is_real_smoke": False,
                 "is_static_photo": False,
                 "detected_classes": list(detected_classes),
-                "status": motion_status
+                "status": motion_status,
+                "box": primary_box
             }
 
         return {
@@ -263,12 +273,23 @@ def detect_fire(image_input):
             "is_real_smoke": is_real_smoke,
             "is_static_photo": is_static_photo,
             "detected_classes": list(detected_classes),
-            "status": motion_status
+            "status": motion_status,
+            "box": primary_box
         }
 
     except Exception as e:
         return {
             "fire_detected": False,
             "confidence": 0.0,
-            "description": f"AI 분석 중 로컬 처리 오류 발생: {str(e)}"
+            "description": f"AI 분석 중 로컬 처리 오류 발생: {str(e)}",
+            "box": None
         }
+
+def warmup():
+    """시스템 부팅 시 첫 추론 지연 및 ONNX Runtime 로그를 사전 처리하는 예열 함수"""
+    import numpy as np
+    dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+    try:
+        detect_fire(dummy)
+    except:
+        pass

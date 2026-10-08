@@ -13,12 +13,14 @@ import sys
 import time
 import cv2
 import numpy as np
+import platform
 
 # 프로젝트 루트 경로 추가
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+import config
 from ultralytics import YOLO
 from vision import fire_detector
 from vision.smoke_motion import SmokeMotionAnalyzer
@@ -145,10 +147,28 @@ def benchmark_reaction_time():
 def test_webcam_live():
     """[테스트 4] 노트북 웹캠을 이용한 실시간 FPS 및 추론 지연 HUD 테스트"""
     print_banner("4. 노트북 웹캠 실시간 감시 & 추론 지연 시간 HUD 검증")
-    print("📷 웹캠(0번) 연결 중... ('q'를 누르면 테스트 종료)")
+    print("📷 웹캠 연결 중... ('q'를 누르면 테스트 종료)")
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
+    cap = None
+    if platform.system() == "Windows":
+        for idx in [getattr(config, 'CAMERA_INDEX', 1), 1, 0]:
+            try:
+                temp_cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+                if temp_cap.isOpened():
+                    ret, test_frame = temp_cap.read()
+                    if ret and test_frame is not None and np.std(test_frame) > 5.0:
+                        cap = temp_cap
+                        print(f"✅ [웹캠 연결 성공] RGB 컬러 웹캠(인덱스 {idx})으로 연결되었습니다.")
+                        break
+                    temp_cap.release()
+            except:
+                pass
+        if cap is None:
+            cap = cv2.VideoCapture(0)
+    else:
+        cap = cv2.VideoCapture(getattr(config, 'CAMERA_INDEX', 0))
+
+    if cap is None or not cap.isOpened():
         print("❌ 웹캠을 열 수 없습니다.")
         return
 
@@ -171,22 +191,55 @@ def test_webcam_live():
         infer_ms = (time.perf_counter() - t_infer_start) * 1000.0
 
         is_fire = analysis.get("fire_detected", False)
-        desc = analysis.get("description", "")
+        is_blocked = analysis.get("is_static_photo", False)
         status = analysis.get("status", "")
+        box = analysis.get("box")
+        conf = analysis.get("confidence", 0.0)
 
         # 화면에 실시간 오버레이
         display = frame.copy()
-        cv2.rectangle(display, (10, 10), (630, 90), (0, 0, 0), -1)
 
-        status_color = (0, 0, 255) if is_fire else (0, 255, 0)
-        cv2.putText(display, f"FPS: {fps:.1f} | AI Latency: {infer_ms:.1f} ms | Model: YOLOv8-Nano",
-                    (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(display, f"Status: {desc[:40]}",
-                    (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
+        # 바운딩 박스 표시
+        if box is not None:
+            bx1, by1, bx2, by2 = box
+            box_color = (0, 0, 255) if is_fire else ((0, 140, 255) if is_blocked else (0, 255, 255))
+            cv2.rectangle(display, (bx1, by1), (bx2, by2), box_color, 2)
+            box_label = f"FIRE {conf*100:.0f}%" if is_fire else (f"BLOCKED ({status})" if is_blocked else f"CANDIDATE {conf*100:.0f}%")
+            cv2.putText(display, box_label, (bx1, max(20, by1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+        # 상단 HUD 정보창
+        cv2.rectangle(display, (10, 10), (630, 95), (0, 0, 0), -1)
+
+        bypass_mode = getattr(config, 'BYPASS_MOTION_FILTER', False)
+
+        if is_fire:
+            status_text = f">> FIRE DETECTED! (Conf: {conf*100:.0f}%) [ALARM ACTIVE] <<"
+            status_color = (0, 0, 255)
+        elif is_blocked:
+            status_text = f">> PHOTO/SCREEN BLOCKED (Optical Flow Filter Active) <<"
+            status_color = (0, 140, 255)
+        elif status in ("ANALYZING", "EVALUATING_FIRE_MOTION", "EVALUATING_SMOKE_MOTION"):
+            status_text = f">> ANALYZING MOTION VECTORS... ({status}) <<"
+            status_color = (0, 255, 255)
+        else:
+            status_text = ">> ACTIVE SCANNING: AREA SAFE (No Threat) <<"
+            status_color = (0, 255, 0)
+
+        cv2.putText(display, f"FPS: {fps:.1f} | Latency: {infer_ms:.1f} ms | FilterBypass: {'ON' if bypass_mode else 'OFF'}",
+                    (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.putText(display, status_text,
+                    (20, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
+        cv2.putText(display, "[q]: Exit | [b]: Toggle Screen/Photo Filter Bypass",
+                    (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
         cv2.imshow("RPi Optimization Verification (Webcam)", display)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        elif key == ord('b'):
+            config.BYPASS_MOTION_FILTER = not getattr(config, 'BYPASS_MOTION_FILTER', False)
+            print(f"🔄 [모션 필터 토글] BYPASS_MOTION_FILTER = {config.BYPASS_MOTION_FILTER}")
 
     cap.release()
     cv2.destroyAllWindows()
@@ -196,6 +249,11 @@ def main():
     print("=" * 70)
     print("🚀 [엣지 세이버] 라즈베리파이 렉 해결 & 비전 성능 검증 테스트")
     print("=" * 70)
+
+    # CLI 인자로 --live 또는 -l 전달 시 즉시 웹캠 모드 실행
+    if "--live" in sys.argv or "-l" in sys.argv:
+        test_webcam_live()
+        return
 
     # 1. 테스트용 더미 프레임 생성
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)

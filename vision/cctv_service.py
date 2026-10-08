@@ -84,22 +84,54 @@ def camera_worker_thread():
     cap = None
     success = False
     use_rpicam = False
-    is_linux = (platform.system() == 'Linux')
+    current_os = platform.system()
     
-    if not is_linux:
-        # 🍏 macOS 환경: 타 백엔드를 타지 않고 AVFOUNDATION으로 즉시 다이렉트 연동
+    if current_os == 'Darwin':
+        # 🍏 macOS 환경: AVFOUNDATION 다이렉트 연동
         try:
             cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
             success, _ = try_read_frame(cap)
-            if not success:
-                if cap:
-                    cap.release()
+            if not success and cap:
+                cap.release()
                 cap = None
         except Exception as e:
             print(f"⚠️ macOS 카메라 초기화 실패: {e}")
-            if cap:
-                cap.release()
+            if cap: cap.release()
             cap = None
+            
+    elif current_os == 'Windows':
+        # 🪟 Windows 환경: DirectShow(CAP_DSHOW) 기반 RGB 웹캠 자동 탐색
+        candidate_indices = [getattr(config, 'CAMERA_INDEX', 1), 1, 0]
+        seen = set()
+        unique_candidates = [x for x in candidate_indices if not (x in seen or seen.add(x))]
+
+        for c_idx in unique_candidates:
+            try:
+                temp_cap = cv2.VideoCapture(c_idx, cv2.CAP_DSHOW)
+                s_read, test_frame = try_read_frame(temp_cap)
+                if s_read and test_frame is not None:
+                    # Windows Hello IR(적외선) 카메라의 검은 화면(std < 5) 방지
+                    import numpy as np
+                    if np.std(test_frame) > 5.0 or c_idx == unique_candidates[-1]:
+                        cap = temp_cap
+                        success = True
+                        break
+                if temp_cap:
+                    temp_cap.release()
+            except Exception:
+                pass
+
+        if not success:
+            try:
+                cap = cv2.VideoCapture(config.CAMERA_INDEX)
+                success, _ = try_read_frame(cap)
+                if not success and cap:
+                    cap.release()
+                    cap = None
+            except Exception:
+                if cap: cap.release()
+                cap = None
+                
     else:
         # 🐧 리눅스(라즈베리파이) 환경: 순차 폴백 시도
         # 1. GStreamer 우선 시도
@@ -107,12 +139,11 @@ def camera_worker_thread():
         try:
             cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
             success, _ = try_read_frame(cap)
-            if not success:
+            if not success and cap:
                 cap.release()
                 cap = None
         except Exception:
-            if cap:
-                cap.release()
+            if cap: cap.release()
             cap = None
             
         # 2. V4L2 드라이버로 폴백 시도
@@ -120,12 +151,11 @@ def camera_worker_thread():
             try:
                 cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_V4L2)
                 success, _ = try_read_frame(cap)
-                if not success:
+                if not success and cap:
                     cap.release()
                     cap = None
             except Exception:
-                if cap:
-                    cap.release()
+                if cap: cap.release()
                 cap = None
                 
         # 3. 기본 VideoCapture 폴백 시도
@@ -133,12 +163,11 @@ def camera_worker_thread():
             try:
                 cap = cv2.VideoCapture(config.CAMERA_INDEX)
                 success, _ = try_read_frame(cap)
-                if not success:
+                if not success and cap:
                     cap.release()
                     cap = None
             except Exception:
-                if cap:
-                    cap.release()
+                if cap: cap.release()
                 cap = None
             
     # 4. 라즈베리파이 5 전용 rpicam-jpeg 도구 폴백 판단

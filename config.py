@@ -1,4 +1,5 @@
 import os
+import platform
 
 # ── 시스템 전역 설정 ──
 APP_NAME = "엣지 세이버 (Edge Saver)"
@@ -47,7 +48,7 @@ RISK_LEVELS = {
 }
 
 # ── 카메라 설정 ──
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1 if platform.system() == "Windows" else 0
 CAPTURE_WIDTH = 640
 CAPTURE_PATH = "temp_capture.jpg"
 
@@ -55,4 +56,9 @@ CAPTURE_PATH = "temp_capture.jpg"
 SIREN_MIN_DURATION = 10.0   # 사이렌 최소 유지 시간 (초)
 SIREN_FILE_PATH = "data/siren.mp3"       # 사용할 커스텀 사이렌 파일 경로 (비어있으면 기본 주파수 합성음 사용)
 SIREN_VOLUME = 0.25        # 사이렌 볼륨 크기 (0.0 ~ 1.0)
+
+# ── 모션 검증 및 시연/테스트 설정 ──
+# False(기본): 실제 불꽃/연기만 통과시키고 스마트폰/모니터 화면은 오탐 방지(Optical Flow)로 자동 차단
+# True: 시연/테스트용으로 스마트폰/모니터에 띄운 화재 영상도 즉시 화재로 인식하여 Level 4 비상 알람 트리거
+BYPASS_MOTION_FILTER = False
 
