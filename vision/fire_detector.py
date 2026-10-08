@@ -6,6 +6,8 @@ Phase 3: 인터넷 연결 없이 라즈베리파이 로컬에서 ultralytics 모
 """
 
 import os
+import sys
+from contextlib import contextmanager
 try:
     from ultralytics import YOLO
 except ImportError:
@@ -15,15 +17,32 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# 지원하는 모델 확장자 (tflite나 ncnn 포맷으로 변환했을 경우 우선 사용)
+# 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
 POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이 최적화)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"), # 최신 타겟 (라즈베리파이 최적화 INT8)
+    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"), # 최신 타겟 원본
+    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"), # 구형 INT8
+    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
     os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n)
+    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 빠름 (PC/라즈베리파이 멀티플랫폼 표준, FP16 양자화 적용 완료)
+    os.path.join(MODEL_DIR, "fire_smoke.pt")      # 기본 PyTorch 포맷 (YOLOv8n 큰 용량)
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.40  # 40% 이상의 확신이 있을 때만 화재로 간주
+CONFIDENCE_THRESHOLD = 0.10  # 10% 이상의 확신이 있을 때 후보군 추출 후 동역학 분석
+
+try:
+    from vision.smoke_motion import SmokeMotionAnalyzer
+except ImportError:
+    from smoke_motion import SmokeMotionAnalyzer
+
+# 모션 분석기 싱글톤 인스턴스 (연속 프레임 모션 추적용)
+_motion_analyzer = SmokeMotionAnalyzer(
+    min_motion_mag=0.4,
+    static_motion_ratio=0.04,
+    upward_ratio_threshold=0.50,
+    required_consecutive_frames=3
+)
 
 try:
     # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
@@ -41,6 +60,34 @@ try:
 except Exception as e:
     print(f"❌ [에러] 모델 초기화 실패: {e}")
 
+@contextmanager
+def silence_fd():
+    """Redirects file descriptors 1 (stdout) and 2 (stderr) to /dev/null to silence C-level library logs."""
+    import platform
+    if platform.system() == "Windows":
+        try:
+            yield
+        except:
+            pass
+        return
+
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        old_stdout = os.dup(1)
+        old_stderr = os.dup(2)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        try:
+            yield
+        finally:
+            os.dup2(old_stdout, 1)
+            os.dup2(old_stderr, 2)
+            os.close(devnull)
+            os.close(old_stdout)
+            os.close(old_stderr)
+    except:
+        yield
+
 def detect_fire(image_path):
     """
     이미지에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
@@ -52,7 +99,11 @@ def detect_fire(image_path):
         dict: {
             "fire_detected": bool,
             "confidence": float (0.0~1.0),
-            "description": str (상황 설명)
+            "description": str (상황 설명),
+            "is_real_smoke": bool,
+            "is_static_photo": bool,
+            "detected_classes": list,
+            "status": str
         }
     """
     if model is None:
@@ -70,8 +121,9 @@ def detect_fire(image_path):
         }
 
     try:
-        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지)
-        results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
+        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지 및 C-level 로그 억제)
+        with silence_fd():
+            results = model.predict(source=image_path, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
         
         if not results or len(results) == 0:
             return {
@@ -93,6 +145,7 @@ def detect_fire(image_path):
         # 감지된 객체 분석
         max_conf = 0.0
         detected_classes = set()
+        smoke_box = None
         
         # 클래스 이름 딕셔너리 (예: {0: 'fire', 1: 'smoke'})
         names = result.names 
@@ -105,13 +158,61 @@ def detect_fire(image_path):
             detected_classes.add(cls_name)
             if conf > max_conf:
                 max_conf = conf
+            
+            if "SMOKE" in cls_name and smoke_box is None:
+                smoke_box = [int(v) for v in box.xyxy[0]]
+
+        # 모션 분석기(Optical Flow)를 통한 정지 사진 오탐 검증 및 훈소 연기 판정
+        is_real_smoke = False
+        is_static_photo = False
+        motion_status = "NO_MOTION_CHECK"
+
+        try:
+            import cv2
+            curr_img = cv2.imread(image_path)
+            if curr_img is not None:
+                target_box = smoke_box if smoke_box is not None else [int(v) for v in boxes[0].xyxy[0]]
+                motion_res = _motion_analyzer.analyze(curr_img, target_box, class_name="smoke" if smoke_box else "fire")
+                is_real_smoke = motion_res.is_real_smoke
+                is_static_photo = motion_res.is_static_photo
+                motion_status = motion_res.status
+        except Exception:
+            pass
 
         classes_str = ", ".join(detected_classes)
+
+        # 1. 정지 사진(모니터/스마트폰) 감지 시 오경보 차단!
+        if is_static_photo and not is_real_smoke:
+            return {
+                "fire_detected": False,
+                "confidence": round(max_conf, 2),
+                "description": f"🛡️ [사진 오탐 차단] 정지된 영상/사진 감지 (움직임 없음 - 오경보 차단)",
+                "is_real_smoke": False,
+                "is_static_photo": True,
+                "detected_classes": list(detected_classes),
+                "status": motion_status
+            }
+
+        # 2. 미세 연기 상방 대류 감지 시 (초기 훈소 화재 조기 포착)
+        if is_real_smoke:
+            return {
+                "fire_detected": True,
+                "confidence": round(max_conf, 2),
+                "description": f"🚨 [조기 감지] 미세 연기 상방 확산 포착 (확신도: {max_conf*100:.1f}%)",
+                "is_real_smoke": True,
+                "is_static_photo": False,
+                "detected_classes": list(detected_classes),
+                "status": motion_status
+            }
 
         return {
             "fire_detected": True,
             "confidence": round(max_conf, 2),
-            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)"
+            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)",
+            "is_real_smoke": is_real_smoke,
+            "is_static_photo": is_static_photo,
+            "detected_classes": list(detected_classes),
+            "status": motion_status
         }
 
     except Exception as e:

@@ -328,7 +328,8 @@ class EdgeSaver:
                     smoke_val = 550                  # 연기 임계값(300) 초과
                     gas_val = 600                    # 가스 임계값(400) 초과
 
-                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
+                vision_input = analysis if 'analysis' in locals() and analysis else fire_detected
+                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, vision_input=vision_input)
                 level = risk['level']
                 self.current_level = level  # 레벨 업데이트
                 
