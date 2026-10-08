@@ -1,0 +1,57 @@
+"""
+MQ-135 가스 감지 센서 모듈 (재황님 담당)
+
+Phase 1: PC에서 시뮬레이션
+Phase 3: 라즈베리파이 GPIO 연동
+"""
+
+import random
+import time
+import config
+
+_gas_history = []
+FILTER_SIZE = 5
+
+
+def read_gas_level(simulate=True):
+    """
+    가스 센서 값을 읽어옵니다. (이동 평균 필터 적용)
+
+    Returns:
+        int: 필터링된 가스 농도 (아날로그 0~1023)
+    """
+    global _gas_history
+    
+    if simulate:
+        raw_value = random.randint(100, 200)
+    else:
+        try:
+            from gpiozero import MCP3008
+        except ImportError:
+            print("⚠️ [경고] gpiozero 라이브러리가 없습니다.")
+            return read_gas_level(simulate=True)
+
+        try:
+            # 통신 오류 방지를 위한 예외 처리 강화
+            adc = MCP3008(channel=1)
+            raw_value = int(adc.value * 1023)
+            adc.close()
+        except Exception as e:
+            print(f"❌ [오류] 가스 센서 SPI/I2C 통신 실패, 재시도 중... : {e}")
+            time.sleep(0.1)  # 짧은 대기 후 Fallback
+            return read_gas_level(simulate=True)
+
+    # 노이즈 제거를 위한 이동 평균 필터(Moving Average Filter) 적용
+    _gas_history.append(raw_value)
+    if len(_gas_history) > FILTER_SIZE:
+        _gas_history.pop(0)
+
+    filtered_value = int(sum(_gas_history) / len(_gas_history))
+    return filtered_value
+
+
+def is_gas_detected(value=None):
+    """가스 임계값 초과 여부 판단"""
+    if value is None:
+        value = read_gas_level()
+    return value > config.SENSOR_THRESHOLDS["gas_mq135"]

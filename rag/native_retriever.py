@@ -1,0 +1,269 @@
+"""
+Native RAG 엔진 (v30)
+Ollama/Chroma 의존성 없이 FAISS와 Sentence-Transformers를 직접 사용하여 
+호환성과 속도를 극대화한 검색 모듈입니다.
+"""
+
+import os
+import re
+import math
+import numpy as np
+import faiss
+import pickle
+from sentence_transformers import SentenceTransformer
+from typing import List, Dict, Any
+import config
+from collections import Counter
+
+class SimpleBM25:
+    """
+    Pure Python lightweight BM25 engine.
+    Includes character-level bigram expansion to support spacing-robust Korean matching.
+    """
+    def __init__(self, corpus: List[str], k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.corpus_size = len(corpus)
+        self.doc_lengths = []
+        self.doc_freqs = []
+        self.nd = {} # term -> doc count
+        self.idf = {}
+        self.avg_doc_length = 0.0
+        
+        tokenized_corpus = [self.tokenize(doc) for doc in corpus]
+        self.doc_lengths = [len(doc) for doc in tokenized_corpus]
+        self.avg_doc_length = sum(self.doc_lengths) / self.corpus_size if self.corpus_size > 0 else 1.0
+        
+        for doc in tokenized_corpus:
+            frequencies = {}
+            for term in doc:
+                frequencies[term] = frequencies.get(term, 0) + 1
+            self.doc_freqs.append(frequencies)
+            for term in frequencies.keys():
+                self.nd[term] = self.nd.get(term, 0) + 1
+                
+        for term, freq in self.nd.items():
+            self.idf[term] = math.log((self.corpus_size - freq + 0.5) / (freq + 0.5) + 1.0)
+
+    def tokenize(self, text: str) -> List[str]:
+        # 영어, 숫자 및 한국어 음절을 추출
+        words = re.findall(r'[a-zA-Z0-9가-힣]+', text.lower())
+        tokens = list(words)
+        # 한국어 조사 분리 취약점을 보정하기 위한 음절 Bigram 추가
+        for w in words:
+            if len(w) > 1:
+                for i in range(len(w) - 1):
+                    tokens.append(w[i:i+2])
+        return tokens
+
+    def get_scores(self, query: str) -> List[float]:
+        query_tokens = self.tokenize(query)
+        scores = []
+        for i in range(self.corpus_size):
+            score = 0.0
+            doc_len = self.doc_lengths[i]
+            freqs = self.doc_freqs[i]
+            for term in query_tokens:
+                if term in freqs:
+                    tf = freqs[term]
+                    idf = self.idf.get(term, 0.0)
+                    numerator = idf * tf * (self.k1 + 1)
+                    denominator = tf + self.k1 * (1 - self.b + self.b * doc_len / self.avg_doc_length)
+                    score += numerator / denominator
+            scores.append(score)
+        return scores
+
+class NativeRAGManager:
+    def __init__(self):
+        self.model = None
+        self.index = None
+        self.bm25 = None
+        self.metadata = []
+        self.model_name = config.NATIVE_EMBEDDING_MODEL
+        self.index_dir = config.FAISS_INDEX_DIR
+        self.index_file = os.path.join(self.index_dir, "index.faiss")
+        self.meta_file = os.path.join(self.index_dir, "metadata.pkl")
+        self.bm25_file = os.path.join(self.index_dir, "bm25.pkl")
+
+    def load_resources(self):
+        """임베딩 모델 및 FAISS 인덱스, BM25 모델 로드"""
+        print(f"[NativeRAG] 모델 로드 중: {self.model_name}...")
+        self.model = SentenceTransformer(self.model_name)
+        
+        if os.path.exists(self.index_file) and os.path.exists(self.meta_file):
+            print(f"[NativeRAG] 기존 인덱스 로드 중: {self.index_file}")
+            self.index = faiss.read_index(self.index_file)
+            with open(self.meta_file, 'rb') as f:
+                self.metadata = pickle.load(f)
+            
+            if os.path.exists(self.bm25_file):
+                print(f"[NativeRAG] 기존 BM25 로드 중: {self.bm25_file}")
+                with open(self.bm25_file, 'rb') as f:
+                    self.bm25 = pickle.load(f)
+            
+            print(f"[NativeRAG] 로드 완료 (데이터: {len(self.metadata)}개)")
+        else:
+            print("[NativeRAG] 기존 인덱스가 없습니다. 초기 구축이 필요합니다.")
+
+    def build_index(self, chunks: List[Any]):
+        """새로운 청크(Document 객체 또는 Dict)를 기반으로 인덱스 구축"""
+        if not chunks:
+            print("[NativeRAG] 구축할 데이터가 없습니다.")
+            return
+
+        print(f"[NativeRAG] 인덱스 구축 시작 (대상: {len(chunks)}개)...")
+        # Document 객체 호환성 처리
+        self.metadata = []
+        texts = []
+        for c in chunks:
+            if hasattr(c, 'page_content'): # LangChain Document
+                texts.append(c.page_content)
+                meta = c.metadata.copy()
+                meta['page_content'] = c.page_content # 내부 검색 결과 활용을 위해 원문 포함
+                self.metadata.append(meta)
+            else: # Dict
+                texts.append(c.get('page_content', ''))
+                self.metadata.append(c)
+
+        embeddings = self.model.encode(texts, show_progress_bar=True)
+        
+        # FAISS 인덱스 생성 (L2 거리 기준)
+        dimension = embeddings.shape[1]
+        self.index = faiss.IndexFlatL2(dimension)
+        self.index.add(embeddings.astype('float32'))
+        
+        # BM25 생성
+        self.bm25 = SimpleBM25(texts)
+        
+        # 파일 저장
+        if not os.path.exists(self.index_dir):
+            os.makedirs(self.index_dir)
+        faiss.write_index(self.index, self.index_file)
+        with open(self.meta_file, 'wb') as f:
+            pickle.dump(self.metadata, f)
+        with open(self.bm25_file, 'wb') as f:
+            pickle.dump(self.bm25, f)
+        
+        print(f"[NativeRAG] 인덱스 구축 및 저장 완료: {self.index_file}, {self.bm25_file}")
+
+    def search(self, query: str, top_k: int = 25, top_n_sources: int = 3) -> List[Dict[str, Any]]:
+        """지능형 필터링 및 RRF 하이브리드 검색, 그리고 2차 리랭킹"""
+        if self.index is None:
+            print("[NativeRAG] 에러: 인덱스가 로드되지 않았습니다.")
+            return []
+
+        # 1. FAISS 검색 수행
+        query_vec = self.model.encode([query]).astype('float32')
+        distances, indices = self.index.search(query_vec, top_k)
+        
+        faiss_ranks = {}
+        for rank_idx, doc_idx in enumerate(indices[0]):
+            if doc_idx != -1:
+                faiss_ranks[doc_idx] = rank_idx + 1
+
+        # 2. BM25 검색 수행
+        bm25_ranks = {}
+        if self.bm25 is not None:
+            bm25_scores = self.bm25.get_scores(query)
+            scored_docs = [(score, doc_idx) for doc_idx, score in enumerate(bm25_scores) if score > 0]
+            scored_docs.sort(key=lambda x: x[0], reverse=True)
+            for rank_idx, (_, doc_idx) in enumerate(scored_docs[:top_k]):
+                bm25_ranks[doc_idx] = rank_idx + 1
+
+        # 3. RRF (Reciprocal Rank Fusion) 통합
+        rrf_scores = {}
+        all_candidate_indices = set(list(faiss_ranks.keys()) + list(bm25_ranks.keys()))
+        
+        RRF_K = 60
+        for doc_idx in all_candidate_indices:
+            f_rank = faiss_ranks.get(doc_idx, 99999)
+            b_rank = bm25_ranks.get(doc_idx, 99999)
+            
+            rrf_score = (1.0 / (RRF_K + f_rank)) + (1.0 / (RRF_K + b_rank))
+            rrf_scores[doc_idx] = rrf_score
+            
+        sorted_candidates = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        selected_candidates = [doc_idx for doc_idx, _ in sorted_candidates[:top_k]]
+
+        # 4. 주제/장소 하드 필터링 (v28 logic porting)
+        CONFLICT_MAP = {
+            "화재": ["화재", "불", "소화", "피난", "방화", "소방", "소화기"],
+            "화산": ["화산", "낙진", "재", "용암"],
+            "태풍": ["태풍", "강풍", "홍수", "침수", "해일"],
+            "폭발": ["폭발", "가스", "유출", "화학"]
+        }
+        LOCATION_MAP = {
+            "아파트": ["아파트", "공동주택", "입주자", "세대", "주거", "단지내", "관리사무소"],
+            "공장": ["공장", "산업", "작업장", "배전반", "창고", "기계", "설비", "factory", "제조"],
+            "산악": ["산악", "국립공원", "등산", "조난", "등산로", "계곡"]
+        }
+        
+        detected_themes = [theme for theme, keywords in CONFLICT_MAP.items() if any(k in query for k in keywords)]
+        detected_locs = [loc for loc, keywords in LOCATION_MAP.items() if any(k in query.lower() for k in keywords)]
+        
+        valid_results = []
+        for idx in selected_candidates:
+            doc = self.metadata[idx]
+            src = doc.get('source', 'unknown').lower()
+            content = doc.get('page_content', '')[:200].lower()
+            
+            # 필터링 판별
+            doc_theme = next((theme for theme, keywords in CONFLICT_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
+            doc_loc = next((loc for loc, keywords in LOCATION_MAP.items() if any(k in src for k in keywords) or any(k in content for k in keywords)), None)
+            
+            if detected_themes and doc_theme and doc_theme not in detected_themes: continue
+            if detected_locs and doc_loc and doc_loc not in detected_locs: continue
+            
+            valid_results.append(doc)
+
+        if not valid_results:
+            return [self.metadata[i] for i in selected_candidates[:1]] if selected_candidates else []
+
+        # 5. 단일 소스 집중 (v24 logic)
+        source_scores = Counter()
+        for i, doc in enumerate(valid_results[:10]):
+            src = doc.get('source', 'unknown')
+            source_scores[src] += (10 - i)
+            
+        winner_sources = [s for s, score in source_scores.most_common(top_n_sources)]
+        final_docs = [d for d in valid_results if d.get('source') in winner_sources]
+        
+        # 6. 검색 의도(Intent) 기반 Lexical 리랭킹 (실전 vs 연습 구분)
+        intent_keywords = [
+            "대피", "요령", "행동", "즉시", "절대", "대처", "수건", "자세", "비상", "경고", "피난",
+            "차단기", "밸브", "누출", "화학물질", "폭발", "배전반", "가스", "환기", "밀폐", "방독면", "전원"
+        ]
+        penalty_keywords = ["연습", "계획", "수립", "캠페인", "교육", "훈련", "조사", "참여", "안내서"]
+        
+        is_action_query = any(k in query.lower() for k in ["대처", "요령", "방법", "어떻게", "방안", "행동", "가이드"])
+        
+        reranked_docs = []
+        for i, d in enumerate(final_docs):
+            base_score = 100 - i  # RRF 순위에 기반한 기본 스코어
+            feature_score = 0
+            content = d.get('page_content', '')
+            src = d.get('source', '').lower()
+            
+            # --- 고도화된 리랭킹 필터 ---
+            
+            # 1. 소스 파일명 매칭 보너스: 질문의 핵심 키워드가 파일명에 있으면 강력 가점 (+25점)
+            for kw in ["공장", "factory", "아파트", "apartment", "화산", "태풍"]:
+                if kw in query.lower() and kw in src:
+                    feature_score += 25
+            
+            if is_action_query:
+                # 2. 행동 강령에 자주 나오는 핵심 실전 키워드 가점 부여 (+10점)
+                feature_score += sum(10 for kw in intent_keywords if kw in content)
+                # 3. 매뉴얼 서문 및 훈련 파트에 자주 나오는 키워드 강력 감점 (-25점)
+                feature_score -= sum(25 for kw in penalty_keywords if kw in content)
+                
+            reranked_docs.append((base_score + feature_score, d))
+            
+        # 재계산된 점수 기준 내림차순 정렬
+        reranked_docs.sort(key=lambda x: x[0], reverse=True)
+        super_final_docs = [d for score, d in reranked_docs]
+        
+        return super_final_docs[:4] # 속도와 품질의 타협점인 4개로 지식 전달량 조정
+
+# 싱글톤 인스턴스 제공
+rag_manager = NativeRAGManager()
