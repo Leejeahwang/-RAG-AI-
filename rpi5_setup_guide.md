@@ -55,6 +55,7 @@ sudo apt install -y python3-opencv libportaudio2 portaudio19-dev libopenblas-dev
 ```bash
 pip install --upgrade pip
 pip install -r requirements_rpi.txt
+sudo apt install -y python3-opencv libportaudio2 portaudio19-dev libopenblas-dev espeak python3-pip python3-venv curl
 ```
 
 > 💡 **FAISS-CPU 설치 에러 발생 시 대처법**:
