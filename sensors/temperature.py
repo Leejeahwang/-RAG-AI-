@@ -18,9 +18,12 @@ def read_temperature(simulate=False, pin=4):
         pin (int): DHT11이 연결된 라즈베리파이 BCM GPIO 핀 번호 (기본값: GPIO4)
     """
     if simulate:
+        # 평상시 실내 적정 안정 온도 (23.5도 안팎으로 들쭉날쭉하지 않고 안정 유지)
+        base_temp = 23.5
+        base_humi = 50.0
         return {
-            "temperature": round(random.uniform(20.0, 30.0), 1),
-            "humidity": round(random.uniform(40.0, 60.0), 1),
+            "temperature": round(base_temp + random.uniform(-0.3, 0.3), 1),
+            "humidity": round(base_humi + random.uniform(-0.5, 0.5), 1),
         }
 
     try:

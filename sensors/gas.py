@@ -23,7 +23,7 @@ def read_gas_level(simulate=True):
     global _gas_history
     
     if simulate:
-        raw_value = random.randint(100, 200)
+        raw_value = random.randint(122, 128)  # 평상시 안정된 적정값 (임계값 400 대비 안전)
     else:
         try:
             from gpiozero import MCP3008

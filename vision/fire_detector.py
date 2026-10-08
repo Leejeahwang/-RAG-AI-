@@ -29,7 +29,7 @@ POSSIBLE_MODELS = [
 ]
 
 model = None
-CONFIDENCE_THRESHOLD = 0.10  # 10% 이상의 확신이 있을 때 후보군 추출 후 동역학 분석
+CONFIDENCE_THRESHOLD = 0.35  # 최소 35% 이상의 확신이 있을 때만 후보군으로 검토 (20% 미만 오탐 원천 차단)
 
 try:
     from vision.smoke_motion import SmokeMotionAnalyzer
@@ -200,6 +200,18 @@ def detect_fire(image_path):
                 "confidence": round(max_conf, 2),
                 "description": f"🚨 [조기 감지] 미세 연기 상방 확산 포착 (확신도: {max_conf*100:.1f}%)",
                 "is_real_smoke": True,
+                "is_static_photo": False,
+                "detected_classes": list(detected_classes),
+                "status": motion_status
+            }
+
+        # 3. 확신도가 35% 미만인 미약한 감지인데 진짜 연기 상승도 아닌 경우 -> 오탐 차단 (안전 유지)
+        if max_conf < 0.35 and not is_real_smoke:
+            return {
+                "fire_detected": False,
+                "confidence": round(max_conf, 2),
+                "description": f"화재 위험성 낮음 (AI 확신도: {max_conf*100:.1f}%, 안전 기준치 35% 미만)",
+                "is_real_smoke": False,
                 "is_static_photo": False,
                 "detected_classes": list(detected_classes),
                 "status": motion_status

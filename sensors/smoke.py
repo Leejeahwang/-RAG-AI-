@@ -26,7 +26,7 @@ def read_smoke_level(simulate=True):
     global _smoke_history
     
     if simulate:
-        raw_value = random.randint(50, 150)  # 평상시 범위
+        raw_value = random.randint(78, 83)  # 평상시 안정된 적정값 (임계값 300 대비 안전)
     else:
         try:
             from gpiozero import MCP3008
