@@ -27,6 +27,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_CONNECT_TIMEOUT = float(os.getenv("GEMINI_CONNECT_TIMEOUT", "2"))
 GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "8"))
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "2048"))
 GEMINI_RETRY_COOLDOWN = float(os.getenv("GEMINI_RETRY_COOLDOWN", "60"))
 GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "false").lower() == "true"
 OLLAMA_EMERGENCY_TIMEOUT = float(os.getenv("OLLAMA_EMERGENCY_TIMEOUT", "15"))

@@ -100,7 +100,7 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         "질문에 관련된 문장을 원문 그대로 한 줄씩 인용하십시오. "
         if require_quotes else
         "질문에 관련된 내용을 요약하고 자연스러운 한국어로 바꾸어 설명해도 됩니다. "
-        "핵심 행동을 짧은 항목으로 안내하십시오. "
+        "핵심 행동을 최대 6개의 짧은 항목으로 안내하고 서론은 생략하십시오. "
     )
     payload = {
         "systemInstruction": {"parts": [{"text": (
@@ -112,7 +112,7 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         "contents": [{"role": "user", "parts": [{"text":
             f"[참고 매뉴얼]\n{context}\n\n[질문]\n{question}"
         }]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
+        "generationConfig": {"temperature": 0, "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS},
     }
     response = requests.post(
         _GEMINI_URL.format(model=model),

@@ -29,6 +29,7 @@ class ProviderTests(unittest.TestCase):
         self.assertFalse(provider._is_grounded("물을 사용", "물을 사용하지 마십시오."))
         self.assertFalse(provider._is_grounded("**", "매뉴얼"))
 
+    @patch.object(config, "GEMINI_MAX_OUTPUT_TOKENS", 1024)
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")
     @patch.object(provider, "_local")
@@ -41,6 +42,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.provider, "gemini")
         self.assertEqual(result.text, "안전한 곳으로 대피하십시오.")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
+        self.assertEqual(post.call_args.kwargs["json"]["generationConfig"]["maxOutputTokens"], 1024)
         local.assert_not_called()
 
     @patch.object(config, "AI_PROVIDER", "auto")
