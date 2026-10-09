@@ -78,13 +78,13 @@ sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential git curl \
   portaudio19-dev libsndfile1 ffmpeg alsa-utils libopenblas-dev \
   libgl1 libglib2.0-0 liblgpio-dev swig
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements_torch_cpu.txt
-.venv/bin/python -m pip install -r requirements_rpi.txt
-.venv/bin/python download_models.py --target ppaso
-.venv/bin/python download_models.py --target rag
-.venv/bin/python tools/rebuild_rag_index.py
-.venv/bin/python main.py
+python3.11 -m venv .venv-py311
+.venv-py311/bin/python -m pip install -r requirements_torch_cpu.txt
+.venv-py311/bin/python -m pip install -r requirements_rpi.txt
+.venv-py311/bin/python download_models.py --target ppaso
+.venv-py311/bin/python download_models.py --target rag
+.venv-py311/bin/python tools/rebuild_rag_index.py
+.venv-py311/bin/python main.py
 ```
 
 PPASO의 한국어 G2P는 `from mecab import MeCab`로 실제 형태소 분석까지 확인해야 합니다. 지원 wheel이 없다면 [MeCab 공식 소스 설치 안내](https://python-mecab-ko.readthedocs.io/en/latest/install/)와 migration 가이드의 네이티브 설치 절차를 사용합니다. Linux 시스템 음성 대체 경로가 필요하면 `sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1`을 추가합니다. espeak 성공과 PPASO·pygame 재생 성공은 별도이며 `tools/diagnose_pi_tts.py`로 합성과 재생을 나눠 확인합니다.

@@ -62,19 +62,24 @@ sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1
 
 ## 3. 가상환경과 Python 패키지
 
+**Python 3.11을 사용합니다.** 이번 Raspberry Pi 시험에서는 Debian 13(trixie)의 Python 3.13.5에서 프로젝트의 `numpy>=1.26,<2` 조건과 `ml_dtypes`의 Python 3.13용 NumPy 조건이 충돌했습니다. requirements 파일은 수정하지 않고 Python 3.11.17 가상환경에서 설치·pip check 및 RAG·Gemini·TTS 실행을 확인했습니다. STT와 실제 카메라·센서 동작은 검증하지 않았습니다.
+
+먼저 `python3.11 --version`으로 인터프리터가 있는지 확인하세요. 이번 Pi에서는 `/home/raspi/.local/bin/python3.11`을 사용했습니다. 명령을 찾지 못하면 Python 3.11과 해당 venv 지원을 별도로 준비해야 합니다. `python3-venv`는 OS 기본 Python용이므로 다른 버전의 venv 지원을 보장하지 않습니다. 시스템 기본 Python을 교체하거나 requirements의 NumPy 제한을 임의로 풀지 마세요.
+
 새 환경을 만드는 경우:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv-py311
+source .venv-py311/bin/activate
 python --version
 python -c "import sys; assert sys.prefix != sys.base_prefix, '가상환경이 활성화되지 않았습니다'; print(sys.executable)"
 python -m pip install --upgrade pip wheel
 python -m pip install -r requirements_torch_cpu.txt
 python -m pip install -r requirements_rpi.txt
+python -m pip check
 ```
 
-이미 동작하는 Pi 환경을 재사용하는 경우에는 첫 두 명령 대신 그 환경의 `bin/activate`를 지정합니다. 예:
+기존 Pi 환경은 Python 3.11인지 확인한 뒤에만 재사용합니다. 모델 파일이 있다고 가상환경의 Python 버전도 호환되는 것은 아닙니다. 재사용할 때는 첫 두 명령 대신 그 환경의 `bin/activate`를 지정합니다. 예:
 
 ```bash
 source /home/raspi/Desktop/RAG/-RAG-AI-/.venv/bin/activate
@@ -175,7 +180,7 @@ python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하
 **새 터미널을 열 때도** 환경을 활성화한 뒤 다음 두 경로 설정을 적용하고 앱을 실행합니다. `export` 설정은 현재 셸에만 적용되며, 가상환경을 활성화하는 것만으로 자동 복원되지 않습니다.
 
 ```bash
-source .venv/bin/activate
+source .venv-py311/bin/activate
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```

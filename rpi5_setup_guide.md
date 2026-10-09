@@ -1,10 +1,10 @@
 # Raspberry Pi 5 설치·실행 가이드 — 현재 통합 버전
 
-2026-10-09 기준으로 main.py, main_test.py, config.py와 설치 목록을 대조한 안내입니다. 세부 이전·MeCab 설치 절차는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 함께 사용합니다. 실제 Pi 전체 설치·마이크·스피커·GPIO 검증은 아직 수행하지 않았습니다.
+2026-10-09 기준 안내입니다. Raspberry Pi의 Debian 13(trixie), aarch64, Python 3.11.17 환경에서 requirements 설치와 pip check, main_test.py의 RAG 검색·Gemini 답변·원격 PC TTS 재생을 확인했습니다. STT와 실제 카메라·센서·GPIO 동작은 미검증입니다. 세부 이전·MeCab 설치 절차는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 함께 사용합니다.
 
 ## 1. 코드와 실행 환경 준비
 
-64-bit Raspberry Pi OS, aarch64, Python 3.11을 기준으로 준비합니다. Bookworm의 Python 3.11 환경을 기준으로 했으며 다른 OS/Python에서는 ARM wheel 제공 여부를 확인해야 합니다.
+64-bit Raspberry Pi OS, aarch64, **Python 3.11**을 기준으로 준비합니다. 이번 시험에서는 기본 Python 3.13.5에서 NumPy 의존성 충돌로 설치에 실패했고, requirements를 수정하지 않고 Python 3.11.17 가상환경으로 설치·실행했습니다. 시스템 기본 Python을 교체하지 말고 별도의 Python 3.11 가상환경을 사용하세요.
 
 통합 버전은 `integration/vision-rag-voice` 브랜치입니다. 원격 feature/RAG만 clone하면 여기의 vision_bridge.py 및 통합 수정 사항은 포함되지 않습니다. 아래 브랜치를 복제하거나 현재 작업 폴더를 USB로 옮겨 사용합니다.
 
@@ -25,20 +25,23 @@ Windows .venv와 __pycache__는 복사해 사용하지 않습니다. SBERT와 Ol
 
 ```bash
 uname -m
-python3 --version
+python3.11 --version
 # 복사한 프로젝트 루트로 이동한 뒤 실행
 ls main.py main_test.py vision_bridge.py requirements_rpi.txt
 ```
 
 ## 2. 시스템 패키지와 가상환경
 
+먼저 `python3.11 --version`이 성공해야 합니다. 명령이 없으면 Python 3.11과 해당 venv 지원을 별도로 준비하세요. 이번 Pi의 인터프리터는 `/home/raspi/.local/bin/python3.11`이었습니다. 아래 `python3-venv` 패키지는 OS 기본 Python용이므로 기본 버전이 3.13인 환경에서는 3.11용 venv 지원을 별도로 확인해야 합니다.
+
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential git curl \
   portaudio19-dev libsndfile1 ffmpeg alsa-utils libopenblas-dev \
   libgl1 libglib2.0-0 swig liblgpio-dev
-python3 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv-py311
+source .venv-py311/bin/activate
+python --version
 python -m pip install --upgrade pip wheel
 python -m pip install -r requirements_torch_cpu.txt
 python -m pip install -r requirements_rpi.txt
