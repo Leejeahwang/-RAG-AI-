@@ -249,7 +249,7 @@ python tools/diagnose_pi_tts.py --stage play
 python tools/diagnose_pi_tts.py --stage project
 ```
 
-각 명령은 따로 실행합니다. synth 실패는 PPASO 모델/의존성부터, aplay 성공 후 play 실패는 SDL/pygame 출력 경로부터 확인합니다. 상세 판정은 PI_TTS_DIAGNOSIS.md를 참고하세요. 무음 진단 때 프로젝트를 먼저 종료하고 동일 사용자와 가상환경을 사용합니다.
+각 명령은 따로 실행합니다. synth 실패는 PPASO 모델/의존성부터, aplay 성공 후 play 실패는 SDL/pygame 출력 경로부터 확인합니다. 무음 진단 때 프로젝트를 먼저 종료하고 동일 사용자와 가상환경을 사용합니다.
 
 .env 예시는 demo 센서 모드, PPASO, Whisper small, 구역 A입니다. 현장의 ZONE_ID와 평면도를 검토하세요. Gemini 키와 모델은 본인 계정에서 사용 가능한 값으로 설정합니다. HTTPError가 있으면 API 응답의 상태 코드와 오류를 확인해야 하며, 기존에 확인한 무효 키 오류는 키 교체와 프로그램 재시작이 필요합니다. 로컬 확인은 /ai local을 사용합니다. 첫 비상 안내는 공통 고정 문구이고 구역 대피로는 후속 생성 컨텍스트에 포함됩니다. 세 항목 형식의 출력이나 첫 안내에서 구역 대피로 낭독을 보장하지 않습니다.
 

@@ -87,7 +87,7 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
-PPASO의 한국어 G2P는 `from mecab import MeCab`로 실제 형태소 분석까지 확인해야 합니다. 지원 wheel이 없다면 [MeCab 공식 소스 설치 안내](https://python-mecab-ko.readthedocs.io/en/latest/install/)와 migration 가이드의 네이티브 설치 절차를 사용합니다. Linux 시스템 음성 대체 경로가 필요하면 `sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1`을 추가합니다. espeak 성공과 PPASO·pygame 재생 성공은 별도이며 [음성 진단](PI_TTS_DIAGNOSIS.md)으로 구분합니다.
+PPASO의 한국어 G2P는 `from mecab import MeCab`로 실제 형태소 분석까지 확인해야 합니다. 지원 wheel이 없다면 [MeCab 공식 소스 설치 안내](https://python-mecab-ko.readthedocs.io/en/latest/install/)와 migration 가이드의 네이티브 설치 절차를 사용합니다. Linux 시스템 음성 대체 경로가 필요하면 `sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1`을 추가합니다. espeak 성공과 PPASO·pygame 재생 성공은 별도이며 `tools/diagnose_pi_tts.py`로 합성과 재생을 나눠 확인합니다.
 
 실제 온도 센서는 현재 `Adafruit_DHT.DHT11`/GPIO4이며 이 구형 드라이버의 Pi 5 호환성은 미검증입니다. 기본 설치 목록에 자동으로 추가하지 않았습니다. `hardware` 모드는 드라이버·배선 검증 후 사용하세요. 현재 Windows에서 수행한 성능·음성 검증을 Pi 결과로 해석하지 마세요. STT 모델이 필요하면 별도로 `--target stt`를 실행합니다. `--target all`은 PPASO와 RAG만 준비합니다.
 
@@ -134,4 +134,4 @@ requirements는 완전한 버전 잠금 파일이 아니며 새 ARM 환경의 �
 - PPASO 합성을 계산 중에 강제로 중단하지는 않습니다. 중단된 작업의 합성 결과를 재생하지 않고 다음 안내를 처리합니다.
 - 현재 관제 알림은 콘솔 출력이며 외부 관제 전송과 GUI 통합은 후속 작업입니다.
 
-기존 실행 코드와 인덱스의 복구 자료는 `scratch/integration_backup_20261009/`에 있습니다. 통합 결과와 검증 범위는 `INTEGRATION_RESULT.md`, 원래 계획은 `INTEGRATION_PLAN.md`를 참고하세요.
+기존 실행 코드와 인덱스의 복구 자료는 `scratch/integration_backup_20261009/`에 있습니다. 통합 결과와 검증 범위는 `INTEGRATION_RESULT.md`를 참고하세요.

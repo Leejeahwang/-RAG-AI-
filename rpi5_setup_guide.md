@@ -116,7 +116,7 @@ python tools/diagnose_pi_tts.py --stage play
 python tools/diagnose_pi_tts.py --stage project
 ```
 
-각 명령을 별도로 실행하고 실제 소리가 들리는지 확인합니다. espeak가 들려도 PPASO 합성/pygame 재생은 실패할 수 있습니다. 단계별 해석은 [PI_TTS_DIAGNOSIS.md](PI_TTS_DIAGNOSIS.md)를 참고합니다. SDL_AUDIODRIVER=dummy로 실행하면 실제 스피커 검증이 되지 않습니다.
+각 명령을 별도로 실행하고 실제 소리가 들리는지 확인합니다. espeak가 들려도 PPASO 합성/pygame 재생은 실패할 수 있습니다. synth 실패는 모델·합성 의존성을 확인하고, aplay는 들리지만 play가 무음이면 pygame/SDL 출력 경로를 확인합니다. SDL_AUDIODRIVER=dummy로 실행하면 실제 스피커 검증이 되지 않습니다.
 
 ## 6. 평시 문답과 통합 실행
 
