@@ -4,6 +4,7 @@
 
 ---
 # [v17 - 일회용 엔진 전략] (Linux/Windows)
+```bash
 try:
     # 1. 리눅스(라즈베리파이) 환경일 경우 espeak 드라이버 명시
     if platform.system().lower() == "linux":
@@ -28,6 +29,7 @@ try:
     
     temp_engine.say(text)
     temp_engine.runAndWait()
+```
 
 ## 🛠️ 1. 하드웨어 및 OS 권장사항
 
