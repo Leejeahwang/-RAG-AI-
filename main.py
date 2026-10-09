@@ -29,6 +29,7 @@ from sensors.smoke import read_smoke_level
 import vision_bridge
 from vision_bridge import cctv_service, fire_detector
 from voice.tts import TTSHelper
+from gui import edge_publisher as edge
 
 LOG = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class EdgeSaver:
             rag_manager.load_resources()
         _ = self.tts
         fire_detector.warmup()
+        edge.start()
         # STT is lazy: camera startup never waits for Whisper or a microphone.
         cctv_service.camera_running = True
         self._monitor_running = True
@@ -115,6 +117,8 @@ class EdgeSaver:
             self.tts.stop()
             trigger_alarm(level, sensor_info)
             send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
+            edge.publish_event("alarm_start", level=level, details=sensor_info,
+                               text=EMERGENCY_GUIDANCE, provider="fixed")
             print(f"\n[첫 비상 안내] {EMERGENCY_GUIDANCE}")
             self.tts.speak_async(EMERGENCY_GUIDANCE, lang="ko", speed=self._speed())
             stop_siren()
@@ -135,6 +139,7 @@ class EdgeSaver:
             self._discard_pending_jobs()
             self.tts.stop()
             stop_siren(force=True)
+            edge.publish_event("alarm_end")
             print("\n[시스템] 정상 복귀, 비상 방송 종료")
 
     def _process_query(self, query, lang="ko"):
@@ -182,6 +187,7 @@ class EdgeSaver:
                     if not self._job_valid(job):
                         continue
                     print(f"\n[AI: {result.provider}] {result.text}")
+                    edge.publish_guidance(result, emergency=job["emergency"])
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
                         self._cached_evac_guidance = result.text
@@ -237,6 +243,9 @@ class EdgeSaver:
             label = config.RISK_LEVELS.get(self.current_level, "정상")
             self.current_risk_stats = (f"[{config.SENSOR_MODE}] T:{temp['temperature']}C G:{gas} S:{smoke} "
                                        f"CAM:{analysis.get('status', 'UNKNOWN')} | {label}")
+            edge.publish_monitor(temp=temp, gas=gas, smoke=smoke, risk=risk, analysis=analysis,
+                                 level=self.current_level, alarm=self._alarm_active,
+                                 frame=frame if fresh else None)
 
     def _monitor_sensors(self):
         while not self._stop.is_set():
@@ -340,6 +349,7 @@ class EdgeSaver:
                     LOG.exception("오디오 입력 정리 실패")
         if self._tts:
             self._tts.close()
+        edge.close()
         for thread in self._threads:
             thread.join(timeout=1)
 
