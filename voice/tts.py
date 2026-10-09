@@ -51,6 +51,48 @@ class TTSHelper:
     def _valid(self, generation):
         return not self._stop_event.is_set() and generation == self._generation
 
+    @property
+    def engine_type(self):
+        with self._lock:
+            return self._engine_type
+
+    def set_engine(self, engine_type):
+        """Switch engines without allowing cancelled work to use a new engine."""
+        engine_type = engine_type.strip().upper()
+        if engine_type not in {"PPASO", "PYTTSX3"}:
+            raise ValueError("TTS engine must be PPASO or PYTTSX3")
+        # Prepare before cancelling playback so a failed switch preserves it.
+        if engine_type == "PPASO" and self._ppaso_engine is None:
+            engine = PpasoEngine()
+            if not engine.initialized:
+                raise RuntimeError("PPASO initialization failed")
+            self._ppaso_engine = engine
+        if engine_type == "PPASO" and not self._ppaso_engine.initialized:
+            raise RuntimeError("PPASO unavailable")
+        with self._lock:
+            if self._stop_event.is_set():
+                raise RuntimeError("TTS is closed")
+            if self._engine_type == engine_type:
+                return False
+            self.stop()
+            self._engine_type = engine_type
+            self.last_error = ""
+            return True
+
+    def mode_command_response(self, query):
+        parts = query.strip().split()
+        if not parts or parts[0].lower() != "/tts":
+            return None
+        if len(parts) == 1:
+            return f"[TTS] 현재 엔진: {self.engine_type} | /tts ppaso | /tts pyttsx3"
+        if len(parts) != 2 or parts[1].lower() not in {"ppaso", "pyttsx3"}:
+            return "[TTS] 사용법: /tts | /tts ppaso | /tts pyttsx3"
+        try:
+            changed = self.set_engine(parts[1])
+            return f"[TTS] {'엔진 전환' if changed else '현재 엔진 유지'}: {self.engine_type}"
+        except Exception as exc:
+            return f"[TTS] 전환 실패: {exc} (현재 엔진: {self.engine_type})"
+
     def _play_file(self, path, generation):
         with self._lock:
             if not self._valid(generation):
@@ -101,15 +143,16 @@ class TTSHelper:
                     if not self._valid(generation):
                         continue
                     self._is_speaking = True
+                    engine_type = self._engine_type
+                    local_engine = self._ppaso_engine if engine_type == "PPASO" else self._melo_engine
                 text = self._sanitize_text(text, lang)
                 if not text:
                     continue
-                if self._engine_type == "PYTTSX3" or (self._engine_type == "PPASO" and lang != "ko"):
+                if engine_type == "PYTTSX3" or (engine_type == "PPASO" and lang != "ko"):
                     self._system_speech(text, lang, speed, generation)
                 else:
                     path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
-                    engine = self._ppaso_engine if self._engine_type == "PPASO" else self._melo_engine
-                    if not engine.speak_to_file(text, str(path), lang=lang, speed=speed):
+                    if not local_engine.speak_to_file(text, str(path), lang=lang, speed=speed):
                         raise RuntimeError("Local speech synthesis failed")
                     self._play_file(path, generation)
             except Exception as exc:

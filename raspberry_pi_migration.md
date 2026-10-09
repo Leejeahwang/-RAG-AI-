@@ -244,6 +244,14 @@ python main.py
 
 ## 8. 음성 출력과 설정 확인
 
+실행 중 질문 프롬프트에서 `/tts`로 현재 음성 엔진을 확인합니다. `/tts pyttsx3`로 시스템 음성, `/tts ppaso`로 PPASO 음성으로 전환합니다. main.py와 main_test.py 모두 지원하며 현재 발화와 대기 중 음성을 취소하고 이후 발화에 새 엔진을 사용합니다. 이미 처리 중인 LLM 답변은 취소하지 않습니다. 전환은 현재 실행에만 적용되고 `.env`는 변경하지 않습니다. PPASO 초기화가 실패하면 기존 엔진을 유지합니다.
+
+PYTTSX3는 Linux의 eSpeak 계열 라이브러리와 한국어 목소리가 필요합니다. 아래 패키지를 준비하고 `/tts pyttsx3` 전환 후 새 질문으로 실제 소리를 확인하세요. PPASO의 pygame 재생과 PYTTSX3의 시스템 재생은 경로가 다르므로 PPASO 원격 재생 성공이 PYTTSX3 재생 성공을 보장하지 않습니다. 이번 Pi 시험에서 PYTTSX3 전환 후 원격 재생은 아직 검증하지 않았습니다.
+
+```bash
+sudo apt install espeak-ng libespeak-ng1 espeak-ng-data libespeak1
+```
+
 기본 TTS는 PPASO 합성 후 pygame 재생입니다. 터미널 espeak 성공만으로 이 경로를 검증할 수 없습니다. 현재 통합 TTS는 PPASO 초기화 실패 시 PYTTSX3로 전환하고 실제 엔진을 표시합니다. Linux 시스템 음성은 pyttsx3이며 SAPI5는 Windows 전용입니다. 한국어 시스템 목소리가 없으면 오류를 표시합니다.
 
 ```bash
@@ -258,9 +266,76 @@ python tools/diagnose_pi_tts.py --stage project
 
 .env 예시는 demo 센서 모드, PPASO, Whisper small, 구역 A입니다. 현장의 ZONE_ID와 평면도를 검토하세요. Gemini 키와 모델은 본인 계정에서 사용 가능한 값으로 설정합니다. HTTPError가 있으면 API 응답의 상태 코드와 오류를 확인해야 하며, 기존에 확인한 무효 키 오류는 키 교체와 프로그램 재시작이 필요합니다. 로컬 확인은 /ai local을 사용합니다. 첫 비상 안내는 공통 고정 문구이고 구역 대피로는 후속 생성 컨텍스트에 포함됩니다. 세 항목 형식의 출력이나 첫 안내에서 구역 대피로 낭독을 보장하지 않습니다.
 
+## 9. 원격 데스크톱에서 Windows PC로 음성 듣기
+
+Pi에 스피커가 없고 Windows 원격 데스크톱으로 접속한다면 xrdp의 오디오 전달 기능을 사용합니다. 이번 Debian 13(trixie), PipeWire 1.4.2 환경에서 아래 절차로 main_test.py의 TTS를 Windows PC에서 들을 수 있었습니다. 물리 스피커 출력이나 STT 마이크 입력은 별도 검증 대상입니다.
+
+### Windows 접속 설정
+
+Windows에서 `Win + R` → `mstsc` → **옵션 표시 → 로컬 리소스 → 원격 오디오 → 설정 → 이 컴퓨터에서 재생**을 선택합니다. 설정 변경 후 다시 연결하세요. 현재 접속 화면 안이 아니라 접속 전 Windows 설정 창에서 변경합니다.
+
+### Pi의 원격 오디오 모듈 설치
+
+아래는 이번에 확인한 PipeWire 환경용입니다. 다른 OS나 PulseAudio 환경에서는 패키지와 설정이 다를 수 있습니다.
+
+```bash
+sudo apt update
+sudo apt install pipewire-module-xrdp pulseaudio-utils
+```
+
+설치가 정상 완료되면 `sudo reboot`으로 재부팅하고 원격 데스크톱으로 다시 연결합니다. `pulseaudio-utils`는 확인 도구인 `pactl`을 제공하며, 별도의 PulseAudio 서버로 교체하는 명령이 아닙니다.
+
+### 원격 터미널의 오디오 연결 경로 확인
+
+이번 원격 세션에서는 PipeWire가 이미 실행 중인데도 `XDG_RUNTIME_DIR`가 비어 있고 D-Bus 주소가 `/tmp/dbus-…`를 가리켰습니다. 이때 `pactl`은 `Connection refused`, `systemctl --user`는 `Process org.freedesktop.systemd1 exited with status 1` 오류를 냈습니다. 먼저 사용자 서비스와 버스 파일을 확인합니다.
+
+```bash
+echo "$XDG_RUNTIME_DIR"
+echo "$DBUS_SESSION_BUS_ADDRESS"
+ls -l "/run/user/$(id -u)/bus"
+systemctl status "user@$(id -u).service" --no-pager -l
+```
+
+버스 파일이 존재하고 사용자 서비스가 `active (running)`이면 **sudo 없이 같은 터미널에서** 아래를 실행합니다. 파일이 없거나 사용자 서비스가 실패 상태라면 먼저 사용자 세션 문제를 해결해야 합니다.
+
+```bash
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+systemctl --user start pipewire pipewire-pulse wireplumber
+/usr/libexec/pipewire-module-xrdp/load_pw_modules.sh
+pactl info
+pactl list short sinks
+```
+
+이번에는 `Default Sink: xrdp-sink`와 출력 목록의 `xrdp-sink`를 확인했습니다. 출력이 존재하지만 기본 장치가 다르면 `pactl set-default-sink xrdp-sink`로 선택한 뒤 앱을 다시 실행하세요. 재생 전 `SUSPENDED` 상태만으로 오류라고 판단하지 않습니다.
+
+**설정한 같은 터미널에서 프로젝트 루트로 이동한 뒤** 실행합니다.
+
+```bash
+source .venv-py311/bin/activate
+SDL_AUDIODRIVER=pulseaudio STT_ENABLED=false python main_test.py
+```
+
+이 시험은 STT를 끄고 키보드 질문·RAG·Gemini·TTS만 확인합니다. `ALSA: Couldn't open audio device: Unknown error 524` 또는 `Could not setup connection to PulseAudio`가 나오면 오디오 서버·연결 경로·출력 장치를 확인하세요. 합성 모델을 다시 다운로드하는 것으로 해결되는 오류는 아닙니다.
+
+위 `export`는 현재 터미널에만 적용됩니다. 새 터미널이나 재접속 후에는 확인·설정 절차를 다시 적용해야 할 수 있습니다. 원격 세션 시작 설정에 대한 영구 수정은 이번 시험에서 수행하지 않았습니다.
+
+## 10. 첫 문답의 검색 지연
+
+이번 Pi 시험에서 첫 질문의 검색은 **39.499초**, 이후 서로 다른 질문의 검색은 **0.248초·0.214초**였습니다. BGE reranker는 OFF였으며, 반복 검색 자체는 빠르게 동작했습니다. 현재 검색 경로에는 질문을 벡터로 변환하는 SBERT의 `model.encode()`가 포함됩니다. 실행 초기에 모델을 로드하지만 예제 질문으로 검색 임베딩을 워밍업하는 단계는 없습니다.
+
+이 패턴은 첫 추론의 초기 준비 비용을 시사하지만, 내부 단계별 측정 없이 39초 전체를 SBERT의 특정 작업으로 단정할 수는 없습니다. 첫 검색이 느리면 같은 실행에서 다른 질문을 추가해 반복 검색 시간을 비교하세요. 반복 질문도 계속 느리다면 별도의 CPU·메모리·추론 시간 진단이 필요합니다.
+
+`[시간] 검색 / 답변 / 음성` 로그는 단계별로 봅니다. 검색은 로컬 검색 처리, 답변은 LLM 생성, 음성은 **합성과 재생 완료 대기**를 포함합니다. 예를 들어 음성 시간이 60초라고 해서 합성 계산만 60초 걸렸다는 뜻은 아닙니다.
+
+개선안은 앱 초기화 중 예제 문장을 한 번 임베딩하고 워밍업 완료 후 준비 상태를 표시하는 것입니다. 이는 첫 질문 지연을 시작 단계로 옮기는 방식이며 전체 준비 비용이 사라지는 것은 아닙니다. **현재 브랜치에는 이 워밍업 개선을 적용하지 않았습니다.**
+
 ## 공식 참고 자료
 
 - [CPU PyTorch 설치](https://pytorch.org/get-started/locally/)
 - [python-mecab-ko 설치](https://python-mecab-ko.readthedocs.io/en/latest/install/)
 - [pygame mixer](https://www.pygame.org/docs/ref/mixer.html)
+- [Debian PipeWire xrdp 패키지](https://packages.debian.org/trixie/pipewire-module-xrdp)
+- [PipeWire xrdp 모듈](https://github.com/neutrinolabs/pipewire-module-xrdp)
+- [Windows 원격 데스크톱 오디오 설정](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-pc-connections-faq)
 - [Raspberry Pi 카메라 소프트웨어](https://www.raspberrypi.com/documentation/computers/camera_software.html)

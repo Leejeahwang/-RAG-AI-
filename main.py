@@ -291,7 +291,7 @@ class EdgeSaver:
         self.initialize()
         if self.session is None and not config.SIMPLE_UI:
             self.session = PromptSession()
-        print("질문 | v: 음성 | test fire: 데모 경보 | /ai auto|api|local | q: 종료")
+        print("질문 | v: 음성 | test fire: 데모 경보 | /ai auto|api|local | /tts ppaso|pyttsx3 | q: 종료")
         with patch_stdout():
             while not self._stop.is_set():
                 try:
@@ -299,6 +299,10 @@ class EdgeSaver:
                              if self.session else input("질문: ")).strip()
                     if query.lower() in {"q", "exit", "quit"}:
                         break
+                    tts_response = self.tts.mode_command_response(query)
+                    if tts_response is not None:
+                        print(tts_response)
+                        continue
                     mode_response = mode_command_response(query)
                     if mode_response is not None:
                         print(mode_response)

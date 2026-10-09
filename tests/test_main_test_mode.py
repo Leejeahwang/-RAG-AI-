@@ -14,6 +14,7 @@ class NormalQATestMode(unittest.TestCase):
         with patch('main_test.PromptSession'):
             self.app = main_test.EdgeSaverTest()
         self.app._tts = Mock()
+        self.app._tts.mode_command_response.return_value = None
         self.app._tts.wait_until_idle.return_value = True
         self.addCleanup(self.app._stop_query_worker)
 

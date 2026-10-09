@@ -62,7 +62,7 @@ def speak(text, lang='ko', rate=180, volume=1.0):
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
-        # print(f"TTS Error: {e}", file=sys.stderr)
+        print(f"TTS Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

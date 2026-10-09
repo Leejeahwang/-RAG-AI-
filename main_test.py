@@ -438,6 +438,7 @@ class EdgeSaverTest:
         else:
             print("       - 화면 꼬임 방지를 위한 '하단 고정 툴바 UI'가 적용되었습니다.")
         print("       - /ai auto, /ai api, /ai local 명령으로 답변 엔진을 즉시 전환합니다.")
+        print("       - /tts로 현재 음성 엔진 확인, /tts ppaso 또는 /tts pyttsx3로 전환합니다.")
         print("       - 'q' 입력 시 종료됩니다.\n")
 
         self._monitor_running = True
@@ -461,6 +462,10 @@ class EdgeSaverTest:
                     print(f"\n📢 [실시간 상태] {self.current_risk_stats}")
                     query = input("❓ 질문: ").strip()
                     
+                    tts_response = self.tts.mode_command_response(query)
+                    if tts_response is not None:
+                        print(tts_response)
+                        continue
                     mode_response = mode_command_response(query)
                     if mode_response is not None:
                         print(mode_response)
@@ -507,6 +512,10 @@ class EdgeSaverTest:
                                     query = re.sub(r'❓\s*질문:\s*', '', query)
                                     query = query.strip()
                                     
+                                tts_response = self.tts.mode_command_response(query)
+                                if tts_response is not None:
+                                    print(tts_response)
+                                    continue
                                 mode_response = mode_command_response(query)
                                 if mode_response is not None:
                                     print(mode_response)

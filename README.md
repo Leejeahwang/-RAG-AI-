@@ -36,6 +36,8 @@ feature/RAG의 `main_test.py`를 현재 통합 모듈에 맞춰 가져왔습니�
 
 Python 3.11 환경을 기준으로 검증했습니다.
 
+실행 중 `main.py`와 `main_test.py`의 질문 프롬프트에서 `/tts`로 현재 엔진을 확인하고, `/tts pyttsx3` 또는 `/tts ppaso`로 음성 엔진을 전환합니다. 전환 시 기존 발화를 중단하며 실행 중인 LLM 답변은 유지합니다. 설정은 현재 실행에만 적용됩니다. Linux의 시스템 음성 설치와 원격 오디오 설정은 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 참고하세요.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
