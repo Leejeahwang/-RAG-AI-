@@ -94,6 +94,11 @@ def _siren_loop():
     finally:
         _siren_playing = False
         _siren_stop_requested = False
+        try:
+            pygame.mixer.stop()
+            pygame.mixer.quit()  # <--- [핵심] TTS(espeak)가 오디오 장치를 쓸 수 있도록 ALSA 자원 해제
+        except Exception:
+            pass
 
 def start_siren():
     """사이렌을 백그라운드에서 반복 재생합니다."""
