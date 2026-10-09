@@ -1,0 +1,9 @@
+# 관제 PC 대시보드 실행용 (Pi에는 필요 없음)
+# 관제사 질의(RAG/TTS/STT)까지 쓰려면 프로젝트 루트 requirements.txt도 설치하세요.
+# RAG 없이 수신·표시만 할 때는 이 파일만으로 충분합니다.
+streamlit>=1.40
+paho-mqtt>=1.6
+pandas
+numpy>=1.26,<2
+python-dotenv
+opencv-python>=4.10,<4.12   # fake_edge.py 가짜 카메라 영상용

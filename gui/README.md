@@ -1,38 +1,81 @@
-🖥️ Edge Saver 통합 관제 대시보드 (Dashboard)
-본 모듈은 Edge Saver 프로젝트의 프론트엔드이자 통합 제어 시스템으로, 라즈베리파이 5 환경에서 실시간 데이터 시각화 및 지능형 AI 대응을 총괄하는 지능형 관제 플랫폼입니다. 단순한 모니터링을 넘어, 센서 데이터와 비전 분석을 결합한 위험 판단 및 RAG(검색 증강 생성) 기반의 음성 가이드를 실시간으로 제공합니다.
+# EDGE SAVER 원격 관제 대시보드
 
-📐 인터페이스 레이아웃 (Interface Layout)
-사용자 편의성과 긴급 상황 시 정보 인지 속도를 극대화하기 위해 2.1:1 분할 레이아웃을 적용했습니다.
+라즈베리파이 5는 화면 없이 혼자 감시·경보·대피 방송을 합니다. 이 대시보드는 Pi가 MQTT로 보낸 결과를 노트북·관제 PC 브라우저에 **표시만** 합니다.
 
-상단 헤더 (Header): 시스템 타이틀과 함께 오작동 방지 로직이 적용된 전원 종료(⏻) 버튼 배치.
+```
+라즈베리파이 main.py ──MQTT(Pi의 mosquitto)──▶ 관제 PC  streamlit run gui/dashboard.py
+   판단·경보·방송                                 표시 + 관제사 질의(자체 RAG)
+```
 
-좌측 메인 패널 (Main Monitor):
+- 판단은 Pi가 합니다. 대시보드는 위험도를 다시 계산하지 않고, 카메라·센서·경보를 직접 다루지 않습니다.
+- 네트워크가 끊겨도 Pi는 혼자 방송을 계속합니다. 대시보드는 그 구역을 **신호 없음**으로 표시합니다.
+- 관제사 질문은 관제 PC가 자체 RAG로 답합니다. RAG가 없어도 수신·표시는 동작합니다.
 
-CCTV Stream: 실시간 영상 출력 및 YOLOv8 기반 화재 탐지 결과 시각화.
+## 파일
 
-Voice Control: 음성 브리핑 활성화 토글 및 실시간 상태 표시.
+| 파일 | 역할 | 실행 위치 |
+|---|---|---|
+| `dashboard.py` | Streamlit 진입점, 레이아웃 | 관제 PC |
+| `components.py` | CSS와 화면 패널 | 관제 PC |
+| `state.py` | 구역별 수신 상태 (thread-safe) | 관제 PC |
+| `workers.py` | MQTT 수신, 관제사 질의 RAG·STT | 관제 PC |
+| `protocol.py` | 메시지 형식 (만들기·읽기) | 양쪽 |
+| `mqtt_settings.py` | 브로커 주소·토픽·주기 설정 | 양쪽 |
+| `edge_publisher.py` | Pi 발행 모듈 (`main.py`가 호출) | Pi |
+| `fake_edge.py` | PC 테스트용 가짜 Pi | 관제 PC |
+| `PROTOCOL.md` | 메시지 형식 문서 | |
+| `MAIN_INTEGRATION.md` | `main.py`에 넣을 발행 코드와 Pi 설정 | |
+| `tests/` | 메시지 형식·수신·발행 테스트 | |
 
-Tactical Feed: 시스템의 가동 상태와 AI 판단 근거를 타임스탬프와 함께 출력하는 실시간 전술 로그.
+## 실행
 
-우측 사이드바 (Data Intelligence):
+### 관제 PC
 
-Sensor Metrics: 온도(°C), 가스 농도, 연기 농도를 3열 메트릭으로 정밀 표시.
+```powershell
+pip install -r gui/requirements_dashboard.txt
+$env:MQTT_BROKER_HOST = "192.168.0.50"     # Pi의 IP
+streamlit run gui/dashboard.py
+```
 
-Risk Gauge: fusion.py 연산 결과(Level 1~5)를 위험도에 따라 색상이 변하는 수평형 프로그레스 바로 시각화.
+`.env`에 `MQTT_BROKER_HOST=192.168.0.50`을 넣어도 됩니다. 관제사 질의(RAG·음성)까지 쓰려면 루트 `requirements.txt`와 RAG 인덱스도 준비하세요. 마이크를 쓰지 않으면 `.env`에 `STT_ENABLED=false`를 넣습니다.
 
-AI Command Center: RAG 엔진이 생성한 대응 지침을 상시 노출하고 음성 답변을 텍스트로 병행 출력.
+### Pi
 
-🚨 핵심 전술 로직 (Core Tactical Logic)
-1. 비동기 멀티스레딩 아키텍처 (Parallel Processing)
-관제 연속성을 보장하기 위해 병렬 처리 기술을 적용했습니다.
+`main.py`에 발행 코드를 넣고 mosquitto를 설정합니다. 방법은 [MAIN_INTEGRATION.md](MAIN_INTEGRATION.md)에 있습니다.
 
-Background Workers: CCTV 영상 수집과 STT(음성 인식) 엔진을 각각 별도의 스레드로 운영하여, AI와 교신하는 중에도 감시 화면과 센서 데이터가 멈추지 않는 무중단 관제를 실현했습니다.
+### Pi 없이 PC에서 테스트
 
-Queue-based Communication: 백그라운드에서 인식된 음성 데이터를 큐(Queue)를 통해 메인 루프에 전달하여 자원 충돌을 방지합니다.
+```powershell
+mosquitto -v                                  # 창 1: 로컬 브로커 (mosquitto 설치 필요)
+python -m gui.fake_edge --loop                # 창 2: 가짜 Pi A구역
+python -m gui.fake_edge --zone B --speed 2    # 창 3: (선택) B구역
+streamlit run gui/dashboard.py                # 창 4: 대시보드 (MQTT_BROKER_HOST 기본값 127.0.0.1)
+```
 
-2. 다국어 지능형 음성 인터페이스 (Multilingual AI)
-언어 자동 판별: 정규표현식 기반의 언어 감지 로직을 통해 한국어, 일본어, 영어, 중국어를 실시간으로 구분하여 사용자 언어에 최적화된 답변을 제공합니다.
+가짜 Pi는 다음 순서로 상태를 보냅니다. 정상 → 사진 오탐 차단 → 조기 연기(LV2) → 화재(LV5, 고정 첫 안내) → Gemini 실패로 로컬 Qwen 지침 → 카메라 오프라인 → 정상 복귀.
 
+### 테스트
 
-3. 선제적 대응 및 세이프 가드 (Proactive Safety)
-Emergency Auto-Pilot: 위험 단계 LV.4 이상 또는 화재 감지 시, AI가 즉시 RAG 엔진을 가동하여 **비상 피난 방송(TTS)과 외부 알림(Notifier)**을 선제적으로 실행합니다.
+```powershell
+python -m unittest discover -s gui/tests -t .
+```
+
+## 화면
+
+- **구역 목록**: 연결된 Pi마다 카드를 하나씩 보여 줍니다. 온라인 여부, 위험도, 원시 센서값, 화재·조기 감지·카메라 오프라인·DEMO 배지를 표시하고, 카드를 누르면 상세 화면으로 갑니다.
+- **상세**
+  - 좌측: Pi 카메라 영상(감지 박스 포함), 비전 상태 배지, 관제사 질의 입력
+  - 우측: 센서(ADC 원시값/1023, 임계값), 위험도 게이지(LV 0~5), 로그, 현장 AI 지침(생성 출처·전환 이유)과 관제사 질의 답변
+- **상단**: 경보 중인 구역이 있으면 빨간 배너와 이동 버튼이 나타납니다. 상태 칩은 MQTT 연결, Pi 온라인, 카메라, 센서 모드(DEMO/실센서), 관제 AI를 표시합니다.
+- 보고 있는 구역은 브라우저 탭마다 따로 저장됩니다.
+
+## 표시 규칙
+
+| 항목 | 규칙 |
+|---|---|
+| 센서 | 가스·연기는 ADC 원시값(0~1023)입니다. ppm·%로 표시하지 않습니다. 테두리 색은 `config.SENSOR_THRESHOLDS`를 넘으면 빨강, 80% 이상이면 주황입니다 |
+| 위험도 | 0~5 (0 정상 · 1 주의 · 2 경고 · 3 위험 · 4 긴급 · 5 재난). 경보 중에는 Pi와 같이 시작 단계를 유지하고, 이번 주기 계산값이 다르면 함께 표시합니다 |
+| DEMO | Pi의 `SENSOR_MODE=demo`일 때 표시합니다 (가상 센서값) |
+| 사진 오탐 차단 | 비전 상태가 `STATIC_PHOTO_BLOCKED` 또는 `HANDHELD_PHOTO_BLOCKED`일 때만 표시합니다 |
+| 카메라 오프라인 | Pi가 `CAMERA_OFFLINE`을 보낼 때. 영상이 3초 이상 끊기면 "영상 수신 없음"으로 따로 표시합니다 |
+| 신호 없음 | 마지막 status가 5초 이상 지났거나 Pi가 offline(Last Will)일 때. 이때 위험도는 0으로 취급하고 옛 값을 보여 주지 않습니다 |

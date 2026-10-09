@@ -1,21 +1,54 @@
 """
 gui/components.py - CSS + 모든 UI fragment 한 파일.
+
+표시 전용: 모든 값은 RUNTIME 에 들어온 Pi 의 MQTT 수신값이다.
+여기서 위험도를 다시 계산하거나 경보를 울리지 않는다.
 """
 
 from __future__ import annotations
 
 import time
-import cv2
-import pandas as pd
+from typing import Optional
+
 import streamlit as st
+
+from gui.protocol import LEVEL_LABELS, MAX_LEVEL, provider_label
 from gui.state import (
-    RUNTIME, GAUGE_COLORS, CAM_WIDTH, ALERT_THRESHOLD, STALE_THRESHOLD,
+    RUNTIME, ZoneView, GAUGE_COLORS, ALERT_THRESHOLD,
     REFRESH_CAMERA, REFRESH_SENSORS, REFRESH_GAUGE, REFRESH_AI,
     REFRESH_TREND, REFRESH_LOG, REFRESH_STATUS,
-    MQTT_MODE,
-    escape_html, detect_lang,
+    escape_html,
 )
 from gui import workers as W
+
+try:
+    import config
+    _THRESHOLDS = dict(config.SENSOR_THRESHOLDS)
+except Exception:  # 관제 PC 에서 config 를 못 읽어도 화면은 뜬다
+    _THRESHOLDS = {"smoke_mq2": 300, "gas_mq135": 400, "temperature_high": 60}
+
+# 이 비율 이상이면 주황(주의) 테두리
+_NEAR_RATIO = 0.8
+
+# vision/fire_detector.py · smoke_motion.py 의 status 값 → 화면 문구
+VISION_STATUS_LABELS = {
+    "SAFE": "정상",
+    "WARMING_UP": "움직임 분석 준비",
+    "INITIALIZING": "움직임 분석 준비",
+    "BOX_TOO_SMALL": "감지 영역 작음",
+    "EVALUATING_FIRE_MOTION": "불꽃 움직임 분석 중",
+    "EVALUATING_SMOKE_MOTION": "연기 움직임 분석 중",
+    "REAL_FIRE_FLICKERING": "실제 불꽃 확인",
+    "REAL_SMOKE_RISING": "연기 상승 확인",
+    "STATIC_PHOTO_BLOCKED": "정지 사진 차단",
+    "HANDHELD_PHOTO_BLOCKED": "손에 든 사진 차단",
+    "CAMERA_OFFLINE": "카메라 오프라인",
+    "MODEL_NOT_INITIALIZED": "모델 미준비",
+    "ANALYSIS_ERROR": "분석 오류",
+    "MOTION_ERROR": "움직임 분석 오류",
+    "INVALID_INPUT": "입력 오류",
+    "NO_RESULT": "결과 없음",
+}
 
 
 _CSS = """
@@ -221,6 +254,23 @@ div[data-testid="stButton"] button:hover { border-color:var(--accent); color:var
 @keyframes edgepulse {
     0%,100% { box-shadow:0 0 0 0 rgba(220,38,38,0.7); }
     50% { box-shadow:0 0 0 14px rgba(220,38,38,0); } }
+
+/* 상태 배지 (DEMO, 카메라 오프라인, 조기 감지, 사진 오탐 차단 등) */
+.es-badge { display:inline-block; padding:2px 10px; margin:2px 4px 2px 0;
+    border-radius:6px; border:1px solid var(--border); background:var(--card-2);
+    color:var(--text-soft); font-size:11px; font-weight:800; letter-spacing:.5px; }
+.es-badge.ok { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+.es-badge.warn { color:var(--warn); border-color:var(--warn); background:var(--warn-soft); }
+.es-badge.danger { color:var(--danger); border-color:var(--danger); background:var(--danger-soft); }
+.es-badge.info { color:#38bdf8; border-color:#38bdf8; background:#38bdf822; }
+.es-cam-empty { border:1px dashed var(--border); border-radius:10px; padding:48px 16px;
+    text-align:center; background:var(--card); color:var(--muted); margin-bottom:8px; }
+.es-cam-empty .es-cam-icon { font-size:44px; }
+.es-gauge-ticks { display:flex; justify-content:space-between; margin-top:4px;
+    color:var(--muted); font-size:10px; font-family:'JetBrains Mono',monospace; }
+.es-ai-meta { color:var(--muted); font-size:11px; margin-top:8px; }
+.es-ai-sub { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:1px;
+    margin:12px 0 6px; }
 """
 
 
@@ -233,14 +283,66 @@ def inject_css(theme: str = "dark") -> None:
     )
 
 
-def _is_stale(ts: float) -> bool:
-    return ts > 0 and (time.time() - ts) > STALE_THRESHOLD
+# ════════════════════════════════════════════════════════════
+#  공용 헬퍼
+# ════════════════════════════════════════════════════════════
+
+def active_zone() -> Optional[str]:
+    """브라우저 탭별로 보고 있는 구역 (None = 구역 목록)."""
+    return st.session_state.get("active_zone")
+
+
+def set_active_zone(zone: Optional[str]) -> None:
+    st.session_state["active_zone"] = zone
+
+
+def zone_label(zone: str) -> str:
+    return f"{zone}구역"
 
 
 def _gauge_color(level: int) -> str:
     idx = max(0, min(level, len(GAUGE_COLORS) - 1))
     return GAUGE_COLORS[idx]
 
+
+def _badge(text: str, cls: str = "") -> str:
+    return f"<span class='es-badge {cls}'>{escape_html(text)}</span>"
+
+
+def _chip(ok: bool, label: str, fail_cls: str = "danger") -> str:
+    cls = "es-arm-chip" if ok else f"es-arm-chip {fail_cls}"
+    return f"<span class='{cls}'><span class='es-dot'></span> {escape_html(label)}</span>"
+
+
+def _level_cls(value: float, threshold: float, base: str) -> str:
+    """fusion.py 와 같은 기준: threshold 초과면 위험, 80% 이상이면 주의."""
+    if value > threshold:
+        return f"{base} danger"
+    if value >= threshold * _NEAR_RATIO:
+        return f"{base} active"
+    return base
+
+
+def _ago(ts: float) -> str:
+    if ts <= 0:
+        return "-"
+    sec = max(0, int(time.time() - ts))
+    return f"{sec}초 전" if sec < 120 else f"{sec // 60}분 전"
+
+
+def _vision_label(status: str) -> str:
+    return VISION_STATUS_LABELS.get(status, status or "-")
+
+
+def _offline_box(icon: str, title: str, sub: str = "") -> str:
+    sub_html = f"<div style='font-size:12px;margin-top:6px;'>{escape_html(sub)}</div>" if sub else ""
+    return (f"<div class='es-cam-empty'><div class='es-cam-icon'>{icon}</div>"
+            f"<div style='margin-top:8px;font-weight:700;'>{escape_html(title)}</div>{sub_html}</div>")
+
+
+# ════════════════════════════════════════════════════════════
+#  Header
+# ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=1.0)
 def _clock_fragment() -> None:
@@ -254,32 +356,28 @@ def _clock_fragment() -> None:
 
 @st.fragment(run_every=REFRESH_STATUS)
 def _armed_status_fragment() -> None:
-    risk = RUNTIME.get_risk()
-    if risk.level >= ALERT_THRESHOLD:
+    zones = [v for v in RUNTIME.all_zones() if v.connected]
+    broker_ok, _, _ = RUNTIME.get_broker()
+    level = max((v.level for v in zones), default=0)
+    alarm = any(v.status is not None and v.status.alarm for v in zones)
+    if level >= ALERT_THRESHOLD or alarm:
         chip_cls, chip_label = "es-arm-chip danger", "EMERGENCY"
-    elif risk.level >= 2:
+    elif level >= 2:
         chip_cls, chip_label = "es-arm-chip warn", "ALERT"
+    elif not broker_ok:
+        chip_cls, chip_label = "es-arm-chip warn", "NO LINK"
     else:
-        chip_cls, chip_label = "es-arm-chip", "SYSTEM ARMED"
+        chip_cls, chip_label = "es-arm-chip", "MONITORING"
     st.markdown(
         f'<span class="{chip_cls}"><span class="es-dot"></span> {chip_label}</span>',
         unsafe_allow_html=True,
     )
 
 
-# ════════════════════════════════════════════════════════════
-#  Header
-# ════════════════════════════════════════════════════════════
-
-def render_header(on_theme_toggle) -> None:
+def render_header(on_theme_toggle, zone: Optional[str]) -> None:
     c_brand, c_spacer, c_clock, c_chip, c_btn = st.columns([2, 6, 1.8, 1.5, 0.5])
     with c_brand:
-        # MQTT 모드일 때 현재 보고 있는 구역 표시
-        if MQTT_MODE:
-            active = RUNTIME.get_active_zone()
-            sub_label = f"관제 모드 · {escape_html(active)}" if active else "관제 모드 · 구역 목록"
-        else:
-            sub_label = "Factory Fire Monitoring"
+        sub_label = f"원격 관제 · {escape_html(zone_label(zone))}" if zone else "원격 관제 · 구역 목록"
         st.markdown(
             f'<div class="es-hdr-marker" style="display:inline-flex;align-items:center;gap:14px;">'
             f'<span class="es-brand-title">EDGE SAVER</span>'
@@ -298,86 +396,88 @@ def render_header(on_theme_toggle) -> None:
 
 
 # ════════════════════════════════════════════════════════════
-#  KPI row
+#  Status bar (MQTT / PI / CAM / 센서 모드 / AI)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_SENSORS)
-def render_kpi_row() -> None:
-    s = RUNTIME.get_sensors()
-    r = RUNTIME.get_risk()
-    if s is None:
-        temp, gas_v, smoke_v = "--", "--", "--"
-        t_cls = g_cls = sm_cls = "es-kpi"
-    else:
-        temp, gas_v, smoke_v = f"{s.temperature:.1f}", f"{s.gas}", f"{s.smoke}"
-        t_cls = "es-kpi danger" if s.temperature >= 60 else ("es-kpi active" if s.temperature >= 28 else "es-kpi")
-        g_cls = "es-kpi danger" if s.gas >= 500 else ("es-kpi active" if s.gas >= 400 else "es-kpi")
-        sm_cls = "es-kpi danger" if s.smoke >= 500 else ("es-kpi active" if s.smoke >= 300 else "es-kpi")
+@st.fragment(run_every=REFRESH_STATUS)
+def render_status_bar(zone: Optional[str]) -> None:
+    broker_ok, broker_err, target = RUNTIME.get_broker()
+    chips = _chip(broker_ok, f"MQTT {target}" if broker_ok else f"MQTT {broker_err or '끊김'}")
 
-    risk_cls = "es-kpi danger" if r.level >= ALERT_THRESHOLD else (
-        "es-kpi active" if r.level >= 2 else "es-kpi")
-    risk_color = _gauge_color(r.level)
+    if zone:
+        v = RUNTIME.get_zone(zone)
+        connected = v is not None and v.connected
+        chips += _chip(connected, "PI ONLINE" if connected else "PI 신호 없음")
+        if connected and v.status is not None:
+            if v.status.vision.camera_offline:
+                chips += _chip(False, "CAM OFFLINE")
+            else:
+                chips += _chip(v.frame_live, "CAM LIVE" if v.frame_live else "영상 수신 없음", "warn")
+            if v.status.sensor_mode == "demo":
+                chips += _chip(False, "DEMO · 가상 센서", "warn")
+            else:
+                chips += _chip(True, "실센서")
+    else:
+        n = sum(1 for v in RUNTIME.all_zones() if v.connected)
+        chips += _chip(n > 0, f"{n}개 구역 연결", "warn")
+
+    if RUNTIME.is_qa_ready():
+        busy = RUNTIME.is_generating()
+        chips += _chip(not busy, "AI BUSY" if busy else "AI READY", "warn")
+    else:
+        chips += _chip(False, "관제 AI 꺼짐", "warn")
 
     st.markdown(
-        f"""
-        <div class="es-kpi-row">
-            <div class="{t_cls}">
-                <div class="es-kpi-label">🌡 온도</div>
-                <div class="es-kpi-value">{temp}<span class="es-kpi-unit">°C</span></div>
-                <div class="es-kpi-meta">임계 28°C / 60°C</div>
-            </div>
-            <div class="{g_cls}">
-                <div class="es-kpi-label">💨 가스</div>
-                <div class="es-kpi-value">{gas_v}<span class="es-kpi-unit">ppm</span></div>
-                <div class="es-kpi-meta">임계 400 / 500</div>
-            </div>
-            <div class="{sm_cls}">
-                <div class="es-kpi-label">🌫 연기</div>
-                <div class="es-kpi-value">{smoke_v}<span class="es-kpi-unit">%</span></div>
-                <div class="es-kpi-meta">임계 300 / 500</div>
-            </div>
-            <div class="{risk_cls}">
-                <div class="es-kpi-label">🚨 위험도</div>
-                <div class="es-kpi-value" style="color:{risk_color};">LV {r.level}</div>
-                <div class="es-kpi-meta">{escape_html(r.label)}</div>
-            </div>
-        </div>
-        """,
+        f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;'>{chips}</div>",
         unsafe_allow_html=True,
     )
 
 
 # ════════════════════════════════════════════════════════════
-#  Sensor mini row (3 compact cards, for right-column use)
+#  Sensor mini row (원시값 표시)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=REFRESH_SENSORS)
-def render_sensor_mini() -> None:
-    s = RUNTIME.get_sensors()
+def render_sensor_mini(zone: str) -> None:
+    v = RUNTIME.get_zone(zone)
+    s = v.status if v is not None and v.connected else None
+    t_lim = _THRESHOLDS["temperature_high"]
+    g_lim = _THRESHOLDS["gas_mq135"]
+    sm_lim = _THRESHOLDS["smoke_mq2"]
     if s is None:
-        temp, gas_v, smoke_v = "--", "--", "--"
+        temp = hum = gas_v = smoke_v = "--"
         t_cls = g_cls = sm_cls = "es-kpi-sm"
     else:
-        temp = f"{s.temperature:.1f}"
-        gas_v = f"{s.gas}"
-        smoke_v = f"{s.smoke}"
-        t_cls = "es-kpi-sm danger" if s.temperature >= 60 else ("es-kpi-sm active" if s.temperature >= 28 else "es-kpi-sm")
-        g_cls = "es-kpi-sm danger" if s.gas >= 500 else ("es-kpi-sm active" if s.gas >= 400 else "es-kpi-sm")
-        sm_cls = "es-kpi-sm danger" if s.smoke >= 500 else ("es-kpi-sm active" if s.smoke >= 300 else "es-kpi-sm")
+        sn = s.sensors
+        temp, hum, gas_v, smoke_v = f"{sn.temperature:.1f}", f"{sn.humidity:.0f}", f"{sn.gas}", f"{sn.smoke}"
+        t_cls = _level_cls(sn.temperature, t_lim, "es-kpi-sm")
+        g_cls = _level_cls(sn.gas, g_lim, "es-kpi-sm")
+        sm_cls = _level_cls(sn.smoke, sm_lim, "es-kpi-sm")
+
+    value = "font-size:18px;margin-top:4px;"
+    unit = "font-size:11px;"
+    meta = "margin-top:4px;"
+    demo = ""
+    if s is not None and s.sensor_mode == "demo":
+        demo = _badge("DEMO · 가상 센서값", "warn")
     st.markdown(
         f"""
+        <div>{demo}</div>
         <div class="es-sensor-row">
             <div class="{t_cls}">
                 <div class="es-kpi-label">🌡 온도</div>
-                <div class="es-kpi-value" style="font-size:18px;margin-top:4px;">{temp}<span class="es-kpi-unit" style="font-size:11px;">°C</span></div>
+                <div class="es-kpi-value" style="{value}">{temp}<span class="es-kpi-unit" style="{unit}">°C</span></div>
+                <div class="es-kpi-meta" style="{meta}">습도 {hum}% · 임계 {t_lim}°C</div>
             </div>
             <div class="{g_cls}">
-                <div class="es-kpi-label">💨 가스</div>
-                <div class="es-kpi-value" style="font-size:18px;margin-top:4px;">{gas_v}<span class="es-kpi-unit" style="font-size:11px;">ppm</span></div>
+                <div class="es-kpi-label">💨 가스 MQ-135</div>
+                <div class="es-kpi-value" style="{value}">{gas_v}<span class="es-kpi-unit" style="{unit}">/1023</span></div>
+                <div class="es-kpi-meta" style="{meta}">ADC 원시값 · 임계 {g_lim}</div>
             </div>
             <div class="{sm_cls}">
-                <div class="es-kpi-label">🌫 연기</div>
-                <div class="es-kpi-value" style="font-size:18px;margin-top:4px;">{smoke_v}<span class="es-kpi-unit" style="font-size:11px;">%</span></div>
+                <div class="es-kpi-label">🌫 연기 MQ-2</div>
+                <div class="es-kpi-value" style="{value}">{smoke_v}<span class="es-kpi-unit" style="{unit}">/1023</span></div>
+                <div class="es-kpi-meta" style="{meta}">ADC 원시값 · 임계 {sm_lim}</div>
             </div>
         </div>
         """,
@@ -386,79 +486,85 @@ def render_sensor_mini() -> None:
 
 
 # ════════════════════════════════════════════════════════════
-#  Camera panel
+#  Camera panel (Pi 가 보낸 JPEG)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=REFRESH_CAMERA)
-def render_camera_panel() -> None:
-    fire = RUNTIME.get_fire()
-    frame = RUNTIME.get_frame_copy()
-
-    # MQTT 모드 + 프레임 없음 → 원격 안내 (실제 관제 PC는 Pi 카메라 미수신)
-    if frame is None and MQTT_MODE:
-        conf_cls = "es-conf alert" if fire.detected else "es-conf"
-        st.markdown(
-            f"""
-            <div style="border:1px dashed var(--border);border-radius:10px;
-                        padding:40px;text-align:center;background:var(--card);">
-                <div style="font-size:48px;">📡</div>
-                <div style="color:var(--muted);margin-top:8px;">
-                    원격 구역 — 라즈베리파이가 화재 탐지 결과를 전송 중
-                </div>
-                <div style="margin-top:14px;">
-                    <span class='{conf_cls}'>FIRE CONFIDENCE: {fire.confidence:.2f}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if fire.detected:
-            st.error(f"🚨 [화재 탐지됨] {escape_html(fire.description)}")
+def render_camera_panel(zone: str) -> None:
+    v = RUNTIME.get_zone(zone)
+    if v is None or not v.connected:
+        last = _ago(v.last_seen) if v is not None else "-"
+        st.markdown(_offline_box("📡", "Pi 신호 없음", f"마지막 수신: {last}"), unsafe_allow_html=True)
         return
 
-    if frame is None:
-        st.info("카메라 스트리밍 연결 대기 중...")
-    else:
+    vision = v.status.vision
+    if vision.camera_offline:
+        st.markdown(_offline_box("📷", "카메라 오프라인", "Pi 가 카메라 프레임을 받지 못하고 있습니다"),
+                    unsafe_allow_html=True)
+    elif v.frame_live:
         try:
-            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), width='stretch')
+            st.image(v.frame, width="stretch")
         except Exception as e:
             st.error("카메라 영상 표시 오류")
-            RUNTIME.add_log(f"❌ [카메라] 변환 오류: {e}")
-        conf_cls = "es-conf alert" if fire.detected else "es-conf"
-        st.markdown(
-            f"<span class='{conf_cls}'>FIRE CONFIDENCE: {fire.confidence:.2f}</span> "
-            f"<span class='es-conf'>{escape_html(fire.description)}</span>",
-            unsafe_allow_html=True,
-        )
-        if fire.detected:
-            st.error(f"🚨 [화재 탐지됨] {escape_html(fire.description)}")
-        if _is_stale(fire.ts):
-            st.markdown("<div class='es-stale'>⚠ 화재 감지 신호 지연</div>",
-                        unsafe_allow_html=True)
+            RUNTIME.add_log(f"❌ [카메라] 표시 오류: {e}")
+    else:
+        sub = f"마지막 영상: {_ago(v.frame_rx)}" if v.frame_rx else "Pi 의 EDGE_FRAME_FPS 설정을 확인하세요"
+        st.markdown(_offline_box("🎞️", "영상 수신 없음", sub), unsafe_allow_html=True)
+
+    # 비전 판정 배지: 사진 차단은 실제 판정 상태일 때만
+    badges = [_badge(f"비전: {_vision_label(vision.status)}", "danger" if vision.fire_detected else "")]
+    if vision.confidence > 0:
+        badges.append(_badge(f"확신도 {vision.confidence:.2f}", "danger" if vision.fire_detected else ""))
+    if vision.photo_blocked:
+        badges.append(_badge(f"🛡️ 사진 오탐 차단 · {_vision_label(vision.status)}", "info"))
+    if v.status.risk.early or vision.real_smoke:
+        badges.append(_badge("⏱ 조기 감지", "warn"))
+    st.markdown(f"<div>{''.join(badges)}</div>", unsafe_allow_html=True)
+    if vision.fire_detected and vision.description:
+        st.error(f"🚨 {vision.description}")
 
 
 # ════════════════════════════════════════════════════════════
-#  Risk gauge
+#  Risk gauge (LV 0~5)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=REFRESH_GAUGE)
-def render_risk_gauge() -> None:
-    r = RUNTIME.get_risk()
-    color = _gauge_color(r.level)
-    width_pct = min(r.level, 5) * 20
+def render_risk_gauge(zone: str) -> None:
+    v = RUNTIME.get_zone(zone)
+    connected = v is not None and v.connected
+    level = v.level if connected else 0
+    risk = v.status.risk if connected else None
+    color = _gauge_color(level) if connected else "var(--muted)"
+    width_pct = level * 100 // MAX_LEVEL
+    label = LEVEL_LABELS[level] if connected else "신호 없음"
+    details = risk.details if risk else ""
+
+    badges = ""
+    if connected and v.status.alarm:
+        since = f" · {_ago(v.alarm_since)} 시작" if v.alarm_since else ""
+        badges += _badge(f"🚨 Pi 경보·대피 방송 중{since}", "danger")
+    if risk and risk.early:
+        badges += _badge("⏱ 조기 감지", "warn")
+    if risk and risk.fused_level != level:
+        badges += _badge(f"현재 계산값 LV{risk.fused_level} (경보 유지 중)")
+    ticks = "".join(f"<span>{i}</span>" for i in range(MAX_LEVEL + 1))
+
     st.markdown(
         f"""
         <div class='es-panel' style='padding:12px 16px; margin-bottom:10px;'>
-            <div class='es-panel-title' style='margin-bottom:8px;'>🚨 위험도 게이지</div>
+            <div class='es-panel-title' style='margin-bottom:8px;'>🚨 위험도 게이지 (LV 0~{MAX_LEVEL})</div>
             <div class='es-gauge-track' style='height:16px;'>
                 <div class='es-gauge-fill' style='width:{width_pct}%;
                     background-color:{color};
                     box-shadow:0 0 14px {color}88;'></div>
             </div>
+            <div class='es-gauge-ticks'>{ticks}</div>
             <div class='es-gauge-label' style='margin-top:6px;'>
-                <div class='es-gauge-level' style='color:{color}; font-size:22px;'>LV {r.level}</div>
-                <div class='es-gauge-text'>{escape_html(r.label)} · {escape_html(r.details)}</div>
+                <div class='es-gauge-level' style='color:{color}; font-size:22px;'>LV {level} / {MAX_LEVEL}</div>
+                <div class='es-gauge-text'>{escape_html(label)}</div>
             </div>
+            <div style='color:var(--text-soft);font-size:12px;margin-top:6px;'>{escape_html(details)}</div>
+            <div style='margin-top:6px;'>{badges}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -466,73 +572,84 @@ def render_risk_gauge() -> None:
 
 
 # ════════════════════════════════════════════════════════════
-#  Trend (시계열 라인 차트)
+#  Trend (시계열 라인 차트, 원시값)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=REFRESH_TREND)
-def render_trend_panel() -> None:
+def render_trend_panel(zone: str) -> None:
+    import pandas as pd
+
     st.markdown(
         "<div class='es-panel'><div class='es-panel-title'>📈 추세 (최근 2분)</div>",
         unsafe_allow_html=True,
     )
-    snaps = RUNTIME.snapshot_trend()
-    if not snaps:
+    points = RUNTIME.get_trend(zone)
+    if not points:
         st.caption("데이터 수집 중...")
     else:
         df = pd.DataFrame({
-            "온도(°C)": [s.temperature for s in snaps],
-            "가스/10": [s.gas / 10.0 for s in snaps],
-            "연기/10": [s.smoke / 10.0 for s in snaps],
+            "온도(°C)": [p.sensors.temperature for p in points],
+            "가스 ADC/10": [p.sensors.gas / 10.0 for p in points],
+            "연기 ADC/10": [p.sensors.smoke / 10.0 for p in points],
         })
-        st.line_chart(df, height=180, width='stretch')
+        st.line_chart(df, height=180, width="stretch")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════
-#  AI panel (알람 트리거 + STT 큐 소비도 여기서)
+#  AI panel (Pi 비상 지침 + 관제사 질의 답변, STT 큐 소비)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=REFRESH_AI)
-def render_ai_panel(llm_queue) -> None:
-    # 1) 알람 트리거 — MQTT 모드는 alert_dispatcher가 모든 구역 일괄 처리하므로 스킵
-    if not MQTT_MODE:
-        r = RUNTIME.get_risk()
-        if r.level >= ALERT_THRESHOLD:
-            if RUNTIME.try_claim_alert():
-                sensors = RUNTIME.get_sensors()
-                RUNTIME.add_log(f"🚨 위급상황 감지 LV{r.level} — RAG 지침 생성 시작")
-                W.enqueue_emergency(llm_queue, r, sensors, RUNTIME.get_zone())
-        else:
-            RUNTIME.reset_alert()
-
-    # 2) STT 큐 소비 → LLM 큐로 라우팅
-    while True:
-        msg = RUNTIME.pop_stt()
-        if msg is None:
-            break
-        if RUNTIME.is_generating():
-            RUNTIME.add_log("⚠️ AI가 다른 작업 중 — 음성 질의 대기")
-            break
-        W.enqueue_query(llm_queue, msg.text, msg.lang)
-
-    # 2-1) STT 드롭 알림
+def render_ai_panel(zone: str, llm_queue) -> None:
+    # 1) STT 큐 소비 → 관제사 질의 큐
+    if RUNTIME.is_qa_ready():
+        while True:
+            if RUNTIME.is_generating():
+                break
+            msg = RUNTIME.pop_stt()
+            if msg is None:
+                break
+            W.enqueue_query(llm_queue, msg.text, msg.lang)
     if RUNTIME.pop_stt_dropped():
         st.warning("음성이 처리되지 않았습니다.")
 
-    # 3) 표시
-    if RUNTIME.is_generating():
-        cls = "es-ai-card generating"
-        text = "⚠️ AI가 상황을 분석하여 지침을 생성 중입니다... ⏳"
-    else:
+    # 2) 현장(Pi) 비상 지침
+    v = RUNTIME.get_zone(zone)
+    status = v.status if v is not None and v.connected else None
+    if status is not None and status.ai.text:
+        ai = status.ai
         cls = "es-ai-card"
-        ans = RUNTIME.get_last_answer()
-        text = ans if ans else "안전 상태 유지 중입니다. (지침 대기 중)"
+        text = ai.text
+        meta = f"생성: {provider_label(ai.provider)}"
+        if ai.fallback_reason:
+            meta += f" · 전환 이유: {ai.fallback_reason}"
+        if ai.ts:
+            meta += f" · {time.strftime('%H:%M:%S', time.localtime(ai.ts))}"
+    elif status is not None and status.alarm:
+        cls, text, meta = "es-ai-card generating", "Pi 가 비상 지침을 생성 중입니다... ⏳", ""
+    elif status is not None:
+        cls, text, meta = "es-ai-card", "안전 상태 유지 중입니다. (현장 경보 없음)", ""
+    else:
+        cls, text, meta = "es-ai-card", "Pi 신호 없음 — 현장 지침을 받을 수 없습니다.", ""
 
-    provider, generated_at = RUNTIME.get_answer_source()
-    source_label = f"<small>생성: {escape_html(provider)} · {time.strftime('%H:%M:%S', time.localtime(generated_at))}</small>" if provider and generated_at else ""
+    # 3) 관제사 질의 답변 (관제 PC 자체 RAG)
+    if RUNTIME.is_generating():
+        q_html = "<div class='es-ai-card generating' style='min-height:0;'>답변 생성 중... ⏳</div>"
+    else:
+        answer, provider, at = RUNTIME.get_last_answer()
+        if answer:
+            q_meta = f"생성: {provider_label(provider)} · {time.strftime('%H:%M:%S', time.localtime(at))}"
+            q_html = (f"<div class='es-ai-card' style='min-height:0;'>{escape_html(answer)}</div>"
+                      f"<div class='es-ai-meta'>{escape_html(q_meta)}</div>")
+        else:
+            q_html = "<div class='es-ai-meta'>아래 입력창이나 음성으로 매뉴얼 질문을 할 수 있습니다.</div>"
+
+    meta_html = f"<div class='es-ai-meta'>{escape_html(meta)}</div>" if meta else ""
     st.markdown(
-        f"<div class='es-panel'><div class='es-panel-title'>🤖 AI 지침</div>"
-        f"<div class='{cls}'>{escape_html(text)}</div>{source_label}</div>",
+        f"<div class='es-panel'><div class='es-panel-title'>🤖 현장 AI 지침</div>"
+        f"<div class='{cls}'>{escape_html(text)}</div>{meta_html}"
+        f"<div class='es-ai-sub'>관제사 질의 답변</div>{q_html}</div>",
         unsafe_allow_html=True,
     )
 
@@ -553,172 +670,138 @@ def render_log_panel() -> None:
 
 
 # ════════════════════════════════════════════════════════════
-#  Status bar (LIVE/SENSORS/AI READY)
-# ════════════════════════════════════════════════════════════
-
-@st.fragment(run_every=REFRESH_STATUS)
-def render_status_bar() -> None:
-    s = RUNTIME.get_sensors()
-    sensors_ok = s is not None and not _is_stale(s.ts)
-    ai_busy = RUNTIME.is_generating()
-
-    def chip(ok: bool, label: str, fail_cls: str = "danger") -> str:
-        cls = "es-arm-chip" if ok else f"es-arm-chip {fail_cls}"
-        return f"<span class='{cls}'><span class='es-dot'></span> {label}</span>"
-
-    if MQTT_MODE:
-        zones_count = len(RUNTIME.get_all_zones())
-        chips = (
-            chip(zones_count > 0, f'MQTT · {zones_count}구역', 'warn')
-            + chip(sensors_ok, 'SENSORS', 'danger')
-            + chip(not ai_busy, 'AI READY' if not ai_busy else 'AI BUSY', 'warn')
-        )
-    else:
-        cam_ok = RUNTIME.get_frame_copy() is not None
-        chips = (
-            chip(cam_ok, 'CAM LIVE', 'danger')
-            + chip(sensors_ok, 'SENSORS', 'danger')
-            + chip(not ai_busy, 'AI READY' if not ai_busy else 'AI BUSY', 'warn')
-        )
-
-    st.markdown(
-        f"""
-        <div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;'>
-            {chips}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ════════════════════════════════════════════════════════════
-#  Emergency banner (MQTT 관제 모드 — 모든 구역 감시)
+#  Emergency banner (모든 구역 감시)
 # ════════════════════════════════════════════════════════════
 
 @st.fragment(run_every=1.0)
 def render_emergency_banner() -> None:
-    """임계치 넘은 구역이 있으면 상단에 빨간 배너 + 이동 버튼."""
-    if not MQTT_MODE:
-        return
-    danger = []
-    for zone in RUNTIME.get_all_zones():
-        r = RUNTIME.get_zone_risk(zone)
-        if r.level >= ALERT_THRESHOLD:
-            danger.append((zone, r))
+    """경보 중이거나 LV4 이상인 구역이 있으면 상단에 빨간 배너 + 이동 버튼."""
+    danger = [
+        v for v in RUNTIME.all_zones()
+        if v.connected and (v.level >= ALERT_THRESHOLD or v.status.alarm)
+    ]
     if not danger:
         return
 
-    active = RUNTIME.get_active_zone()
-    for zone, r in danger:
+    current = active_zone()
+    for v in danger:
+        r = v.status.risk
         with st.container():
             st.markdown('<span class="es-emerg-marker"></span>', unsafe_allow_html=True)
             c_msg, c_btn = st.columns([6, 1.2])
             with c_msg:
                 st.markdown(
                     f"<div style='color:white;font-weight:700;font-size:16px;padding:2px 0;'>"
-                    f"🚨 위급상황 감지 — <b>{escape_html(zone)}</b>"
+                    f"🚨 위급상황 — <b>{escape_html(zone_label(v.zone))}</b>"
                     f" · LV{r.level} {escape_html(r.label)}"
                     f"<span style='opacity:0.85;font-weight:500;margin-left:8px;'>"
                     f"({escape_html(r.details)})</span></div>",
                     unsafe_allow_html=True,
                 )
             with c_btn:
-                if active == zone:
+                if current == v.zone:
                     st.markdown(
                         "<div style='color:#fca5a5;font-weight:600;text-align:center;"
                         "padding:8px 0;'>현재 보는 중</div>",
                         unsafe_allow_html=True,
                     )
-                else:
-                    if st.button(f"→ {zone}", key=f"emerg_jump_{zone}"):
-                        st.session_state["_zone_jump"] = zone
-                        st.rerun()
+                elif st.button(f"→ {zone_label(v.zone)}", key=f"emerg_jump_{v.zone}"):
+                    set_active_zone(v.zone)
+                    st.rerun(scope="app")
 
 
 # ════════════════════════════════════════════════════════════
 #  구역 네비게이션 바 (목록 복귀 + 구역 전환 드롭다운)
 # ════════════════════════════════════════════════════════════
 
-def render_zone_nav(active_zone: str) -> None:
-    """상세화면 상단 — 목록 복귀 버튼 + 구역 전환 드롭다운."""
-    zones = sorted(RUNTIME.get_all_zones().keys())
-    if active_zone not in zones:
-        zones = [active_zone] + [z for z in zones if z != active_zone]
+def render_zone_nav(current: str) -> None:
+    zones = RUNTIME.zone_ids()
+    if current not in zones:
+        zones = [current] + zones
 
-    c_back, c_sel, c_spacer = st.columns([1.2, 2, 6])
+    c_back, c_sel, _ = st.columns([1.2, 2, 6])
     with c_back:
         if st.button("← 구역 목록", key="zone_nav_back"):
-            RUNTIME.set_active_zone(None)
-            st.rerun(scope="app")
+            set_active_zone(None)
+            st.rerun()
     with c_sel:
-        try:
-            idx = zones.index(active_zone)
-        except ValueError:
-            idx = 0
         picked = st.selectbox(
-            "구역 선택", zones, index=idx, key="zone_nav_select", label_visibility="collapsed",
+            "구역 선택", zones, index=zones.index(current), key="zone_nav_select",
+            format_func=zone_label, label_visibility="collapsed",
         )
-        if picked != active_zone:
-            RUNTIME.set_active_zone(picked)
-            st.rerun(scope="app")
+        if picked != current:
+            set_active_zone(picked)
+            st.rerun()
 
 
 # ════════════════════════════════════════════════════════════
-#  구역 목록 (MQTT 관제 모드)
+#  구역 목록
 # ════════════════════════════════════════════════════════════
+
+def _zone_card(v: ZoneView) -> str:
+    s = v.status if v.connected else None
+    if not v.connected:
+        color, icon, state = "var(--muted)", "🔴", f"⚠️ 신호 없음 · 마지막 {_ago(v.last_seen)}"
+    else:
+        color = "#ef4444" if (v.level >= ALERT_THRESHOLD or s.alarm) else (
+            "#f97316" if v.level >= 2 else "#22c55e")
+        icon = "🚨" if (v.level >= ALERT_THRESHOLD or s.alarm) else "🟢"
+        state = f"온라인 | LV {v.level} {LEVEL_LABELS[v.level]}"
+
+    badges = ""
+    if s is not None:
+        if s.vision.fire_detected:
+            badges += _badge("🔥 화재 감지", "danger")
+        if s.risk.early:
+            badges += _badge("⏱ 조기 감지", "warn")
+        if s.vision.camera_offline:
+            badges += _badge("📷 카메라 오프라인", "danger")
+        if s.sensor_mode == "demo":
+            badges += _badge("DEMO", "warn")
+        sn = s.sensors
+        values = (f"🌡 {sn.temperature:.1f}°C &nbsp; 💨 가스 {sn.gas} &nbsp; 🌫 연기 {sn.smoke}"
+                  f" <span style='color:var(--muted);font-size:11px;'>(ADC)</span>")
+    else:
+        values = "🌡 -- &nbsp; 💨 -- &nbsp; 🌫 --"
+
+    return f"""
+        <span class="es-zone-card-marker"></span>
+        <div class="es-zone-card-wrap">
+        <div style="border:1px solid {color};border-radius:10px;
+                    padding:16px;background:var(--card);
+                    transition:border-color .2s ease,box-shadow .2s ease;">
+            <div style="font-size:15px;font-weight:700;color:var(--text);">
+                {icon} {escape_html(zone_label(v.zone))}
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin:6px 0;">{escape_html(state)}</div>
+            <div style="font-size:13px;color:var(--text);">{values}</div>
+            <div style="margin-top:6px;">{badges}</div>
+        </div>
+        </div>
+    """
+
 
 @st.fragment(run_every=2.0)
 def render_zone_overview() -> None:
     """연결된 모든 라즈베리파이 구역 카드 목록."""
-    zones = RUNTIME.get_all_zones()
-
+    zones = RUNTIME.all_zones()
     if not zones:
-        st.info("📡 라즈베리파이 연결 대기 중... (Pi에서 rpi_publisher.py 실행 확인)")
+        broker_ok, err, target = RUNTIME.get_broker()
+        if broker_ok:
+            st.info(f"📡 브로커 {target} 연결됨 — Pi 데이터 대기 중... "
+                    "(Pi 에서 main.py 실행, 또는 PC 테스트: python -m gui.fake_edge)")
+        else:
+            st.warning(f"📡 MQTT 브로커 {target} 에 연결되지 않았습니다 ({err}). "
+                       ".env 의 MQTT_BROKER_HOST 와 Pi 의 mosquitto 실행을 확인하세요.")
         return
 
     st.markdown("### 연결된 구역")
     cols = st.columns(min(len(zones), 3))
-
-    for idx, (zone, snap) in enumerate(zones.items()):
-        fire = RUNTIME.get_zone_fire(zone)
-        risk = RUNTIME.get_zone_risk(zone)
-        last_seen = RUNTIME.get_zone_last_seen(zone)
-        age = time.time() - last_seen
-        online = age < STALE_THRESHOLD
-
-        status_color = "#ef4444" if risk.level >= ALERT_THRESHOLD else (
-            "#f97316" if risk.level >= 2 else "#22c55e"
-        )
-        status_icon = "🔴" if not online else ("🚨" if risk.level >= ALERT_THRESHOLD else "🟢")
-        fire_badge = " 🔥 화재감지!" if fire.detected else ""
-
+    for idx, v in enumerate(zones):
         with cols[idx % 3]:
-            st.markdown(
-                f"""
-                <span class="es-zone-card-marker"></span>
-                <div class="es-zone-card-wrap">
-                <div style="border:1px solid {status_color};border-radius:10px;
-                            padding:16px;background:var(--card);
-                            transition:border-color .2s ease,box-shadow .2s ease;">
-                    <div style="font-size:15px;font-weight:700;color:var(--text);">
-                        {status_icon} {escape_html(zone)}{escape_html(fire_badge)}
-                    </div>
-                    <div style="font-size:12px;color:var(--muted);margin:6px 0;">
-                        {'온라인' if online else '⚠️ 신호 없음'}
-                        &nbsp;|&nbsp; LV {risk.level} {escape_html(risk.label)}
-                    </div>
-                    <div style="font-size:13px;color:var(--text);">
-                        🌡 {snap.temperature:.1f}°C &nbsp;
-                        💨 {snap.gas} ppm &nbsp;
-                        🌫 {snap.smoke}
-                    </div>
-                </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button(" ", key=f"zone_card_{zone}", use_container_width=True):
-                RUNTIME.set_active_zone(zone)
+            st.markdown(_zone_card(v), unsafe_allow_html=True)
+            if st.button(" ", key=f"zone_card_{v.zone}", width="stretch"):
+                set_active_zone(v.zone)
                 st.rerun(scope="app")
 
 
@@ -726,9 +809,9 @@ def render_zone_overview() -> None:
 #  Shutdown modal
 # ════════════════════════════════════════════════════════════
 
-@st.dialog("⚠️ 시스템 전원 종료")
+@st.dialog("⚠️ 대시보드 종료")
 def render_shutdown_modal(on_confirm) -> None:
-    st.write("감시 시스템을 완전히 종료하시겠습니까?")
+    st.write("관제 대시보드를 종료하시겠습니까? (Pi 의 감시·경보는 계속 동작합니다)")
     c1, c2 = st.columns(2)
     if c1.button("예 (YES)", type="primary", width='stretch', key="sd_yes"):
         on_confirm()
