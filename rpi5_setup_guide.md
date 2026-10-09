@@ -3,6 +3,31 @@
 본 가이드는 초기화된 라즈베리파이 5(Raspberry Pi 5) 보드에 본 RAG AI 화재 안전 대피 안내 시스템을 처음부터 설치하고 기동하는 전 과정을 안내합니다.
 
 ---
+# [v17 - 일회용 엔진 전략] (Linux/Windows)
+try:
+    # 1. 리눅스(라즈베리파이) 환경일 경우 espeak 드라이버 명시
+    if platform.system().lower() == "linux":
+        temp_engine = pyttsx3.init(driverName='espeak')
+    else:
+        temp_engine = pyttsx3.init()
+
+    self._active_engine = temp_engine
+    
+    # 2. 한국어(ko/korean) 음성 패키지 찾아서 적용
+    voices = temp_engine.getProperty('voices')
+    if lang == 'ko':
+        for v in voices:
+            if 'ko' in v.id.lower() or 'korean' in v.name.lower():
+                temp_engine.setProperty('voice', v.id)
+                break
+
+    # 위험 수치에 따른 동적 속도 조절 반영
+    current_rate = int(self._rate * speed) if isinstance(speed, (int, float)) and speed < 5.0 else int(speed)
+    temp_engine.setProperty('rate', current_rate)
+    temp_engine.setProperty('volume', self._volume)
+    
+    temp_engine.say(text)
+    temp_engine.runAndWait()
 
 ## 🛠️ 1. 하드웨어 및 OS 권장사항
 
