@@ -26,13 +26,13 @@ def read_smoke_level(simulate=True):
     global _smoke_history
     
     if simulate:
-        raw_value = random.randint(50, 150)  # 평상시 범위
+        raw_value = random.randint(78, 83)  # 평상시 안정된 적정값 (임계값 300 대비 안전)
     else:
         try:
             from gpiozero import MCP3008
         except ImportError:
             print("⚠️ [경고] gpiozero 라이브러리가 없습니다.")
-            return read_smoke_level(simulate=True)
+            raise RuntimeError("Smoke sensor unavailable")
 
         try:
             # 통신 오류 방지를 위한 예외 처리 강화
@@ -42,7 +42,7 @@ def read_smoke_level(simulate=True):
         except Exception as e:
             print(f"❌ [오류] 연기 센서 SPI/I2C 통신 실패, 재시도 중... : {e}")
             time.sleep(0.1)  # 짧은 대기 후 Fallback
-            return read_smoke_level(simulate=True)
+            raise RuntimeError("Smoke sensor unavailable")
 
     # 노이즈 제거를 위한 이동 평균 필터(Moving Average Filter) 적용
     _smoke_history.append(raw_value)

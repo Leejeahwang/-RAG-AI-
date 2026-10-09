@@ -43,17 +43,23 @@ def load_and_split():
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
+        # Preserve local TXT documents when a JSON source covers the same manual.
+        txt_stems = {os.path.splitext(os.path.basename(path))[0]
+                     for path in glob.glob(os.path.join(data_dir, "**/*.txt"), recursive=True)}
         for item in data:
+            if os.path.splitext(os.path.basename(item.get("source", "")))[0] in txt_stems:
+                continue
             doc = Document(
                 page_content=item.get("content", ""),
                 metadata={"source": item.get("source", "Unknown"), "title": item.get("title", "")}
             )
             all_chunks.append(doc)
-        print(f"✅ JSON 데이터 로드 완료: {len(data)}개 청크 수집")
+        print(f"✅ JSON 데이터 로드 완료: {len(all_chunks)}개 청크 수집 (로컬 TXT 중복 제외)")
 
     # 2. 추가 TXT 파일 로드 (가장 견고한 수동 인코딩 시도 방식)
     txt_files = glob.glob(os.path.join(data_dir, "**/*.txt"), recursive=True)
     if txt_files:
+        json_chunk_count = len(all_chunks)
         print(f"📄 추가 텍스트 문서 {len(txt_files)}개를 감지했습니다.")
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
@@ -89,7 +95,7 @@ def load_and_split():
                 
                 all_chunks.extend(txt_chunks)
         
-        print(f"✅ 텍스트 데이터 통합 완료: {len(all_chunks) - (len(data) if 'data' in locals() else 0)}개 청크 추가")
+        print(f"✅ 텍스트 데이터 통합 완료: {len(all_chunks) - json_chunk_count}개 청크 추가")
 
     if not all_chunks:
         print(f"⚠️ {data_dir}/ 폴더에 로드할 수 있는 지식이 없습니다.")

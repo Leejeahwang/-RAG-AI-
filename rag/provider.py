@@ -142,7 +142,7 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
 
 
 def _local(context: str, question: str, emergency: bool) -> str:
-    timeout = (2, config.OLLAMA_EMERGENCY_TIMEOUT) if emergency else None
+    timeout = (2, config.OLLAMA_EMERGENCY_TIMEOUT) if emergency else (2, config.OLLAMA_READ_TIMEOUT)
     answer = "".join(call_ollama_native(prompt=context, question=question, timeout=timeout)).strip()
     if not answer:
         raise ValueError("Ollama 답변이 비어 있습니다")

@@ -1,4 +1,6 @@
-# 라즈베리파이 설치·이전 가이드
+# 라즈베리파이 설치·이전 가이드 — 현재 통합 버전
+
+2026-10-09 설치 문서 대조 반영. 통합 버전은 아래의 integration/vision-rag-voice 브랜치로 가져옵니다. 모델 캐시와 개인 설정은 별도로 준비해야 합니다. 상세 차이는 INTEGRATION_RESULT.md를 참고하세요.
 
 프로젝트 루트에서 실행합니다. 64비트 Raspberry Pi OS와 충분한 저장 공간을 준비하세요. Python 의존성, 모델 파일, 시스템 라이브러리는 각각 필요합니다. 아래 명령은 Pi 터미널용입니다.
 
@@ -14,7 +16,7 @@ Git을 사용할 때는 작업 브랜치를 지정합니다. 아직 Git에 올�
 
 ```bash
 cd ~/Desktop
-git clone --branch feature/RAG https://github.com/Leejeahwang/-RAG-AI-.git SW2026-2
+git clone --branch integration/vision-rag-voice https://github.com/Leejeahwang/-RAG-AI-.git SW2026-2
 cd SW2026-2
 ```
 
@@ -45,7 +47,7 @@ Windows의 `venv`, `.venv`, `__pycache__`는 옮겨서 사용하지 않습니다
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential git curl \
-  portaudio19-dev libsndfile1 ffmpeg libopenblas-dev libgl1 libglib2.0-0 swig liblgpio-dev
+  portaudio19-dev libsndfile1 ffmpeg alsa-utils libopenblas-dev libgl1 libglib2.0-0 swig liblgpio-dev
 ```
 
 PyAudio 빌드에는 `portaudio19-dev`가 필요합니다. 실행용 `libportaudio2`만 설치하면 개발 헤더가 부족할 수 있습니다.
@@ -94,7 +96,7 @@ Python 3.13에서 ARM64 wheel이 없는 패키지는 소스 빌드로 넘어갈 
 python -m pip install -r requirements_documents.txt
 ```
 
-MeloTTS는 기본 앱의 필수 패키지가 아닙니다. 비교 시험은 별도 환경을 사용하는 방법을 [TTS_BENCHMARK.md](TTS_BENCHMARK.md)에서 확인하세요.
+MeloTTS는 기본 앱의 필수 패키지가 아닙니다. 선택해서 사용할 경우 [공식 설치 안내](https://github.com/myshell-ai/MeloTTS/blob/main/docs/install.md)에 따라 별도 환경을 준비하세요.
 
 ## 4. PPASO·검색 모델 준비
 
@@ -111,7 +113,7 @@ python download_models.py --target ppaso
 python download_models.py --target rag
 ```
 
-다운로드 파일은 `config.PPASO_MODEL_DIR`(기본 `models/ppaso`)에, 검색 모델은 Hugging Face 캐시에 저장됩니다. SBERT와 `USE_RERANKER=True`일 때 BGE를 준비합니다. Ollama·화재 영상 모델·STT 모델은 이 스크립트가 받지 않습니다.
+다운로드 파일은 `config.PPASO_MODEL_DIR`(기본 `models/ppaso`)에, 검색 모델은 Hugging Face 캐시에 저장됩니다. SBERT와 `USE_RERANKER=True`일 때 BGE를 준비합니다. Ollama와 화재 영상 모델은 이 스크립트가 받지 않습니다. STT는 별도 `python download_models.py --target stt`로 준비합니다. 기본 모델은 small이며, `--target all`에는 STT 다운로드가 포함되지 않습니다. 실행 중 STT 자동 다운로드는 기본 비활성화입니다.
 
 현재 BGE 재정렬은 Pi 검색 지연 비교를 위해 기본 비활성화(`USE_RERANKER=False`)입니다. FAISS·BM25 검색은 계속 사용합니다. 품질 비교를 위해 BGE를 켜려면 `config.py`를 변경하고 `python download_models.py --target rag`로 모델을 준비한 뒤 앱을 재시작하세요.
 
@@ -202,7 +204,7 @@ nano .env
 ## 6. 실행 전 확인
 
 ```bash
-python -c "import cv2, faiss, onnxruntime, soundfile, streamlit, pandas, gpiozero; print('imports ok')"
+python -c "import cv2, faiss, onnxruntime, soundfile, scipy, pygame, gpiozero; print('imports ok')"
 python download_models.py --target rag --check
 python tools/benchmark_tts.py --engines ppaso --repeats 1
 python tools/check_rag_quality.py
@@ -217,21 +219,43 @@ PPASO 파일 확인 성공은 음성 합성 성공을 뜻하지 않습니다. �
 python tools/rebuild_rag_index.py
 ```
 
-확인 후 통합 실행 또는 대시보드 실행:
+확인 후 통합 실행:
 
 ```bash
 python main.py
-python -m streamlit run gui/dashboard.py
 ```
 
-두 명령은 실행 방법의 선택지입니다. 하드웨어 점검 시 하나씩 실행하세요. 현재 Linux에서 STT는 기본 비활성화됩니다.
+평시 문답만 확인할 때는 `python main_test.py`를 사용합니다. 카메라는 실행하지만 센서는 시뮬레이션하며 비상 경보·대피 방송 개입을 끕니다. 두 앱을 동시에 실행하지 않습니다. GUI는 현재 구현 예정인 별도 모듈이므로 실행 안내와 streamlit/pandas 설치를 제외했습니다. Linux에서 STT는 기본 비활성화됩니다.
 
 ## 7. 실제 센서와 영상 점검
 
 - 연기·가스 센서는 `gpiozero.MCP3008`을 사용합니다. SPI 활성화, ADC 배선·채널, GPIO 접근 권한을 확인하세요. Pi 설정에서 SPI를 활성화하고 재부팅합니다.
 - 온도 센서 코드(`sensors/temperature.py`)는 현재 `Adafruit_DHT.DHT11`과 GPIO 4를 사용합니다. DHT22로 설명한 옛 가이드는 맞지 않습니다. 이 구형 드라이버의 Pi 5 지원은 별도 검증·수정이 필요합니다. 패키지 설치만으로 실제 센서 동작을 보장하지 않습니다.
-- 센서 라이브러리가 없거나 읽기에 실패하면 일부 코드가 모의 값을 반환합니다. 앱이 켜지는 것만으로 센서 정상 동작을 판단하지 마세요.
+- 현재 main.py는 기본 SENSOR_MODE=demo이며 가상 값을 사용합니다. hardware 모드에서는 센서 읽기 실패를 RuntimeError로 처리하고 오류를 표시하며 가상 정상값으로 대체하지 않습니다. main_test.py는 SENSOR_MODE와 무관하게 센서를 시뮬레이션합니다.
 - 현재 사이렌은 pygame 오디오 출력입니다. 옛 가이드의 `ALERT_BUZZER_PIN`, `ALERT_LED_PIN`은 현재 설정 항목이 아닙니다.
-- `vision/fire_detector.py`는 존재하는 모델 중 OpenVINO 변환본을 먼저 선택합니다. 각 변환 형식의 실행 라이브러리는 별도입니다. Pi에서 해당 형식을 실행할 수 있는지 확인하고, 필요하면 `.pt` 모델만 있는 배포 폴더를 준비하세요. OpenVINO가 항상 Pi에서 동작한다고 가정하지 마세요.
+- 복원된 `vision/fire_detector.py`의 모델 선택 순서는 OpenVINO → TFLite → ONNX → PT입니다. 기본 requirements에는 ONNXRuntime과 PyTorch만 준비합니다. 다른 형식은 각 실행 라이브러리가 별도로 필요합니다. Pi에서는 담당자와 합의한 모델 형식과 배포 파일을 사용하고, 모델 선택 로직이나 가중치를 임의로 수정하지 마세요.
 
 폰트가 깨지면 `sudo apt install fonts-nanum`을 사용합니다. 모델·센서·스피커 확인은 실제 Pi에서 수행해야 합니다.
+
+## 8. 음성 출력과 설정 확인
+
+기본 TTS는 PPASO 합성 후 pygame 재생입니다. 터미널 espeak 성공만으로 이 경로를 검증할 수 없습니다. 현재 통합 TTS는 PPASO 초기화 실패 시 PYTTSX3로 전환하고 실제 엔진을 표시합니다. Linux 시스템 음성은 pyttsx3이며 SAPI5는 Windows 전용입니다. 한국어 시스템 목소리가 없으면 오류를 표시합니다.
+
+```bash
+python tools/diagnose_pi_tts.py --stage inspect
+python tools/diagnose_pi_tts.py --stage synth
+aplay scratch/pi_tts_probe.wav
+python tools/diagnose_pi_tts.py --stage play
+python tools/diagnose_pi_tts.py --stage project
+```
+
+각 명령은 따로 실행합니다. synth 실패는 PPASO 모델/의존성부터, aplay 성공 후 play 실패는 SDL/pygame 출력 경로부터 확인합니다. 상세 판정은 PI_TTS_DIAGNOSIS.md를 참고하세요. 무음 진단 때 프로젝트를 먼저 종료하고 동일 사용자와 가상환경을 사용합니다.
+
+.env 예시는 demo 센서 모드, PPASO, Whisper small, 구역 A입니다. 현장의 ZONE_ID와 평면도를 검토하세요. Gemini 키와 모델은 본인 계정에서 사용 가능한 값으로 설정합니다. HTTPError가 있으면 API 응답의 상태 코드와 오류를 확인해야 하며, 기존에 확인한 무효 키 오류는 키 교체와 프로그램 재시작이 필요합니다. 로컬 확인은 /ai local을 사용합니다. 첫 비상 안내는 공통 고정 문구이고 구역 대피로는 후속 생성 컨텍스트에 포함됩니다. 세 항목 형식의 출력이나 첫 안내에서 구역 대피로 낭독을 보장하지 않습니다.
+
+## 공식 참고 자료
+
+- [CPU PyTorch 설치](https://pytorch.org/get-started/locally/)
+- [python-mecab-ko 설치](https://python-mecab-ko.readthedocs.io/en/latest/install/)
+- [pygame mixer](https://www.pygame.org/docs/ref/mixer.html)
+- [Raspberry Pi 카메라 소프트웨어](https://www.raspberrypi.com/documentation/computers/camera_software.html)

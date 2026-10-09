@@ -203,7 +203,8 @@ def _numpy_to_wav(audio_np: np.ndarray) -> bytes:
         return wav_io.getvalue()
 
 def has_cached_model(actual_model, download_root=None):
-    repo_folder = f"models--{actual_model.replace('/', '--')}"
+    repo = actual_model if "/" in actual_model else f"Systran/faster-whisper-{actual_model}"
+    repo_folder = f"models--{repo.replace('/', '--')}"
     paths_to_check = []
     if download_root:
         paths_to_check.append(os.path.join(download_root, repo_folder))
@@ -216,10 +217,11 @@ def has_cached_model(actual_model, download_root=None):
             try:
                 subdirs = os.listdir(snapshots_dir)
                 if subdirs:
-                    hash_dir = os.path.join(snapshots_dir, subdirs[0])
-                    # model.bin이 존재하면 완전한 캐시로 판단
-                    if os.path.exists(os.path.join(hash_dir, "model.bin")):
-                        return os.path.dirname(base_dir)
+                    for snapshot in subdirs:
+                        hash_dir = os.path.join(snapshots_dir, snapshot)
+                        required = ("model.bin", "config.json", "tokenizer.json")
+                        if all(os.path.isfile(os.path.join(hash_dir, name)) for name in required):
+                            return hash_dir
             except:
                 pass
     return None
@@ -234,7 +236,7 @@ def _load_model():
     print(f"[STT] 'WHISPER' 백업 모드 가동 중 ({MODEL_SIZE})...", end=" ", flush=True)
     try:
         from faster_whisper import WhisperModel
-        model_path = os.path.join(os.getcwd(), "models")
+        model_path = config.STT_MODEL_DIR
         
         # 모델 명칭 강제 매핑 (large-v3-turbo가 1.6G로 오해받지 않도록)
         actual_model = MODEL_SIZE
@@ -245,7 +247,7 @@ def _load_model():
         if cached_root:
             # 캐시가 완벽히 존재하므로 인터넷 조회(API 랙) 없이 즉시 로드
             model = WhisperModel(
-                actual_model, 
+                cached_root,
                 device=DEVICE_TYPE, 
                 compute_type=COMPUTE, 
                 download_root=cached_root,
@@ -258,12 +260,12 @@ def _load_model():
                 device=DEVICE_TYPE, 
                 compute_type=COMPUTE, 
                 download_root=model_path,
-                local_files_only=False
+                local_files_only=config.STT_LOCAL_FILES_ONLY
             )
         print("완료")
         return model
-    except ImportError:
-        print("실패 (라이브러리 없음)")
+    except Exception as exc:
+        print(f"실패 ({type(exc).__name__}: 모델 캐시 또는 라이브러리 확인 필요)")
         return None
 
 def _transcribe(model, audio_np: np.ndarray) -> tuple[str, str]:

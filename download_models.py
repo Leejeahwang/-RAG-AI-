@@ -27,7 +27,7 @@ def check_ppaso(directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("ppaso", "rag", "all"), default="all")
+    parser.add_argument("--target", choices=("ppaso", "rag", "stt", "all"), default="all")
     parser.add_argument("--check", action="store_true", help="네트워크 없이 파일/RAG 모델 로드 확인")
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -56,6 +56,12 @@ def main():
             except Exception as exc:
                 print(f"RAG model failed: {name}: {type(exc).__name__}: {exc}")
                 ok = False
+    if args.target == "stt":
+        from voice import stt
+        config.STT_LOCAL_FILES_ONLY = args.check
+        model = stt._load_model()
+        ok = model is not None and ok
+        print("STT model: " + ("ok" if model is not None else "unavailable"))
     return 0 if ok else 1
 
 

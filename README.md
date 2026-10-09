@@ -1,153 +1,137 @@
-# 🔥 엣지 세이버 (Edge Saver)
+# Edge Saver — 비전 + RAG·음성 통합
 
-> 멀티센서 + 카메라 AI + LLM/RAG를 결합한 **라즈베리파이 기반 지능형 화재 감시 시스템**
+현재 프로젝트의 경량 YOLO·Optical Flow·메모리 프레임 전달을 유지하고, `feature/RAG` 커밋 `ec99c872e9f2074a569d81db1dadd47f16ccc91c`의 검색·답변 공급자·음성 기능을 연결한 버전입니다.
 
----
+## Windows 실행
 
-## 🚀 프로젝트 소개
+이 작업 환경에는 프로젝트용 `.venv`와 PPASO 모델, 새 RAG 인덱스를 준비했습니다. `.venv`는 이 PC의 기존 Python 패키지를 공유하므로 다른 PC로 복사하지 말고 새로 만드세요.
 
-연기·가스·온도 센서와 카메라 AI로 위험을 감시하는 **엣지 AI 화재 감시 시스템**입니다. 로컬 RAG가 매뉴얼을 검색하고, Gemini API 또는 로컬 Ollama가 검색 결과를 바탕으로 대응 안내를 생성합니다.
-
-**핵심 차별점:**
-- 🎯 **센서·영상 결합:** 센서 반응과 카메라 분석을 함께 사용해 위험을 판단
-- 🧠 **매뉴얼 기반 안내:** 로컬에서 검색한 문서와 구역별 대피경로를 답변의 근거로 사용
-- 📡 **연결 장애 대응:** 센서·영상 판정, 사이렌, 첫 비상 안내는 로컬에서 동작하며 Gemini 요청이 실패하면 Ollama로 전환
-- 🔊 **로컬 음성 안내:** 기본 TTS 엔진으로 PPASO 사용
-
----
-
-## 🛠️ 설치
-
-**라즈베리파이 설치·USB 이전은 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 따르세요.** Pi에서는 가상환경에서 `python -m pip install -r requirements_rpi.txt`를 사용합니다. 이 파일은 공통 의존성과 GPIO 패키지를 함께 설치합니다.
-
-Pi의 새 가상환경에서는 `python -m pip install -r requirements_torch_cpu.txt`로 CPU PyTorch를 먼저 설치한 뒤 Pi 목록을 설치합니다. 기본 앱에서 사용하지 않는 Roboflow SDK는 OpenCV 배포판 중복을 피하기 위해 기본 목록에서 제외했습니다.
-
-[Ollama](https://ollama.com/)를 설치하고 실행한 뒤 로컬 답변 모델을 준비합니다.
-
-Debian/Ubuntu에서 `requirements.txt`의 PyAudio를 빌드해 설치한다면 먼저 PortAudio 개발 패키지를 설치합니다. 이 패키지는 실행용 `libportaudio2`도 함께 설치합니다.
-
-```bash
-sudo apt install portaudio19-dev python3-dev
+```powershell
+.\.venv\Scripts\python.exe main.py
 ```
 
-```bash
-pip install -r requirements.txt
+명령:
 
+- 일반 질문: 비전 감시와 별개로 RAG 답변 생성.
+- `v` 또는 빈 입력: 마이크 질문. 첫 요청 시 Whisper 모델 로드.
+- `/ai local`: Ollama 사용.
+- `/ai auto`: Gemini 우선, 실패 시 Ollama 전환.
+- `/ai api`: Gemini 우선 모드.
+- `test fire`: 데모 비상 안내. 15초 동안 경보 복귀를 보류.
+- `q`: 종료.
+
+## 평시 문답 테스트
+
+feature/RAG의 `main_test.py`를 현재 통합 모듈에 맞춰 가져왔습니다.
+
+```powershell
+.\.venv\Scripts\python.exe main_test.py
+```
+
+센서 값이 높아져도 비상 경보·대피 방송이 문답에 개입하지 않습니다. `/ai local`, `/ai auto`, `/ai api`, `v`, `q`를 사용할 수 있으며 검색·답변·음성 시간과 참고 문헌을 출력합니다. 이 모드는 센서를 시뮬레이션하고 카메라는 실행합니다. 원격 버전과 같이 시작 시 STT를 준비하므로 마이크를 쓰지 않으면 `.env`에 `STT_ENABLED=false`를 설정할 수 있습니다. reranker는 config.py의 설정을 따르며 기본 OFF입니다.
+
+상태바는 입력 대기 중 0.5초마다 화면을 갱신합니다. 답변 생성·TTS 완료 대기는 별도 작업 스레드에서 처리하므로 답변 중에도 다음 질문을 입력할 수 있습니다. 새 질문을 제출하면 이전 음성을 중단하고 대기 중인 질문을 최신 질문으로 교체하며, 이전 생성 결과는 출력·발화하지 않습니다. 이미 진행 중인 HTTP 요청·합성 계산 자체는 즉시 취소하지 못할 수 있어 다음 답변 생성까지 기다릴 수 있습니다. 기존 감시 주기와 LLM 생성 중 감시를 쉬는 조건은 유지합니다.
+
+## 새 환경 설치
+
+Python 3.11 환경을 기준으로 검증했습니다.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe download_models.py --target ppaso
+.\.venv\Scripts\python.exe download_models.py --target rag
+.\.venv\Scripts\python.exe download_models.py --target stt
+.\.venv\Scripts\python.exe tools/rebuild_rag_index.py
+```
+
+Ollama 답변을 사용하려면 Ollama 서버를 실행하고 `qwen2.5:0.5b`를 준비하세요. API 키가 없으면 Gemini에 요청하지 않고 Ollama를 사용합니다. 두 공급자를 모두 사용할 수 없는 긴급 상황에는 고정 첫 안내를 유지합니다. 일반 질의는 답변 생성 실패를 표시합니다.
+
+```powershell
 ollama pull qwen2.5:0.5b
 ```
 
-PPASO 파일이 없으면 `python download_models.py --target ppaso`로 준비하고, 검색 모델은 `python download_models.py --target rag`로 캐시에 받습니다. 이미 옮긴 PPASO 파일은 `python download_models.py --target ppaso --check`로 확인할 수 있습니다. 파일 확인 후 실제 합성은 `python tools/benchmark_tts.py --engines ppaso --repeats 1`로 확인하세요. 다운로드 스크립트는 Ollama·영상 모델을 받지 않습니다.
+`.env.example`을 참고해 `.env`에 필요한 설정을 작성할 수 있습니다. 기존 `.env`가 있다면 필요한 항목만 병합하세요.
 
-준비된 JSON/TXT 매뉴얼 검색에는 OCR 패키지가 필요하지 않습니다. `rag/parser.py`로 원본 문서를 가공할 때는 `python -m pip install -r requirements_documents.txt`도 실행합니다.
-
-검색어 재작성 기능이나 `rag/parser.py`의 AI 문서 정제를 사용할 경우 `qwen2.5:1.5b`도 준비합니다.
-
-```bash
-ollama pull qwen2.5:1.5b
-```
-
-PyTorch가 환경에 맞게 설치되지 않은 경우에는 사용 중인 OS와 GPU에 맞는 빌드를 설치하세요. 이미 설치된 PyAudio 실행 중 `libportaudio2`가 없다는 오류가 나면 `sudo apt install libportaudio2`로 실행용 라이브러리를 설치할 수 있습니다. 현재 `config.py`는 Linux에서 음성 인식(STT)을 기본적으로 비활성화합니다. 기본 음성 출력에는 `config.py`가 지정한 `models/ppaso` 모델 파일도 필요합니다.
-
----
-
-## 🤖 AI 답변 설정
-
-1. [Google AI Studio](https://aistudio.google.com/apikey)에서 Gemini API 키를 발급받습니다.
-2. `.env.example`을 프로젝트 루트의 `.env`로 복사하고 `GEMINI_API_KEY`에 키를 입력합니다. `.env`는 Git에서 제외됩니다.
-3. `.env`의 `AI_PROVIDER`로 시작 모드를 정합니다.
-
-| `AI_PROVIDER` | 동작 |
+| 설정 | 기본 동작 |
 |---|---|
-| `auto` (기본값) | Gemini를 먼저 사용합니다. 키가 없거나 요청이 실패하면 Ollama로 전환하고, API 실패 후에는 일정 시간 재시도를 기다립니다. |
-| `gemini` | 요청마다 Gemini를 우선 시도합니다. 실패하면 Ollama로 전환합니다. |
-| `local` | 답변 생성에 Ollama만 사용합니다. |
+| `AI_PROVIDER` | `auto`; 키가 없으면 로컬 전환 |
+| `TTS_ENGINE` | `PPASO`; 초기화 불가 시 실제 엔진을 표시하고 시스템 TTS 전환 |
+| `STT_WHISPER_MODEL` | `small`; 배포 환경별 변경 가능 |
+| `STT_ENABLED` | Windows 활성화, Linux 비활성화 |
+| `STT_LOCAL_FILES_ONLY` | `true`; 실행 중 자동 다운로드하지 않음 |
+| `SENSOR_MODE` | `demo`; `hardware`는 실제 센서 사용 |
+| `DEMO_VISION_ESCALATION` | `true`; 데모에서 원본 감지기의 `fire_detected` 결과(실연기 표시 제외)로 가상 센서 격상 |
+| `ZONE_ID` | `A`; 설치 구역으로 변경 |
+| `GEMINI_SEND_LAYOUT` | `false`; 로컬 평면도의 클라우드 전송 제어 |
 
-실행 중 터미널(`main.py`, `main_test.py`)에서는 `/ai auto`, `/ai api`(`gemini`), `/ai local`로 전환할 수 있습니다. 대시보드에서는 **자동 / Gemini 우선 / 로컬 고정** 버튼을 사용합니다. 변경은 다음 요청부터 적용되며 재시작하면 `.env`의 설정으로 돌아갑니다.
+`STT_ENABLED=true`를 Pi에 적용하려면 실제 마이크·ALSA·지연·메모리를 별도로 확인해야 합니다. 마이크나 캐시 모델이 없으면 텍스트 입력을 계속 사용할 수 있습니다.
 
-질문이 들어오면 로컬 RAG가 매뉴얼을 검색하고, 선택한 모델이 검색 결과를 바탕으로 답합니다. Gemini에는 질문과 검색된 매뉴얼 내용이 전송됩니다. API 요청이 실패하거나 응답이 비어 있거나 정상 종료되지 않으면 Ollama로 전환합니다. 비상 자동 방송에는 추가로 원문 인용 검증을 적용합니다. 위험 감지 시 첫 비상 안내와 사이렌은 API 답변을 기다리지 않습니다.
+실제 센서를 사용하는 `hardware` 모드에서는 센서 실패를 가상 정상값으로 대체하지 않습니다. GPIO 드라이버·ADC 연결을 준비한 뒤 활성화하세요. `test fire`와 가상 센서 상승은 `demo` 모드에서만 동작합니다.
 
-Gemini의 출력 한도는 `.env`의 `GEMINI_MAX_OUTPUT_TOKENS`로 설정합니다(기본 2048). `MAX_TOKENS`는 API 응답이 토큰 한도에 도달해 끝난 경우이며, 잘린 안내는 사용하지 않고 로컬로 전환합니다. 일반 답변은 최대 6개의 짧은 항목으로 요청하며, 같은 조건의 같은 행동은 반복하지 않고 다른 조건의 지침은 구분하도록 지시합니다. 토큰 한도는 글자 수나 API 요청 횟수 제한과 다릅니다.
+## Raspberry Pi 설치
 
-Gemini 연결 제한은 `GEMINI_CONNECT_TIMEOUT`(기본 5초), 연결 후 데이터 수신 대기 제한은 `GEMINI_READ_TIMEOUT`(기본 15초)입니다. 각각 `ConnectTimeout`, `ReadTimeout`으로 표시될 수 있습니다. 이 값은 요청 전체의 총시간 제한이 아니며, 제한을 늘리면 실패 시 로컬 전환까지 더 기다릴 수 있습니다. 기존 `.env`의 값은 코드 기본값보다 우선하므로 이전 `2`/`8` 설정을 사용하고 있다면 직접 변경하세요. 설정 변경 후 앱을 재시작합니다.
-
-`A구역 대피경로`처럼 구역과 경로를 명시한 질문에는 해당 `data/zone_*_layout.txt` 파일을 답변 문맥에 추가합니다. 구역을 특정하지 않으면 경로를 임의로 고르지 않습니다. 로컬 Ollama에는 이 정보가 제공되지만 Gemini 전송은 기본적으로 꺼져 있습니다. Gemini에도 보내려면 `.env`에 `GEMINI_SEND_LAYOUT=true`를 설정하고 앱을 재시작하세요. 현장 정보를 전송하기 전에 [Gemini API 요금과 데이터 사용 조건](https://ai.google.dev/gemini-api/docs/pricing)을 확인하세요.
-
-## 🚀 실행 및 매뉴얼
+64-bit Raspberry Pi OS와 Python 3.11을 기준으로 가상환경을 만들고 CPU PyTorch와 공통 패키지를 설치합니다. 통합 버전은 `integration/vision-rag-voice` 브랜치를 사용합니다. PPASO·검색·STT 모델 캐시와 개인 설정은 별도로 준비합니다. Windows 가상환경은 복사하지 않습니다. 상세 설치·MeCab 문제 해결은 [raspberry_pi_migration.md](raspberry_pi_migration.md), Pi 5 실행 순서는 [rpi5_setup_guide.md](rpi5_setup_guide.md)를 따르세요.
 
 ```bash
-python main.py
+sudo apt update
+sudo apt install -y python3-venv python3-dev build-essential git curl \
+  portaudio19-dev libsndfile1 ffmpeg alsa-utils libopenblas-dev \
+  libgl1 libglib2.0-0 liblgpio-dev swig
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements_torch_cpu.txt
+.venv/bin/python -m pip install -r requirements_rpi.txt
+.venv/bin/python download_models.py --target ppaso
+.venv/bin/python download_models.py --target rag
+.venv/bin/python tools/rebuild_rag_index.py
+.venv/bin/python main.py
 ```
 
-비상 경보 개입 없이 질문·답변을 확인하려면 `python main_test.py`를 실행합니다.
+PPASO의 한국어 G2P는 `from mecab import MeCab`로 실제 형태소 분석까지 확인해야 합니다. 지원 wheel이 없다면 [MeCab 공식 소스 설치 안내](https://python-mecab-ko.readthedocs.io/en/latest/install/)와 migration 가이드의 네이티브 설치 절차를 사용합니다. Linux 시스템 음성 대체 경로가 필요하면 `sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1`을 추가합니다. espeak 성공과 PPASO·pygame 재생 성공은 별도이며 [음성 진단](PI_TTS_DIAGNOSIS.md)으로 구분합니다.
 
-터미널 질문 처리 후 `[시간] 검색 …초 / 답변 …초 / 음성 …초`가 출력됩니다. 검색은 RAG 호출, 답변은 Gemini·Ollama 호출(내부 전환 포함), 음성은 출력 요청부터 완료 대기까지의 시간입니다. 모델 초기화 시간은 별도이며, 음성 시간에는 실제 재생 시간이 포함됩니다. `main.py`의 자동 비상 알림 경로는 이 질문 처리 로그의 측정 대상이 아닙니다.
+실제 온도 센서는 현재 `Adafruit_DHT.DHT11`/GPIO4이며 이 구형 드라이버의 Pi 5 호환성은 미검증입니다. 기본 설치 목록에 자동으로 추가하지 않았습니다. `hardware` 모드는 드라이버·배선 검증 후 사용하세요. 현재 Windows에서 수행한 성능·음성 검증을 Pi 결과로 해석하지 마세요. STT 모델이 필요하면 별도로 `--target stt`를 실행합니다. `--target all`은 PPASO와 RAG만 준비합니다.
 
-첫 실행에서 `faiss_db/` 인덱스가 없으면 `data/chunked_manuals.json`과 `data/` 하위 `.txt` 파일을 읽어 인덱스를 생성합니다. 인덱스가 이미 있으면 기존 것을 로드합니다. 문서가 변경되면 갱신 필요 메시지가 표시되며, 앱을 종료한 뒤 `python tools/rebuild_rag_index.py`로 인덱스를 백업하고 재구축합니다. `python tools/check_rag_quality.py`로 기본 검색 확인을 실행할 수 있습니다. BGE 재정렬 사용 여부는 `config.py`의 `USE_RERANKER`로 설정하며, 비교 측정 방법은 [RAG_BENCHMARK.md](RAG_BENCHMARK.md)를 참조하세요.
+비전 소스와 센서 퓨전은 통합 전 버전으로 복원했습니다. Windows import 호환성과 프레임 중복 확인은 `vision_bridge.py`가 담당합니다. 상세 복원 범위는 INTEGRATION_RESULT.md를 참고하세요.
 
-현재 BGE 재정렬은 Pi 검색 지연을 줄이기 위해 기본 비활성화(`USE_RERANKER=False`)이며 FAISS·BM25 검색은 유지합니다. BGE를 켜면 `RERANKER_POLICY="selective"`로 명확한 CPR·출혈·골절 질문에 해당 근거가 확보된 경우 추론을 생략합니다. 모든 후보에 적용하려면 `RERANKER_POLICY="full"`로 바꾸고 재시작합니다. BGE를 켠 상태에서는 모델을 미리 로드하므로 선택적 추론 생략만으로 메모리가 줄지는 않습니다.
+## 검증
 
-일반 질문의 Gemini 답변은 참고 매뉴얼을 요약하거나 바꾸어 설명할 수 있으며, 원문 문자열 불일치만으로 로컬로 전환하지 않습니다. 숫자·장소·조건·금지 사항을 유지하도록 프롬프트로 지시하지만 일반 답변의 의미 일치를 코드로 검증하지는 않습니다. `emergency=True`인 비상 자동 방송은 서식 차이를 허용한 원문 인용 검증을 유지합니다. 빈 응답·정상 종료되지 않은 응답·API 오류는 계속 로컬로 전환하며, 로그에 값 오류의 구체적인 이유를 표시합니다.
-
-Windows PC의 28개 질문 근거 검색 시험에서 첫 번째 결과 적중은 BGE 끔 23/28, 전체 적용 28/28이었으며, 대표 검색 시간은 각각 약 0.039초와 2.696초였습니다. 이 수치는 최종 답변 정확도나 라즈베리파이 성능을 의미하지 않습니다. 조건·메모리·질문별 결과와 선택적 적용 후 확인은 [RAG_RERANKER_COMPARISON.md](RAG_RERANKER_COMPARISON.md)에 정리했습니다.
-
-음성 안내는 기본적으로 로컬 PPASO 엔진을 사용합니다. TTS 전처리에서 짧은 제목·항목의 줄 경계를 문장 사이 쉼으로 바꿔, PDF에서 추출된 제목과 본문이 붙어 발화되는 현상을 줄입니다.
-
----
-
-## 📂 프로젝트 구조
-
-```text
-SW2026-2/
-├── .env.example                 # Gemini 및 답변 모드 설정 예시
-├── config.py                    # 센서·모델·TTS 설정
-├── main.py                      # 통합 실행
-├── main_test.py                 # 비상 경보 개입을 끈 테스트 실행
-├── sensors/                     # 센서 수집과 위험도 계산
-├── vision/
-│   ├── cctv_service.py          # CCTV 영상 서비스
-│   └── fire_detector.py         # 화재 영상 판별
-├── rag/
-│   ├── loader.py                # JSON·TXT 매뉴얼 로드
-│   ├── native_retriever.py      # FAISS 검색 및 인덱스 생성
-│   ├── layout.py                # 구역별 대피경로 선택
-│   ├── provider.py              # Gemini/Ollama 선택과 장애 시 전환
-│   └── chain.py                 # 로컬 Ollama 답변
-├── voice/
-│   ├── stt.py                   # 음성 인식
-│   ├── tts.py                   # 음성 출력 및 발화 전처리
-│   └── ppaso_wrapper.py         # PPASO 합성 엔진
-├── gui/
-│   ├── dashboard.py             # 관제 대시보드
-│   ├── components.py            # 화면 구성 요소
-│   ├── state.py                 # 화면 상태
-│   └── workers.py               # 백그라운드 작업
-├── data/
-│   ├── raw_documents/           # 원본 매뉴얼
-│   ├── chunked_manuals.json     # 가공된 매뉴얼 청크
-│   └── zone_*_layout.txt        # 구역별 대피경로
-├── faiss_db/                    # 로컬 검색 인덱스
-└── alerts/                      # 사이렌·알림
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe vision/test_unit_verification.py
+.\.venv\Scripts\python.exe tools/check_rag_quality.py
+.\.venv\Scripts\python.exe tools/benchmark_tts.py --engines ppaso --repeats 1
+.\.venv\Scripts\python.exe tools/smoke_integration.py
+.\.venv\Scripts\python.exe tools/check_local_guidance.py
 ```
 
----
+`smoke_integration.py`는 실제 YOLO·RAG·TTS 모델을 사용하고, 카메라에는 검정 합성 프레임을 공급하며 SDL 무음 출력으로 재생을 검증합니다. 실제 카메라·스피커·마이크 테스트를 대신하지 않습니다. 로컬 공급자만 사용하므로 클라우드에 요청하지 않습니다.
 
-## 💎 데이터 무결성 원칙 (Data Integrity Guard)
+합성 WAV로 오프라인 STT를 확인하려면:
 
-본 프로젝트의 RAG 지식 베이스는 **100% Plain Text**를 지향합니다.
-- **Poison Pill 필터:** AI 파싱 단계에서 할루시네이션으로 발생하는 LaTeX 수식 기호(`$`, `\text{...}`)를 실시간 정규식으로 감지하고 강제 제거합니다.
-- **화학식 평문화:** 모든 화학 반응식과 단위는 특수 기호 없이 표준 텍스트(예: NaHCO3, CO2)로만 저장되어 검색 정확도를 극대화합니다.
+```powershell
+.\.venv\Scripts\python.exe tools/check_voice_roundtrip.py --model small --audio scratch/integration_tts_benchmark/ppaso/text_1_repeat_1.wav
+```
 
----
+문서를 변경하면 다음 기동 시 변경을 감지해 인덱스를 백업·재구축합니다. 수동 갱신은 `tools/rebuild_rag_index.py`를 사용하세요.
 
-## TTS 벤치마크
+## 선택 의존성
 
-`python tools/benchmark_tts.py --repeats 5`로 pyttsx3·PPASO·MeloTTS의 CPU 합성 시간, RTF, 최대 프로세스 메모리를 개별 측정할 수 있습니다. 결과는 `scratch/tts_benchmark/`에 CSV·JSON·WAV로 저장됩니다. 설치 준비와 Raspberry Pi 측정 시 주의사항은 [TTS_BENCHMARK.md](TTS_BENCHMARK.md)를 참고하세요.
+- 기본 `requirements.txt`: CLI·현재 비전·FAISS/BM25·PPASO·Whisper 실행과 WAV 검증용 SciPy.
+- `requirements_torch_cpu.txt`: 새 CPU 환경에서 공통 패키지보다 먼저 설치.
+- `requirements_rpi.txt`: 공통 패키지와 MCP3008용 GPIO 패키지.
+- `requirements_documents.txt`: 원본 PDF/OCR 재가공용 PyMuPDF·EasyOCR. 준비된 TXT/JSON 검색에는 불필요.
+- `requirements_benchmarks.txt`: 과거 Chroma 비교 벤치마크에만 필요한 chromadb.
+- MeloTTS는 선택 엔진이며 기본 PPASO 실행 의존성에 포함하지 않음. 사용하려면 [공식 설치 안내](https://github.com/myshell-ai/MeloTTS/blob/main/docs/install.md)에 따라 별도 환경을 준비.
+- GUI는 구현 예정이므로 streamlit/pandas를 기본 실행 의존성에서 제외.
 
-## 👥 팀원
+requirements는 완전한 버전 잠금 파일이 아니며 새 ARM 환경의 설치 완료를 보장하지 않습니다.
 
-| 이름 | 역할 | 담당 모듈 |
-|------|------|-----------|
-| 이재황 | PM & DevOps | `sensors/`, `alerts/`, `docker/`, RPi |
-| 박규태 | Vision AI | `vision/`, `sensors/fusion.py` |
-| 이승훈 | GUI & RAG Search | `gui/`, `rag/` |
-| 채종화 | Voice & Data | `voice/`, `rag/parser.py`, `data/` |
+## 통합 범위와 복구
+
+- 감시 스레드는 RAG·HTTP·음성 완료를 기다리지 않습니다.
+- 첫 비상 안내는 고정 문구로 즉시 요청하고, 추가 안내는 별도 생성 작업에서 처리합니다.
+- 이전 질문·종료된 경보의 늦은 결과를 발화하지 않습니다.
+- PPASO 합성을 계산 중에 강제로 중단하지는 않습니다. 중단된 작업의 합성 결과를 재생하지 않고 다음 안내를 처리합니다.
+- 현재 관제 알림은 콘솔 출력이며 외부 관제 전송과 GUI 통합은 후속 작업입니다.
+
+기존 실행 코드와 인덱스의 복구 자료는 `scratch/integration_backup_20261009/`에 있습니다. 통합 결과와 검증 범위는 `INTEGRATION_RESULT.md`, 원래 계획은 `INTEGRATION_PLAN.md`를 참고하세요.

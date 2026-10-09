@@ -18,16 +18,19 @@ def read_temperature(simulate=False, pin=4):
         pin (int): DHT11이 연결된 라즈베리파이 BCM GPIO 핀 번호 (기본값: GPIO4)
     """
     if simulate:
+        # 평상시 실내 적정 안정 온도 (23.5도 안팎으로 들쭉날쭉하지 않고 안정 유지)
+        base_temp = 23.5
+        base_humi = 50.0
         return {
-            "temperature": round(random.uniform(20.0, 30.0), 1),
-            "humidity": round(random.uniform(40.0, 60.0), 1),
+            "temperature": round(base_temp + random.uniform(-0.3, 0.3), 1),
+            "humidity": round(base_humi + random.uniform(-0.5, 0.5), 1),
         }
 
     try:
         import Adafruit_DHT
     except ImportError:
         print("⚠️ [경고] Adafruit_DHT 라이브러리가 없습니다.")
-        return read_temperature(simulate=True)
+        raise RuntimeError("Temperature sensor unavailable")
 
     # 라즈베리파이 진짜 센서(DHT11) 읽기 시도
     sensor = Adafruit_DHT.DHT11
@@ -41,7 +44,7 @@ def read_temperature(simulate=False, pin=4):
     else:
         print("❌ [오류] DHT11 센서에서 값을 읽어오지 못했습니다.")
         # 실패 시 프로그램이 죽지 않게 가짜 값 반환
-        return read_temperature(simulate=True)
+        raise RuntimeError("Temperature sensor unavailable")
 
 
 def is_temperature_abnormal(data=None):

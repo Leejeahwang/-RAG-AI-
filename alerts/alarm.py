@@ -17,6 +17,7 @@ _siren_thread = None
 _siren_playing = False
 _siren_stop_requested = False
 _siren_sound = None
+_siren_generation = 0
 
 def _init_siren():
     global _siren_sound
@@ -60,7 +61,7 @@ def _init_siren():
     except Exception as e:
         print(f"⚠️ [사이렌 합성 실패] {e}")
 
-def _siren_loop():
+def _siren_loop(generation):
     global _siren_playing, _siren_stop_requested
     
     _init_siren()
@@ -77,7 +78,7 @@ def _siren_loop():
         channel = _siren_sound.play(loops=-1)  # 무한 반복 재생
         start_time = time.time()
         
-        while _siren_playing:
+        while _siren_playing and generation == _siren_generation:
             elapsed = time.time() - start_time
             min_duration = getattr(config, 'SIREN_MIN_DURATION', 10.0)
             
@@ -92,24 +93,30 @@ def _siren_loop():
     except Exception as e:
         print(f"⚠️ [사이렌 재생 중 에러] {e}")
     finally:
-        _siren_playing = False
-        _siren_stop_requested = False
+        if generation == _siren_generation:
+            _siren_playing = False
+            _siren_stop_requested = False
+        # The mixer is shared with local TTS. Stop only our own channel.
 
 def start_siren():
     """사이렌을 백그라운드에서 반복 재생합니다."""
-    global _siren_thread, _siren_playing, _siren_stop_requested
+    global _siren_thread, _siren_playing, _siren_stop_requested, _siren_generation
     if _siren_playing:
         _siren_stop_requested = False
         return
     _siren_playing = True
     _siren_stop_requested = False
-    _siren_thread = threading.Thread(target=_siren_loop, daemon=True)
+    _siren_generation += 1
+    _siren_thread = threading.Thread(target=_siren_loop, args=(_siren_generation,), daemon=True)
     _siren_thread.start()
 
-def stop_siren():
+def stop_siren(force=False):
     """재생 중인 사이렌에 정지 신호를 보냅니다 (설정된 최소 유지 시간 경과 후 정지됨)."""
-    global _siren_stop_requested
+    global _siren_stop_requested, _siren_playing, _siren_generation
     _siren_stop_requested = True
+    if force:
+        _siren_generation += 1
+        _siren_playing = False
 
 def trigger_alarm(risk_level, message=""):
     """
@@ -120,13 +127,13 @@ def trigger_alarm(risk_level, message=""):
         message: 경보 메시지
     """
     label = config.RISK_LEVELS.get(risk_level, "알 수 없음")
-    lines = [f"\n🚨 [경보 Level {risk_level} - {label}] {message}"]
+    print(f"\n🚨 [경보 Level {risk_level} - {label}] {message}")
+
     if risk_level >= 3:
-        lines.append("   🔔 부저 작동! (시뮬레이션)")
+        print("   🔔 부저 작동! (시뮬레이션)")
     if risk_level >= 4:
-        lines.append("   📢 전관 방송 작동 및 사이렌 재생! (시뮬레이션)")
+        print("   📢 전관 방송 작동 및 사이렌 재생! (시뮬레이션)")
         start_siren()
-    print("\n".join(lines))
 
 
 def stop_alarm():

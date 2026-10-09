@@ -11,13 +11,13 @@ import numpy as np
 import faiss
 import pickle
 import json
+import config
 from sentence_transformers import SentenceTransformer
 try:
     from sentence_transformers.cross_encoder import CrossEncoder
 except ImportError:
     CrossEncoder = None
 from typing import List, Dict, Any
-import config
 from collections import Counter
 from rag.layout import zone_from_text
 from rag.search_intent import medical_intent, matches_medical_content

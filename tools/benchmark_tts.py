@@ -1,4 +1,4 @@
-"""Isolated CPU/WAV benchmark. Run from the project root; see TTS_BENCHMARK.md."""
+"""Isolated CPU/WAV benchmark. Run from the project root; use --help for options."""
 from __future__ import annotations
 
 import argparse

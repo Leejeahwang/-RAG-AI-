@@ -19,7 +19,7 @@ import platform
 STT_ENABLED = (platform.system() == "Windows")  # [v48] 라즈베리파이 오디오 드라이버(ALSA) 세그멘테이션 오류 방지를 위해 RPi는 비활성화, 윈도우는 기본 활성화
 STT_ENGINE = "WHISPER"
 STT_GEMMA_MODEL = "qwen2.5:0.5b"
-STT_WHISPER_MODEL = "large-v3-turbo"
+STT_WHISPER_MODEL = "small"  # Verified CPU model; override per deployment.
 NATIVE_EMBEDDING_MODEL = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"  # FAISS 기반 Native RAG용 임베딩 모델
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # DNS 조회 지연 방지를 위해 localhost 대신 IP 직접 지정
 AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").lower()  # auto | gemini | local
@@ -52,7 +52,7 @@ CHUNK_SIZE = 250    # [초고속 최적화] 지식 조각당 길이를 절반 �
 CHUNK_OVERLAP = 50
 
 # ── Reranker 설정 ──
-USE_RERANKER = False  # Pi 검색 지연 비교를 위해 기본 비활성화. 품질 비교 결과: RAG_RERANKER_COMPARISON.md
+USE_RERANKER = False  # Pi 검색 지연을 줄이기 위해 기본 비활성화.
 RERANKER_POLICY = "selective"  # selective: 명확한 의료 근거는 생략 / full: 모든 후보 재정렬
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-base"
 RAG_TOP_K = 2  # 0.5B 초소형 모델의 컨텍스트 병목과 인지 부하를 줄이기 위해 상위 청크 반환 개수를 2개로 제한
@@ -78,7 +78,7 @@ RISK_LEVELS = {
 }
 
 # ── 카메라 설정 ──
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1 if platform.system() == "Windows" else 0
 CAPTURE_WIDTH = 640
 CAPTURE_PATH = "temp_capture.jpg"
 
@@ -87,3 +87,38 @@ SIREN_MIN_DURATION = 10.0   # 사이렌 최소 유지 시간 (초)
 SIREN_FILE_PATH = "data/siren.mp3"       # 사용할 커스텀 사이렌 파일 경로 (비어있으면 기본 주파수 합성음 사용)
 SIREN_VOLUME = 0.25        # 사이렌 볼륨 크기 (0.0 ~ 1.0)
 
+
+# Integrated vision/RAG deployment settings. Paths resolve from this file.
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent
+_numba_cache = BASE_DIR / "scratch" / "numba_cache"
+_numba_cache.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("NUMBA_CACHE_DIR", str(_numba_cache))
+_yolo_config = BASE_DIR / "scratch" / "ultralytics"
+_yolo_config.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(_yolo_config))
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+DATA_DIR = str(BASE_DIR / "data")
+FAISS_INDEX_DIR = str(BASE_DIR / "faiss_db")
+PPASO_MODEL_DIR = str(BASE_DIR / "models" / "ppaso")
+SIREN_FILE_PATH = str(BASE_DIR / "data" / "siren.mp3")
+LLM_MODEL = os.getenv("LLM_MODEL", LLM_MODEL)
+TTS_ENGINE = os.getenv("TTS_ENGINE", TTS_ENGINE).upper()
+STT_ENABLED = os.getenv("STT_ENABLED", str(STT_ENABLED)).lower() == "true"
+STT_WHISPER_MODEL = os.getenv("STT_WHISPER_MODEL", STT_WHISPER_MODEL)
+STT_LOCAL_FILES_ONLY = os.getenv("STT_LOCAL_FILES_ONLY", "true").lower() == "true"
+STT_MODEL_DIR = str(BASE_DIR / "models")
+SENSOR_MODE = os.getenv("SENSOR_MODE", "demo").lower()
+if SENSOR_MODE not in {"demo", "hardware"}:
+    raise ValueError("SENSOR_MODE must be demo or hardware")
+DEMO_VISION_ESCALATION = os.getenv("DEMO_VISION_ESCALATION", "true").lower() == "true"
+ZONE_ID = os.getenv("ZONE_ID", "A").upper()
+if ZONE_ID not in {"A", "B", "C"}:
+    raise ValueError("ZONE_ID must be A, B or C")
+BYPASS_MOTION_FILTER = False
+MONITOR_INTERVAL = 0.15
+FRAME_MAX_AGE = 2.0
+ALARM_RECOVERY_SECONDS = 2.0
+DEMO_ALARM_HOLD_SECONDS = 15.0
+OLLAMA_READ_TIMEOUT = float(os.getenv("OLLAMA_READ_TIMEOUT", "30"))
