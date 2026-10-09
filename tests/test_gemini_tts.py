@@ -142,3 +142,12 @@ class GeminiRoutingTests(unittest.TestCase):
             self.assertTrue(self.tts.wait_until_idle(timeout=2))
             self.assertEqual(self.played, [])
             self.engine.speak_to_file.assert_not_called()
+
+    def test_disabled_cloud_stays_local_even_after_auto_command(self):
+        with patch('voice.tts.config.GEMINI_TTS_ENABLED', False), \
+             patch('voice.gemini_tts.synthesize_to_file') as synth:
+            self.tts.mode_command_response('/tts auto')
+            self.tts.speak('시험', provider='gemini')
+            self.assertTrue(self.tts.wait_until_idle(timeout=2))
+            synth.assert_not_called()
+            self.engine.speak_to_file.assert_called_once()

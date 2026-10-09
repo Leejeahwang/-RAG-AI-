@@ -36,7 +36,7 @@ feature/RAG의 `main_test.py`를 현재 통합 모듈에 맞춰 가져왔습니�
 
 Python 3.11 환경을 기준으로 검증했습니다.
 
-기본 음성 정책은 Gemini 답변에 Gemini TTS를 우선 사용하고, 실패하면 `TTS_ENGINE`의 로컬 음성으로 전환합니다. 로컬 답변·첫 비상 고정 안내·반복 비상 방송은 로컬 음성을 사용합니다. 실행 중 `/tts`로 정책을 확인하고 `/tts auto`로 Gemini 우선 정책, `/tts ppaso` 또는 `/tts pyttsx3`로 로컬 고정을 선택합니다. 전환 시 기존 발화를 중단하며 실행 중인 LLM 답변은 유지합니다. 설정은 현재 실행에만 적용됩니다. TTS API 설정·Linux 시스템 음성·원격 오디오는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 참고하세요.
+Gemini TTS는 기본 비활성화 상태이며, Gemini 답변을 포함한 모든 안내는 `TTS_ENGINE`의 로컬 음성으로 읽습니다. 실행 중 `/tts`로 정책을 확인하고 `/tts auto`로 설정된 기본 정책, `/tts ppaso` 또는 `/tts pyttsx3`로 로컬 고정을 선택합니다. 전환 시 기존 발화를 중단하며 실행 중인 LLM 답변은 유지합니다. 설정은 현재 실행에만 적용됩니다. TTS API 설정·Linux 시스템 음성·원격 오디오는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 참고하세요.
 
 ```powershell
 python -m venv .venv

@@ -68,7 +68,7 @@ class TTSHelper:
                 if self._stop_event.is_set():
                     raise RuntimeError("TTS is closed")
                 self.stop()
-                self._prefer_gemini = True
+                self._prefer_gemini = config.GEMINI_TTS_ENABLED
                 self._gemini_failure_until = 0.0
                 return True
         # Prepare before cancelling playback so a failed switch preserves it.
