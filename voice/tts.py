@@ -111,13 +111,15 @@ class TTSHelper:
             pygame.mixer.music.stop()
             pygame.mixer.music.unload()
 
-    def _system_speech(self, text, lang, speed, generation):
+    def _system_speech(self, text, lang, speed, generation, output_path=None):
         rate = int(self._rate * speed)
         if platform.system() == "Darwin":
             voice = {"ko": "Yuna", "en": "Samantha", "ja": "Kyoko", "zh": "Tingting"}.get(lang, "Yuna")
             command = ["say", "-v", voice, "-r", str(rate), text]
         else:
             command = [sys.executable, str(Path(__file__).with_name("tts_worker.py")), text, lang, str(rate), str(self._volume)]
+            if output_path is not None:
+                command.extend(["--output", str(output_path)])
         with self._lock:
             if not self._valid(generation):
                 return
@@ -143,13 +145,21 @@ class TTSHelper:
                     if not self._valid(generation):
                         continue
                     self._is_speaking = True
+                    self.last_error = ""
                     engine_type = self._engine_type
                     local_engine = self._ppaso_engine if engine_type == "PPASO" else self._melo_engine
                 text = self._sanitize_text(text, lang)
                 if not text:
                     continue
                 if engine_type == "PYTTSX3" or (engine_type == "PPASO" and lang != "ko"):
-                    self._system_speech(text, lang, speed, generation)
+                    if platform.system() == "Linux":
+                        # eSpeak's direct playback uses aplay/ALSA, bypassing
+                        # the SDL driver selected for remote desktop audio.
+                        path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
+                        self._system_speech(text, lang, speed, generation, output_path=path)
+                        self._play_file(path, generation)
+                    else:
+                        self._system_speech(text, lang, speed, generation)
                 else:
                     path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
                     if not local_engine.speak_to_file(text, str(path), lang=lang, speed=speed):

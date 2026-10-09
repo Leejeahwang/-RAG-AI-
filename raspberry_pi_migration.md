@@ -246,7 +246,7 @@ python main.py
 
 실행 중 질문 프롬프트에서 `/tts`로 현재 음성 엔진을 확인합니다. `/tts pyttsx3`로 시스템 음성, `/tts ppaso`로 PPASO 음성으로 전환합니다. main.py와 main_test.py 모두 지원하며 현재 발화와 대기 중 음성을 취소하고 이후 발화에 새 엔진을 사용합니다. 이미 처리 중인 LLM 답변은 취소하지 않습니다. 전환은 현재 실행에만 적용되고 `.env`는 변경하지 않습니다. PPASO 초기화가 실패하면 기존 엔진을 유지합니다.
 
-PYTTSX3는 Linux의 eSpeak 계열 라이브러리와 한국어 목소리가 필요합니다. 아래 패키지를 준비하고 `/tts pyttsx3` 전환 후 새 질문으로 실제 소리를 확인하세요. PPASO의 pygame 재생과 PYTTSX3의 시스템 재생은 경로가 다르므로 PPASO 원격 재생 성공이 PYTTSX3 재생 성공을 보장하지 않습니다. 이번 Pi 시험에서 PYTTSX3 전환 후 원격 재생은 아직 검증하지 않았습니다.
+PYTTSX3는 Linux의 eSpeak 계열 라이브러리와 한국어 목소리가 필요합니다. 아래 패키지를 준비하고 `/tts pyttsx3` 전환 후 새 질문으로 실제 소리를 확인하세요. Linux에서는 PYTTSX3가 WAV를 합성하고 PPASO와 같은 pygame 경로로 재생하므로 원격 오디오 설정도 함께 사용합니다. 이전 직접 재생 방식에서는 eSpeak의 `aplay`가 ALSA 오류 524를 내면서도 성공으로 종료하는 현상을 확인했습니다. 이를 우회하도록 WAV 합성·재생을 분리했으며, 수정 후 실제 Pi 재생은 추가 확인이 필요합니다.
 
 ```bash
 sudo apt install espeak-ng libespeak-ng1 espeak-ng-data libespeak1

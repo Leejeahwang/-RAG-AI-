@@ -2,6 +2,7 @@ import pyttsx3
 import sys
 import platform
 import subprocess
+import wave
 
 def get_voice_id(engine, lang):
     """언어 코드에 맞는 목소리 ID 반환 (Windows용)"""
@@ -27,7 +28,7 @@ def get_voice_id(engine, lang):
             return voice.id
     return None
 
-def speak(text, lang='ko', rate=180, volume=1.0):
+def speak(text, lang='ko', rate=180, volume=1.0, output_path=None):
     try:
         current_os = platform.system()
         
@@ -42,7 +43,10 @@ def speak(text, lang='ko', rate=180, volume=1.0):
             
             engine.setProperty('rate', rate)
             engine.setProperty('volume', volume)
-            engine.say(text)
+            if output_path:
+                engine.save_to_file(text, output_path)
+            else:
+                engine.say(text)
             engine.runAndWait()
             engine.stop()
             
@@ -55,9 +59,19 @@ def speak(text, lang='ko', rate=180, volume=1.0):
                 engine.setProperty('voice', voice_id)
             engine.setProperty('rate', rate)
             engine.setProperty('volume', volume)
-            engine.say(text)
+            if output_path:
+                engine.save_to_file(text, output_path)
+            else:
+                engine.say(text)
             engine.runAndWait()
             engine.stop()
+
+        if output_path:
+            # Some driver errors are handled internally; validate the output
+            # so the parent cannot report successful synthesis without audio.
+            with wave.open(output_path, 'rb') as audio:
+                if audio.getnframes() == 0:
+                    raise RuntimeError('System TTS produced an empty WAV file')
 
     except KeyboardInterrupt:
         sys.exit(0)
@@ -73,4 +87,10 @@ if __name__ == "__main__":
         lang = sys.argv[2] if len(sys.argv) > 2 else 'ko'
         rate = int(sys.argv[3]) if len(sys.argv) > 3 else 180
         volume = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
-        speak(text, lang, rate, volume)
+        output_path = None
+        if len(sys.argv) > 5:
+            if len(sys.argv) != 7 or sys.argv[5] != '--output':
+                print('TTS Error: invalid output arguments', file=sys.stderr)
+                sys.exit(1)
+            output_path = sys.argv[6]
+        speak(text, lang, rate, volume, output_path=output_path)
