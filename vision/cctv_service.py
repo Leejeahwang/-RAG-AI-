@@ -30,6 +30,9 @@ latest_frame = None
 camera_running = True
 camera_offline = False
 
+# OS 판별 전역 변수 추가
+is_linux = platform.system().lower() == "linux" or sys.platform.startswith("linux")
+
 # PC에서 테스트할 때 카메라 화면을 띄워보고 싶다면 True 로 변경하세요!
 # 라즈베리파이(서버) 환경으로 넘어갈 때는 무조건 False 여야 합니다.
 DEBUG_MODE = False
@@ -111,7 +114,7 @@ def camera_worker_thread():
                 s_read, test_frame = try_read_frame(temp_cap)
                 if s_read and test_frame is not None:
                     # Windows Hello IR(적외선) 카메라의 검은 화면(std < 5) 방지
-                    import numpy as np
+                    # import numpy as np
                     if np.std(test_frame) > 5.0 or c_idx == unique_candidates[-1]:
                         cap = temp_cap
                         success = True
