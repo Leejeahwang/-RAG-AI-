@@ -21,6 +21,8 @@ _LOGGER = logging.getLogger(__name__)
 class TTSHelper:
     def __init__(self, rate=None, volume=1.0):
         self._engine_type = config.TTS_ENGINE
+        self._prefer_gemini = config.GEMINI_TTS_ENABLED
+        self._gemini_failure_until = 0.0
         self._rate = rate or config.TTS_RATE
         self._volume = volume
         self._queue = queue.Queue(maxsize=32)
@@ -59,8 +61,16 @@ class TTSHelper:
     def set_engine(self, engine_type):
         """Switch engines without allowing cancelled work to use a new engine."""
         engine_type = engine_type.strip().upper()
-        if engine_type not in {"PPASO", "PYTTSX3"}:
-            raise ValueError("TTS engine must be PPASO or PYTTSX3")
+        if engine_type not in {"AUTO", "PPASO", "PYTTSX3"}:
+            raise ValueError("TTS engine must be AUTO, PPASO or PYTTSX3")
+        if engine_type == "AUTO":
+            with self._lock:
+                if self._stop_event.is_set():
+                    raise RuntimeError("TTS is closed")
+                self.stop()
+                self._prefer_gemini = True
+                self._gemini_failure_until = 0.0
+                return True
         # Prepare before cancelling playback so a failed switch preserves it.
         if engine_type == "PPASO" and self._ppaso_engine is None:
             engine = PpasoEngine()
@@ -72,10 +82,11 @@ class TTSHelper:
         with self._lock:
             if self._stop_event.is_set():
                 raise RuntimeError("TTS is closed")
-            if self._engine_type == engine_type:
+            if self._engine_type == engine_type and not self._prefer_gemini:
                 return False
             self.stop()
             self._engine_type = engine_type
+            self._prefer_gemini = False
             self.last_error = ""
             return True
 
@@ -84,12 +95,14 @@ class TTSHelper:
         if not parts or parts[0].lower() != "/tts":
             return None
         if len(parts) == 1:
-            return f"[TTS] 현재 엔진: {self.engine_type} | /tts ppaso | /tts pyttsx3"
-        if len(parts) != 2 or parts[1].lower() not in {"ppaso", "pyttsx3"}:
-            return "[TTS] 사용법: /tts | /tts ppaso | /tts pyttsx3"
+            policy = "Gemini 답변은 Gemini TTS 우선" if self._prefer_gemini else "로컬 고정"
+            return f"[TTS] {policy} / 로컬 엔진: {self.engine_type} | /tts auto | ppaso | pyttsx3"
+        if len(parts) != 2 or parts[1].lower() not in {"auto", "ppaso", "pyttsx3"}:
+            return "[TTS] 사용법: /tts | /tts auto | /tts ppaso | /tts pyttsx3"
         try:
             changed = self.set_engine(parts[1])
-            return f"[TTS] {'엔진 전환' if changed else '현재 엔진 유지'}: {self.engine_type}"
+            mode = "Gemini 답변은 Gemini TTS 우선" if self._prefer_gemini else self.engine_type
+            return f"[TTS] {'엔진 전환' if changed else '현재 엔진 유지'}: {mode}"
         except Exception as exc:
             return f"[TTS] 전환 실패: {exc} (현재 엔진: {self.engine_type})"
 
@@ -140,7 +153,7 @@ class TTSHelper:
                 continue
             path = None
             try:
-                text, lang, speed, generation = item
+                text, lang, speed, generation, provider = item
                 with self._lock:
                     if not self._valid(generation):
                         continue
@@ -148,9 +161,28 @@ class TTSHelper:
                     self.last_error = ""
                     engine_type = self._engine_type
                     local_engine = self._ppaso_engine if engine_type == "PPASO" else self._melo_engine
+                    use_gemini = self._prefer_gemini and provider == "gemini"
                 text = self._sanitize_text(text, lang)
                 if not text:
                     continue
+                if use_gemini and config.GEMINI_API_KEY and time.monotonic() >= self._gemini_failure_until:
+                    path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
+                    try:
+                        from voice.gemini_tts import synthesize_to_file
+                        synthesize_to_file(text, path)
+                    except Exception as exc:
+                        self._gemini_failure_until = time.monotonic() + config.GEMINI_TTS_RETRY_COOLDOWN
+                        # Do not expose HTTP bodies, credentials, or answer text.
+                        reason = str(exc) if isinstance(exc, RuntimeError) and str(exc).startswith("Gemini TTS HTTP ") else type(exc).__name__
+                        _LOGGER.warning("Gemini TTS 실패 (%s), %s로 전환", reason, engine_type)
+                    else:
+                        if self._valid(generation):
+                            print("[TTS] 재생 엔진: GEMINI", flush=True)
+                            self._play_file(path, generation)
+                        continue
+                    if not self._valid(generation):
+                        continue
+                print(f"[TTS] 재생 엔진: {engine_type}", flush=True)
                 if engine_type == "PYTTSX3" or (engine_type == "PPASO" and lang != "ko"):
                     if platform.system() == "Linux":
                         # eSpeak's direct playback uses aplay/ALSA, bypassing
@@ -229,16 +261,16 @@ class TTSHelper:
         
         return text
 
-    def speak(self, text, lang="ko", speed=None):
+    def speak(self, text, lang="ko", speed=None, provider=None):
         if not text:
             return
         with self._lock:
             if self._stop_event.is_set():
                 return
-            self._queue.put_nowait((text, lang, speed or 1.0, self._generation))
+            self._queue.put_nowait((text, lang, speed or 1.0, self._generation, provider))
 
-    def speak_async(self, text, lang="ko", speed=None):
-        self.speak(text, lang, speed)
+    def speak_async(self, text, lang="ko", speed=None, provider=None):
+        self.speak(text, lang, speed, provider=provider)
 
     def warmup(self):
         # Model initialization occurs in __init__; no audible startup phrase.

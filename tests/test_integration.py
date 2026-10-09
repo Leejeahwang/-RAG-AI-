@@ -131,7 +131,7 @@ class IntegrationTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertIn('B구역',generate.call_args.args[0])
             self.assertEqual(generate.call_args.kwargs['cloud_context'],'manual sentence')
-            self.app.tts.speak_async.assert_called_with('answer',lang='ko',speed=1.0)
+            self.app.tts.speak_async.assert_called_with('answer',lang='ko',speed=1.0,provider='test')
 
 
 if __name__ == '__main__':

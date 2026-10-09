@@ -105,6 +105,11 @@ PPASO_MODEL_DIR = str(BASE_DIR / "models" / "ppaso")
 SIREN_FILE_PATH = str(BASE_DIR / "data" / "siren.mp3")
 LLM_MODEL = os.getenv("LLM_MODEL", LLM_MODEL)
 TTS_ENGINE = os.getenv("TTS_ENGINE", TTS_ENGINE).upper()
+GEMINI_TTS_ENABLED = os.getenv("GEMINI_TTS_ENABLED", "true").lower() == "true"
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts")
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
+GEMINI_TTS_READ_TIMEOUT = float(os.getenv("GEMINI_TTS_READ_TIMEOUT", "30"))
+GEMINI_TTS_RETRY_COOLDOWN = float(os.getenv("GEMINI_TTS_RETRY_COOLDOWN", "60"))
 STT_ENABLED = os.getenv("STT_ENABLED", str(STT_ENABLED)).lower() == "true"
 STT_WHISPER_MODEL = os.getenv("STT_WHISPER_MODEL", STT_WHISPER_MODEL)
 STT_LOCAL_FILES_ONLY = os.getenv("STT_LOCAL_FILES_ONLY", "true").lower() == "true"

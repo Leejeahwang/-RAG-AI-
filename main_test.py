@@ -395,7 +395,7 @@ class EdgeSaverTest:
                     return
                 print(f"[AI: {result.provider} · {time.strftime('%H:%M:%S')}] {result.text}", flush=True)
                 tts_started = time.perf_counter()
-                self.tts.speak_async(result.text, lang=lang, speed=speed)
+                self.tts.speak_async(result.text, lang=lang, speed=speed, provider=result.provider)
         except Exception as e:
             if not self._query_valid(request_id):
                 return
@@ -438,7 +438,7 @@ class EdgeSaverTest:
         else:
             print("       - 화면 꼬임 방지를 위한 '하단 고정 툴바 UI'가 적용되었습니다.")
         print("       - /ai auto, /ai api, /ai local 명령으로 답변 엔진을 즉시 전환합니다.")
-        print("       - /tts로 현재 음성 엔진 확인, /tts ppaso 또는 /tts pyttsx3로 전환합니다.")
+        print("       - /tts로 음성 정책 확인, /tts auto 또는 /tts ppaso, /tts pyttsx3로 전환합니다.")
         print("       - 'q' 입력 시 종료됩니다.\n")
 
         self._monitor_running = True
