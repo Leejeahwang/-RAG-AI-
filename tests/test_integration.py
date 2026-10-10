@@ -48,7 +48,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(self.app._jobs.unfinished_tasks, 0)
             self.assertNotIn('obsolete answer', [c.args[0] for c in self.app.tts.speak_async.call_args_list])
 
-    def test_recovery_discards_delayed_emergency_result(self):
+    def test_recovery_preserves_delayed_emergency_result_once(self):
         started, release = threading.Event(), threading.Event()
         def generate(*args, **kwargs):
             started.set()
@@ -63,7 +63,75 @@ class IntegrationTests(unittest.TestCase):
             deadline = time.monotonic()+2
             while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
                 time.sleep(0.01)
-            self.assertNotIn('expired guidance', [c.args[0] for c in self.app.tts.speak_async.call_args_list])
+            spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
+            self.assertEqual(spoken.count('expired guidance'), 1)
+            self.assertFalse(self.app._alarm_active)
+            self.assertIsNone(self.app._pending_evac_event)
+            self.assertEqual(self.app._cached_evac_guidance, '')
+
+    def test_recovery_preserves_queued_guidance_and_blocks_general_query(self):
+        with patch('main.rag_manager.search', return_value=[]), \
+             patch('main.generate_guidance', return_value=SimpleNamespace(text='route', provider='test')):
+            self.app._trigger_rag_alert('fire', 'smoke', 'A')
+            self.app._clear_alarm()
+            self.app._process_query('normal question')
+            self.assertEqual(self.app._jobs.qsize(), 1)
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIn('route', [c.args[0] for c in self.app.tts.speak_async.call_args_list])
+            self.assertIsNone(self.app._pending_evac_event)
+
+    def test_new_emergency_discards_previous_delayed_result(self):
+        started, release = threading.Event(), threading.Event()
+        def generate(context, question, **kwargs):
+            if question == 'old fire':
+                started.set()
+                release.wait(2)
+                return SimpleNamespace(text='old route', provider='test')
+            return SimpleNamespace(text='new route', provider='test')
+        with patch('main.rag_manager.search', return_value=[]), patch('main.generate_guidance', side_effect=generate):
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.app._trigger_rag_alert('old fire', 'smoke', 'A')
+            self.assertTrue(started.wait(1))
+            try:
+                self.app._clear_alarm()
+                self.app._trigger_rag_alert('new fire', 'smoke', 'B')
+            finally:
+                release.set()
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
+            self.assertNotIn('old route', spoken)
+            self.assertIn('new route', spoken)
+
+    def test_recovery_does_not_interrupt_one_time_guidance_playback(self):
+        spoken = threading.Event()
+        def speak(text, **kwargs):
+            if text == 'route':
+                spoken.set()
+        with patch('main.rag_manager.search', return_value=[]), \
+             patch('main.generate_guidance', return_value=SimpleNamespace(text='route', provider='test')):
+            self.app.tts.speak_async.side_effect = speak
+            self.app.tts.is_speaking.return_value = True
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.app._trigger_rag_alert('fire', 'smoke', 'A')
+            self.assertTrue(spoken.wait(1))
+            self.app.tts.stop.reset_mock()
+            self.app._clear_alarm()
+            self.app.tts.stop.assert_not_called()
+            self.app._process_query('normal question')
+            self.assertIsNotNone(self.app._pending_evac_event)
+            self.assertEqual(self.app._jobs.qsize(), 0)
+            self.app.tts.is_speaking.return_value = False
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIsNone(self.app._pending_evac_event)
+            self.app._process_query('normal question')
+            self.app.tts.stop.assert_called_once()
 
     def test_no_duplicate_alarm_or_normal_speech_during_emergency(self):
         self.app._trigger_rag_alert('fire', 'smoke', 'A')

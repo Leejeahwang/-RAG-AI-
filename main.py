@@ -44,6 +44,7 @@ class EdgeSaver:
         self._threads = []
         self._request_id = self._event_id = 0
         self._alarm_active = False
+        self._pending_evac_event = None
         self._cached_evac_guidance = ""
         self._alarm_hold_until = 0.0
         self._safe_since = None
@@ -107,6 +108,7 @@ class EdgeSaver:
                 return
             self._alarm_active = True
             self._event_id += 1
+            self._pending_evac_event = self._event_id
             self._request_id += 1
             self.current_level = level
             self._safe_since = None
@@ -128,19 +130,22 @@ class EdgeSaver:
             if not self._alarm_active:
                 return
             self._alarm_active = False
-            self._event_id += 1
             self._request_id += 1
             self._cached_evac_guidance = ""
             self._safe_since = None
-            self._discard_pending_jobs()
-            self.tts.stop()
+            # Keep this event's queued/in-flight one-time guidance and speech.
+            # A new event still invalidates it and cancels its audio.
+            if self._pending_evac_event is None:
+                self.tts.stop()
             stop_siren(force=True)
-            print("\n[시스템] 정상 복귀, 비상 방송 종료")
+            print("\n[시스템] 정상 복귀, 반복 비상 방송 종료")
+            if self._pending_evac_event is not None:
+                print("[시스템] 해당 비상의 대피 지침은 한 번 안내한 뒤 마칩니다.")
 
     def _process_query(self, query, lang="ko"):
         with self._state_lock:
-            if self._alarm_active:
-                print("[시스템] 비상 안내를 우선합니다. 정상 복귀 후 질문해 주세요.")
+            if self._alarm_active or self._pending_evac_event is not None:
+                print("[시스템] 비상 안내를 우선합니다. 대피 지침 안내 종료 후 질문해 주세요.")
                 return
             self._request_id += 1
             self._discard_pending_jobs()
@@ -154,7 +159,7 @@ class EdgeSaver:
         if self._stop.is_set():
             return False
         if job["emergency"]:
-            return self._alarm_active and job["id"] == self._event_id
+            return job["id"] == self._event_id
         return not self._alarm_active and job["id"] == self._request_id
 
     def _guidance_worker(self):
@@ -184,13 +189,25 @@ class EdgeSaver:
                     print(f"\n[AI: {result.provider}] {result.text}")
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
-                        self._cached_evac_guidance = result.text
+                        if self._alarm_active:
+                            self._cached_evac_guidance = result.text
                         if result.text == EMERGENCY_GUIDANCE:
                             continue
                     self.tts.speak_async(result.text, lang=job["lang"], speed=self._speed(), provider=result.provider)
+                if job["emergency"]:
+                    # Preserve the one-time speech through recovery; let new
+                    # emergencies and shutdown interrupt it immediately.
+                    while not self._stop.wait(0.05):
+                        with self._state_lock:
+                            if not self._job_valid(job) or not self.tts.is_speaking():
+                                break
             except Exception:
                 LOG.exception("답변 생성 실패; 감시는 계속됩니다")
             finally:
+                if job["emergency"]:
+                    with self._state_lock:
+                        if self._pending_evac_event == job["id"]:
+                            self._pending_evac_event = None
                 self._jobs.task_done()
 
     def _monitor_once(self):
