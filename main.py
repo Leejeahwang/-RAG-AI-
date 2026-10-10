@@ -45,6 +45,7 @@ class EdgeSaver:
         self._request_id = self._event_id = 0
         self._alarm_active = False
         self._pending_evac_event = None
+        self._event_zone = None
         self._cached_evac_guidance = ""
         self._alarm_hold_until = 0.0
         self._safe_since = None
@@ -104,10 +105,26 @@ class EdgeSaver:
     def _trigger_rag_alert(self, prompt, sensor_info, zone_id, level=4):
         """Issue local first guidance immediately; queue further analysis."""
         with self._state_lock:
-            if self._alarm_active or self._stop.is_set():
+            if self._stop.is_set():
                 return
+            if self._event_zone == zone_id:
+                if self._alarm_active:
+                    return
+                if self._pending_evac_event == self._event_id:
+                    # Brief recovery in the same zone must not restart search
+                    # or cancel the event's first complete evacuation speech.
+                    self._alarm_active = True
+                    self._request_id += 1
+                    self.current_level = max(self.current_level, level)
+                    self._safe_since = None
+                    trigger_alarm(level, sensor_info)
+                    send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
+                    stop_siren()
+                    print(f"\n[비상 재감지] {zone_id}구역: 진행 중인 대피 지침 안내를 이어갑니다.")
+                    return
             self._alarm_active = True
             self._event_id += 1
+            self._event_zone = zone_id
             self._pending_evac_event = self._event_id
             self._request_id += 1
             self.current_level = level
@@ -131,10 +148,11 @@ class EdgeSaver:
                 return
             self._alarm_active = False
             self._request_id += 1
-            self._cached_evac_guidance = ""
+            if self._pending_evac_event is None:
+                self._cached_evac_guidance = ""
             self._safe_since = None
             # Keep this event's queued/in-flight one-time guidance and speech.
-            # A new event still invalidates it and cancels its audio.
+            # A different zone or a new event after completion cancels audio.
             if self._pending_evac_event is None:
                 self.tts.stop()
             stop_siren(force=True)
@@ -189,8 +207,7 @@ class EdgeSaver:
                     print(f"\n[AI: {result.provider}] {result.text}")
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
-                        if self._alarm_active:
-                            self._cached_evac_guidance = result.text
+                        self._cached_evac_guidance = result.text
                         if result.text == EMERGENCY_GUIDANCE:
                             continue
                     self.tts.speak_async(result.text, lang=job["lang"], speed=self._speed(), provider=result.provider)
@@ -208,6 +225,8 @@ class EdgeSaver:
                     with self._state_lock:
                         if self._pending_evac_event == job["id"]:
                             self._pending_evac_event = None
+                            if not self._alarm_active:
+                                self._cached_evac_guidance = ""
                 self._jobs.task_done()
 
     def _monitor_once(self):

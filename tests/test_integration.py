@@ -122,6 +122,12 @@ class IntegrationTests(unittest.TestCase):
             self.app.tts.stop.reset_mock()
             self.app._clear_alarm()
             self.app.tts.stop.assert_not_called()
+            event_id = self.app._event_id
+            self.app._trigger_rag_alert('fire again', 'smoke', 'A')
+            self.assertEqual(self.app._event_id, event_id)
+            self.assertEqual(self.app._cached_evac_guidance, 'route')
+            self.app.tts.stop.assert_not_called()
+            self.app._clear_alarm()
             self.app._process_query('normal question')
             self.assertIsNotNone(self.app._pending_evac_event)
             self.assertEqual(self.app._jobs.qsize(), 0)
@@ -139,6 +145,68 @@ class IntegrationTests(unittest.TestCase):
         self.app._process_query('question')
         self.alarm.assert_called_once()
         self.assertEqual(self.app._jobs.qsize(), 1)
+
+    def test_same_zone_recurrence_keeps_queued_event(self):
+        self.app._trigger_rag_alert('fire', 'smoke', 'A')
+        event_id = self.app._event_id
+        self.app._clear_alarm()
+        self.app.tts.stop.reset_mock()
+        self.app._trigger_rag_alert('fire again', 'smoke', 'A')
+        self.assertTrue(self.app._alarm_active)
+        self.assertEqual(self.app._event_id, event_id)
+        self.assertEqual(self.app._jobs.qsize(), 1)
+        self.app.tts.stop.assert_not_called()
+        self.assertEqual(self.app.tts.speak_async.call_count, 1)
+
+    def test_same_zone_recurrence_preserves_inflight_result_once(self):
+        started, release = threading.Event(), threading.Event()
+        def generate(*args, **kwargs):
+            started.set()
+            release.wait(2)
+            return SimpleNamespace(text='A route', provider='test')
+        with patch('main.rag_manager.search', return_value=[]), patch('main.generate_guidance', side_effect=generate) as generator:
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.app._trigger_rag_alert('fire', 'smoke', 'A')
+            self.assertTrue(started.wait(1))
+            try:
+                for _ in range(3):
+                    self.app._clear_alarm()
+                    self.app._trigger_rag_alert('fire again', 'smoke', 'A')
+            finally:
+                release.set()
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            generator.assert_called_once()
+            spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
+            self.assertEqual(spoken.count('A route'), 1)
+            self.assertEqual(spoken.count(main.EMERGENCY_GUIDANCE), 1)
+            self.assertEqual(self.app._cached_evac_guidance, 'A route')
+
+    def test_different_zone_preempts_even_while_alarm_active(self):
+        self.app._trigger_rag_alert('fire', 'smoke', 'A')
+        previous_id = self.app._event_id
+        self.app.tts.stop.reset_mock()
+        self.app._trigger_rag_alert('B fire', 'smoke', 'B')
+        self.assertGreater(self.app._event_id, previous_id)
+        self.assertEqual(self.app._event_zone, 'B')
+        self.app.tts.stop.assert_called_once()
+        self.assertEqual(self.app._jobs.qsize(), 1)
+        self.assertFalse(self.app._job_valid({'emergency': True, 'id': previous_id}))
+
+    def test_same_zone_after_guidance_completion_starts_new_event(self):
+        with patch('main.rag_manager.search', return_value=[]), \
+             patch('main.generate_guidance', return_value=SimpleNamespace(text='route', provider='test')):
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.app._trigger_rag_alert('fire', 'smoke', 'A')
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIsNone(self.app._pending_evac_event)
+            previous_id = self.app._event_id
+            self.app._clear_alarm()
+            self.app._trigger_rag_alert('fire again', 'smoke', 'A')
+            self.assertGreater(self.app._event_id, previous_id)
 
     def monitor(self, analysis, *, offline=False, sensor_mode='demo', frame_id=1):
         frame = np.zeros((200, 200, 3), dtype=np.uint8)
