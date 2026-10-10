@@ -29,7 +29,7 @@ GEMINI_CONNECT_TIMEOUT = float(os.getenv("GEMINI_CONNECT_TIMEOUT", "5"))
 GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "15"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "2048"))
 GEMINI_RETRY_COOLDOWN = float(os.getenv("GEMINI_RETRY_COOLDOWN", "60"))
-GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "false").lower() == "true"
+GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "true").lower() == "true"
 OLLAMA_EMERGENCY_TIMEOUT = float(os.getenv("OLLAMA_EMERGENCY_TIMEOUT", "15"))
 
 # ── TTS(음성 출력) 설정 ──

@@ -48,6 +48,57 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(self.app._jobs.unfinished_tasks, 0)
             self.assertNotIn('obsolete answer', [c.args[0] for c in self.app.tts.speak_async.call_args_list])
 
+    def test_zone_guidance_precedes_ai_rules_and_survives_recovery(self):
+        from rag.layout import evacuation_for_zone
+        started, release = threading.Event(), threading.Event()
+        zone = evacuation_for_zone('A')
+        rule = '전기 화재인 경우 메인 전원을 내린 후 전용 소화기를 사용하십시오.'
+        def generate(*args, **kwargs):
+            started.set()
+            release.wait(2)
+            return SimpleNamespace(text=zone+'\n'+rule, provider='ollama')
+        docs = [{'source': 'zone_B_layout.txt', 'page_content': 'B구역 출구'},
+                {'source': 'factory.txt', 'page_content': rule}]
+        with patch('main.rag_manager.search', return_value=docs) as search, \
+             patch('main.generate_guidance', side_effect=generate) as generator:
+            self.app._trigger_rag_alert('A구역 화재 대피', 'smoke', 'A')
+            self.assertEqual([c.args[0] for c in self.app.tts.speak_async.call_args_list],
+                             [main.EMERGENCY_GUIDANCE, zone])
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.assertTrue(started.wait(1))
+            try:
+                self.app._clear_alarm()
+                self.assertNotIn('B구역 출구', generator.call_args.args[0])
+                self.assertIn(rule, generator.call_args.args[0])
+                self.assertIn('추가 안내', generator.call_args.args[1])
+            finally:
+                release.set()
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual([c.args[0] for c in self.app.tts.speak_async.call_args_list],
+                             [main.EMERGENCY_GUIDANCE, zone, rule])
+            self.assertEqual(search.call_count, 2)
+
+    def test_model_failure_keeps_zone_speech_pending_through_recovery(self):
+        from rag.layout import evacuation_for_zone
+        self.app.tts.is_speaking.return_value = True
+        with patch('main.rag_manager.search', return_value=[]), \
+             patch('main.generate_guidance', side_effect=RuntimeError('offline')):
+            self.app._trigger_rag_alert('fire', 'smoke', 'A')
+            self.app._start_thread(self.app._guidance_worker, 'test-guidance')
+            self.app._clear_alarm()
+            self.app.tts.stop.reset_mock()
+            time.sleep(0.1)
+            self.assertIsNotNone(self.app._pending_evac_event)
+            self.assertIn(evacuation_for_zone('A'), [c.args[0] for c in self.app.tts.speak_async.call_args_list])
+            self.app.tts.stop.assert_not_called()
+            self.app.tts.is_speaking.return_value = False
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIsNone(self.app._pending_evac_event)
+
     def test_recovery_preserves_delayed_emergency_result_once(self):
         started, release = threading.Event(), threading.Event()
         def generate(*args, **kwargs):
@@ -86,7 +137,7 @@ class IntegrationTests(unittest.TestCase):
     def test_new_emergency_discards_previous_delayed_result(self):
         started, release = threading.Event(), threading.Event()
         def generate(context, question, **kwargs):
-            if question == 'old fire':
+            if question.startswith('old fire'):
                 started.set()
                 release.wait(2)
                 return SimpleNamespace(text='old route', provider='test')
@@ -125,7 +176,7 @@ class IntegrationTests(unittest.TestCase):
             event_id = self.app._event_id
             self.app._trigger_rag_alert('fire again', 'smoke', 'A')
             self.assertEqual(self.app._event_id, event_id)
-            self.assertEqual(self.app._cached_evac_guidance, 'route')
+            self.assertIn('route', self.app._cached_evac_guidance)
             self.app.tts.stop.assert_not_called()
             self.app._clear_alarm()
             self.app._process_query('normal question')
@@ -156,7 +207,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.app._event_id, event_id)
         self.assertEqual(self.app._jobs.qsize(), 1)
         self.app.tts.stop.assert_not_called()
-        self.assertEqual(self.app.tts.speak_async.call_count, 1)
+        self.assertEqual(self.app.tts.speak_async.call_count, 2)
 
     def test_same_zone_recurrence_preserves_inflight_result_once(self):
         started, release = threading.Event(), threading.Event()
@@ -181,7 +232,7 @@ class IntegrationTests(unittest.TestCase):
             spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
             self.assertEqual(spoken.count('A route'), 1)
             self.assertEqual(spoken.count(main.EMERGENCY_GUIDANCE), 1)
-            self.assertEqual(self.app._cached_evac_guidance, 'A route')
+            self.assertIn('A route', self.app._cached_evac_guidance)
 
     def test_different_zone_preempts_even_while_alarm_active(self):
         self.app._trigger_rag_alert('fire', 'smoke', 'A')

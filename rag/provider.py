@@ -11,6 +11,7 @@ import requests
 
 import config
 from rag.chain import call_ollama_native
+from rag.context import instruction_passages
 
 _LOG = logging.getLogger(__name__)
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -99,11 +100,14 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         raise ValueError("Gemini 모델명 형식이 올바르지 않습니다")
     response_style = (
         "질문에 관련된 문장을 원문 그대로 한 줄씩 인용하십시오. "
+        "수칙에 적용 조건이 있으면 그 조건도 원문으로 함께 인용하십시오. "
+        "문서 제목이나 목차만 답하지 마십시오. "
         if require_quotes else
-        "질문에 관련된 내용을 요약하고 자연스러운 한국어로 바꾸어 설명해도 됩니다. "
-        "핵심 행동을 최대 6개의 짧은 항목으로 안내하고 서론은 생략하십시오. "
-        "같은 조건에서 같은 행동은 한 번만 설명하고 비슷한 문장을 반복하지 마십시오. "
-        "공통 행동은 묶되, 대피 가능 여부나 화재 위치 등 조건이 다른 지침은 구분해서 유지하십시오. "
+        "질문에 관련된 매뉴얼 내용을 원문 중심으로 빠짐없이 안내하십시오. 요약과 표현 변경을 최소화하십시오. "
+        "구역명, 위치, 소화기 종류와 위치, 1차·2차 대피로, 행동 조건과 금지 사항을 생략하지 마십시오. "
+        "서로 다른 지침을 한 문장으로 합치지 말고 조건별로 나누어 안내하십시오. "
+        "동일한 내용의 중복만 제거하십시오. 항목 수 제한 때문에 필요한 내용을 제외하지 마십시오. "
+        "서론과 매뉴얼에 없는 설명은 생략하십시오. "
     )
     payload = {
         "systemInstruction": {"parts": [{"text": (
@@ -146,9 +150,7 @@ def _local(context: str, question: str, emergency: bool) -> str:
     timeout = (2, config.OLLAMA_EMERGENCY_TIMEOUT) if emergency else (2, config.OLLAMA_READ_TIMEOUT)
     if emergency:
         # The small local model selects evidence; Python copies the actual words.
-        lines = [line.strip() for line in context.splitlines()
-                 if line.strip() and not re.match(r"^(?:\[|#{1,6}\s|[-*]\s*(?:위치|소화기 위치):)", line.strip())
-                 and not re.fullmatch(r"[-*]?\s*화재 시 대피로\s*:\s*", line.strip())]
+        lines = instruction_passages(context)
         if not lines:
             raise ValueError("선택 가능한 매뉴얼이 없습니다")
         schema = {"type": "object", "properties": {"line_ids": {
@@ -157,8 +159,9 @@ def _local(context: str, question: str, emergency: bool) -> str:
         selected = "".join(call_ollama_native(
             prompt="\n".join(f"{i}: {line}" for i, line in enumerate(lines, 1)),
             question=question, timeout=timeout, response_format=schema, num_predict=64,
-            system_prompt=("Select the line IDs of relevant evacuation instructions from the manual. "
-                           "Prioritize primary and secondary evacuation routes for the current zone. "
+            system_prompt=("Select the line IDs of safety instructions relevant to the question from the manual. "
+                           "For route questions prioritize primary and secondary routes for the current zone. "
+                           "For additional fire response rules select relevant actions and prohibitions. "
                            "Select complete instructions with their conditions and prohibitions. "
                            "Do not select headings or metadata. Return ONLY JSON: {\"line_ids\":[1,2]}. "
                            "Select at most 6 lines; never write the instructions themselves."),

@@ -18,8 +18,8 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.patch_stdout import patch_stdout
 from alerts.alarm import trigger_alarm, stop_siren
 from alerts.notifier import send_alert
-from rag.context import build_manual_context
-from rag.layout import layout_for_question, layout_for_zone
+from rag.context import build_manual_context, additional_fire_context, without_repeated_guidance
+from rag.layout import layout_for_question, evacuation_for_zone
 from rag.native_retriever import rag_manager
 from rag.provider import EMERGENCY_GUIDANCE, generate_guidance, mode_command_response
 from sensors import fusion
@@ -136,10 +136,19 @@ class EdgeSaver:
             send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
             print(f"\n[첫 비상 안내] {EMERGENCY_GUIDANCE}")
             self.tts.speak_async(EMERGENCY_GUIDANCE, lang="ko", speed=self._speed())
+            zone_guidance = evacuation_for_zone(zone_id)
+            if zone_guidance:
+                print(f"\n[구역 대피 안내] {zone_guidance}")
+                # TTS queues speech in order. This must not wait for search or AI.
+                self.tts.speak_async(zone_guidance, lang="ko", speed=self._speed())
+                self._cached_evac_guidance += "\n" + zone_guidance
+            else:
+                print(f"[구역 대피 안내] {zone_id}구역의 등록된 대피로가 없습니다.")
             stop_siren()
             self._jobs.put_nowait((0, next(self._sequence), {
                 "emergency": True, "id": self._event_id, "question": prompt,
                 "zone": zone_id, "lang": "ko", "level": level,
+                "zone_guidance": zone_guidance,
             }))
 
     def _clear_alarm(self):
@@ -193,37 +202,62 @@ class EdgeSaver:
                         continue
                 started = time.perf_counter()
                 docs = rag_manager.search(job["question"])
-                manual = build_manual_context(docs)
-                layout = layout_for_zone(job["zone"]) if job["emergency"] else layout_for_question(job["question"])
+                if job["emergency"]:
+                    # An explicit zone search can return only its layout. Search
+                    # response manuals separately so extra rules are available.
+                    with self._state_lock:
+                        if not self._job_valid(job):
+                            continue
+                    docs = docs + rag_manager.search("공장 화재 대응 수칙 및 대피 시 주의사항")
+                    manual = additional_fire_context(docs)
+                    layout = ""
+                    question = (job["question"] + "\n구역 대피로는 별도로 안내합니다. "
+                                "관련 화재 대응 수칙과 금지 사항을 매뉴얼 원문으로 추가 안내하십시오. "
+                                "다른 구역의 대피로와 이미 안내한 대피로는 반복하지 마십시오.")
+                else:
+                    manual = build_manual_context(docs)
+                    layout = layout_for_question(job["question"])
+                    question = job["question"]
                 searched = time.perf_counter()
                 with self._state_lock:
                     if not self._job_valid(job):
                         continue
-                result = generate_guidance(layout+manual, job["question"], emergency=job["emergency"],
+                result = generate_guidance(layout+manual, question, emergency=job["emergency"],
                                            cloud_context=layout+manual if config.GEMINI_SEND_LAYOUT else manual)
                 with self._state_lock:
                     if not self._job_valid(job):
                         continue
-                    print(f"\n[AI: {result.provider}] {result.text}")
+                    text = result.text
+                    if job["emergency"]:
+                        if result.provider == "fixed":
+                            print("[추가 화재 대응 수칙] AI 안내를 만들지 못했습니다. 등록된 구역 안내는 유지합니다.")
+                            text = ""
+                        else:
+                            text = without_repeated_guidance(text, EMERGENCY_GUIDANCE+"\n"+job["zone_guidance"])
+                            if text:
+                                print(f"\n[추가 화재 대응 수칙 · AI: {result.provider}] {text}")
+                            else:
+                                print("[추가 화재 대응 수칙] 이미 안내한 내용 외에 추가 수칙이 없습니다.")
+                    else:
+                        print(f"\n[AI: {result.provider}] {text}")
                     if getattr(result, "fallback_reason", ""):
                         print(f"[AI 전환 사유] {result.fallback_reason}")
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
-                        self._cached_evac_guidance = result.text
-                        if result.text == EMERGENCY_GUIDANCE:
-                            continue
-                    self.tts.speak_async(result.text, lang=job["lang"], speed=self._speed(), provider=result.provider)
-                if job["emergency"]:
-                    # Preserve the one-time speech through recovery; let new
-                    # emergencies and shutdown interrupt it immediately.
-                    while not self._stop.wait(0.05):
-                        with self._state_lock:
-                            if not self._job_valid(job) or not self.tts.is_speaking():
-                                break
+                        self._cached_evac_guidance = "\n".join(filter(None, [
+                            EMERGENCY_GUIDANCE, job["zone_guidance"], text]))
+                    if text:
+                        self.tts.speak_async(text, lang=job["lang"], speed=self._speed(), provider=result.provider)
             except Exception:
                 LOG.exception("답변 생성 실패; 감시는 계속됩니다")
             finally:
                 if job["emergency"]:
+                    # Even model failure must preserve the already queued zone
+                    # guidance through recovery until its speech finishes.
+                    while not self._stop.wait(0.05):
+                        with self._state_lock:
+                            if not self._job_valid(job) or not self.tts.is_speaking():
+                                break
                     with self._state_lock:
                         if self._pending_evac_event == job["id"]:
                             self._pending_evac_event = None
@@ -289,7 +323,8 @@ class EdgeSaver:
         last_play = time.monotonic()
         while not self._stop.wait(0.5):
             with self._state_lock:
-                if self._alarm_active and time.monotonic()-last_play >= 25 and not self.tts.is_speaking():
+                if (self._alarm_active and self._pending_evac_event is None
+                        and time.monotonic()-last_play >= 25 and not self.tts.is_speaking()):
                     self.tts.speak_async(self._cached_evac_guidance, lang="ko", speed=self._speed())
                     last_play = time.monotonic()
                 elif not self._alarm_active:

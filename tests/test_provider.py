@@ -116,8 +116,10 @@ class ProviderTests(unittest.TestCase):
         local.assert_not_called()
         prompt = post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"]
         self.assertIn("요약", prompt)
-        self.assertIn("같은 행동은 한 번만", prompt)
-        self.assertIn("조건이 다른 지침은 구분", prompt)
+        self.assertIn("요약과 표현 변경을 최소화", prompt)
+        self.assertIn("조건별로", prompt)
+        self.assertIn("금지 사항을 생략하지", prompt)
+        self.assertNotIn("최대 6개", prompt)
 
     @patch.object(config, "AI_PROVIDER", "auto")
     @patch.object(config, "GEMINI_API_KEY", "test-key")
