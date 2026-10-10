@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import json
 import re
 import threading
 import time
@@ -143,7 +144,43 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
 
 def _local(context: str, question: str, emergency: bool) -> str:
     timeout = (2, config.OLLAMA_EMERGENCY_TIMEOUT) if emergency else (2, config.OLLAMA_READ_TIMEOUT)
-    answer = "".join(call_ollama_native(prompt=context, question=question, timeout=timeout)).strip()
+    if emergency:
+        # The small local model selects evidence; Python copies the actual words.
+        lines = [line.strip() for line in context.splitlines()
+                 if line.strip() and not re.match(r"^(?:\[|#{1,6}\s|[-*]\s*(?:위치|소화기 위치):)", line.strip())
+                 and not re.fullmatch(r"[-*]?\s*화재 시 대피로\s*:\s*", line.strip())]
+        if not lines:
+            raise ValueError("선택 가능한 매뉴얼이 없습니다")
+        schema = {"type": "object", "properties": {"line_ids": {
+            "type": "array", "items": {"type": "integer", "enum": list(range(1, len(lines)+1))},
+            "minItems": 1, "maxItems": 6}}, "required": ["line_ids"], "additionalProperties": False}
+        selected = "".join(call_ollama_native(
+            prompt="\n".join(f"{i}: {line}" for i, line in enumerate(lines, 1)),
+            question=question, timeout=timeout, response_format=schema, num_predict=64,
+            system_prompt=("Select the line IDs of relevant evacuation instructions from the manual. "
+                           "Prioritize primary and secondary evacuation routes for the current zone. "
+                           "Select complete instructions with their conditions and prohibitions. "
+                           "Do not select headings or metadata. Return ONLY JSON: {\"line_ids\":[1,2]}. "
+                           "Select at most 6 lines; never write the instructions themselves."),
+        ))
+        ids = json.loads(selected).get("line_ids")
+        if (not isinstance(ids, list) or not 1 <= len(ids) <= 6
+                or any(type(i) is not int or not 1 <= i <= len(lines) for i in ids)):
+            raise ValueError("Ollama 매뉴얼 문장 선택이 올바르지 않습니다")
+        # A small model may select only a nearby safety rule. Keep the current
+        # layout's explicit routes, without taking routes from other documents.
+        layout_block = re.match(r"\[현재 현장 [ABC]구역 평면도 및 대피로\]\n(.*?)(?:\n\n|$)", context, re.S)
+        routes = []
+        if layout_block:
+            for line in layout_block.group(1).splitlines():
+                line = line.strip()
+                if (re.match(r"\d+[.)]\s*\d차 대피로", line)
+                        or re.match(r"[-*]\s*화재 시 대피로:\s*\S", line)):
+                    routes.append(line)
+        chosen = [lines[i-1] for i in sorted(set(ids))]
+        answer = "\n".join(dict.fromkeys(routes + chosen))
+    else:
+        answer = "".join(call_ollama_native(prompt=context, question=question, timeout=timeout)).strip()
     if not answer:
         raise ValueError("Ollama 답변이 비어 있습니다")
     return answer
@@ -195,6 +232,7 @@ def generate_guidance(
     try:
         answer = _local(context, question, emergency)
         if emergency and not _is_grounded(answer, context):
+            _LOG.warning("Ollama 비상 답변 원문 검증 실패; 고정 안내로 전환")
             return GuidanceResult(EMERGENCY_GUIDANCE, "fixed", "로컬 답변 근거 불충분")
         return GuidanceResult(answer, "ollama", fallback_reason)
     except Exception as exc:

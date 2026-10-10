@@ -10,6 +10,24 @@ from rag import provider
 
 
 class ProviderTests(unittest.TestCase):
+    @patch.object(provider, "call_ollama_native", return_value=iter(['{"line_ids":[3]}']))
+    def test_emergency_selection_preserves_both_current_zone_routes(self, call):
+        from rag.layout import layout_for_zone
+        context = layout_for_zone("A")
+        answer = provider._local(context, "A구역 대피 방법", True)
+        self.assertIn("1차 대피로", answer)
+        self.assertIn("2차 대피로", answer)
+        self.assertTrue(provider._is_grounded(answer, context))
+        self.assertEqual(call.call_args.kwargs["num_predict"], 64)
+
+    @patch.object(provider, "call_ollama_native")
+    def test_selection_rejects_invalid_ids_and_types(self, call):
+        for value in ('{"line_ids":[0]}', '{"line_ids":[2]}', '{"line_ids":[true]}', '{"line_ids":[]}', 'broken'):
+            with self.subTest(value=value):
+                call.return_value = iter([value])
+                with self.assertRaises(ValueError):
+                    provider._local("물을 사용하지 마십시오.", "화재", True)
+
     def setUp(self):
         provider._failure_until = 0.0
 

@@ -205,6 +205,8 @@ class EdgeSaver:
                     if not self._job_valid(job):
                         continue
                     print(f"\n[AI: {result.provider}] {result.text}")
+                    if getattr(result, "fallback_reason", ""):
+                        print(f"[AI 전환 사유] {result.fallback_reason}")
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
                         self._cached_evac_guidance = result.text
