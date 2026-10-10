@@ -16,9 +16,17 @@ class LayoutTests(unittest.TestCase):
         self.assertIn('2차 대피로', answer)
         self.assertIn('절대 물', answer)
         self.assertNotIn('센서노드', answer)
-        self.assertNotIn('소화기 위치:', answer)
+        self.assertIn('A구역 소화기 위치: A구역 정문 출입구 바로 오른쪽 벽면', answer)
+        self.assertLess(answer.index('1차 대피로'), answer.index('소화기 위치:'))
         self.assertIn('비상계단', evacuation_for_zone('C'))
         self.assertEqual(evacuation_for_zone('D'), '')
+
+    def test_remote_fire_announces_listener_extinguisher_locations(self):
+        answer = evacuation_for_zone('B', fire_zone='A')
+        self.assertIn('화재 감지 구역은 A구역', answer)
+        self.assertIn('B구역 소화기 위치: 조립 라인 A3 기둥 앞 및 용접 부스 출입구', answer)
+        self.assertNotIn('정문 출입구 바로 오른쪽 벽면', answer)
+        self.assertIn('C구역 소화기 위치: 각 층계단 앞', evacuation_for_zone('C'))
     def test_explicit_zone_question_gets_its_route(self):
         route = layout_for_question("B구역 대피경로가 어디야?")
         self.assertIn("B구역", route)

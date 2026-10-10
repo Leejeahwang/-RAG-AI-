@@ -33,14 +33,20 @@ def layout_for_question(question: str) -> str:
     return layout_for_zone(question)
 
 
-def evacuation_for_zone(zone: str) -> str:
-    """Copy explicit routes and zone precautions; never infer a missing route."""
+def evacuation_for_zone(zone: str, fire_zone: str | None = None) -> str:
+    """Copy routes, precautions and extinguisher locations from the listener's zone."""
     layout = layout_for_zone(zone)
     lines = []
+    extinguisher_locations = []
     in_routes = False
     for raw in layout.splitlines():
         line = raw.strip()
-        if re.match(r"[-*]\s*화재 시 대피로\s*:", line):
+        if re.match(r"[-*]\s*소화기 위치\s*:", line):
+            in_routes = False
+            location = line.split(":", 1)[1].strip()
+            if location:
+                extinguisher_locations.append(location)
+        elif re.match(r"[-*]\s*화재 시 대피로\s*:", line):
             in_routes = True
             inline = line.split(":", 1)[1].strip()
             if inline:
@@ -54,4 +60,15 @@ def evacuation_for_zone(zone: str) -> str:
             in_routes = False
     if not lines:
         return ""
-    return f"{zone_from_text(zone)}구역 대피 안내.\n" + "\n".join(lines)
+    zone_id = zone_from_text(zone)
+    # Keep evacuation first; announce existing equipment without inferring suitability.
+    lines.extend(f"{zone_id}구역 소화기 위치: {location}" for location in extinguisher_locations)
+    prefix = f"{zone_id}구역 대피 안내."
+    if fire_zone:
+        fire_id = zone_from_text(fire_zone)
+        if not fire_id:
+            raise ValueError("알 수 없는 화재 구역")
+        prefix = f"화재 감지 구역은 {fire_id}구역입니다. 현재 안내 구역은 {zone_id}구역입니다."
+        if fire_id != zone_id:
+            prefix += f" {fire_id}구역으로 접근하지 마십시오."
+    return prefix+"\n"+"\n".join(lines)

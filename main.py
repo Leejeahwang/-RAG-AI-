@@ -7,6 +7,8 @@ import queue
 import re
 import threading
 import time
+import socket
+import uuid
 from html import escape
 
 if platform.system() == "Windows":
@@ -18,6 +20,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.patch_stdout import patch_stdout
 from alerts.alarm import trigger_alarm, stop_siren
 from alerts.notifier import send_alert
+from alerts.fire_events import FireEvent, FireEventLink
 from rag.context import build_manual_context, additional_fire_context, without_repeated_guidance
 from rag.layout import layout_for_question, evacuation_for_zone
 from rag.native_retriever import rag_manager
@@ -33,6 +36,12 @@ from voice.tts import TTSHelper
 LOG = logging.getLogger(__name__)
 
 
+def first_emergency_guidance(fire_zone):
+    if fire_zone not in ('A', 'B', 'C'):
+        raise ValueError('알 수 없는 화재 구역')
+    return f"{fire_zone}구역에서 {EMERGENCY_GUIDANCE}"
+
+
 class EdgeSaver:
     def __init__(self, session=None):
         self.session = session
@@ -46,6 +55,15 @@ class EdgeSaver:
         self._alarm_active = False
         self._pending_evac_event = None
         self._event_zone = None
+        self.local_zone = config.ZONE_ID
+        self.detection_zone = config.DETECTION_ZONE_ID
+        self._node_id = config.ALERT_NODE_ID or f"{socket.gethostname()}-{self.local_zone}"
+        self._source_epoch = time.time()
+        self._http_sequence = itertools.count(1)
+        self._alert_link = None
+        self._local_incident = None
+        self._remote_events = {}
+        self._remote_versions = {}
         self._cached_evac_guidance = ""
         self._alarm_hold_until = 0.0
         self._safe_since = None
@@ -70,7 +88,7 @@ class EdgeSaver:
     def initialize(self):
         if self._initialized:
             return
-        print(f"[시스템] {config.APP_NAME} | 센서 {config.SENSOR_MODE} | {config.ZONE_ID}구역")
+        print(f"[시스템] {config.APP_NAME} | 센서 {config.SENSOR_MODE} | 안내 {self.local_zone}구역 / 감지 {self.detection_zone}구역")
         rag_manager.load_resources()
         if rag_manager.index is None or rag_manager.index_needs_refresh:
             from tools.rebuild_rag_index import main as rebuild_index
@@ -78,6 +96,10 @@ class EdgeSaver:
             rag_manager.load_resources()
         _ = self.tts
         fire_detector.warmup()
+        if config.ALERT_HTTP_ENABLED:
+            self._alert_link = FireEventLink(config.ALERT_HTTP_HOST, config.ALERT_HTTP_PORT,
+                config.ALERT_HTTP_TOKEN, config.ALERT_HTTP_PEERS, self.handle_fire_event)
+            self._alert_link.start()
         # STT is lazy: camera startup never waits for Whisper or a microphone.
         cctv_service.camera_running = True
         self._monitor_running = True
@@ -118,7 +140,7 @@ class EdgeSaver:
                     self.current_level = max(self.current_level, level)
                     self._safe_since = None
                     trigger_alarm(level, sensor_info)
-                    send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
+                    send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
                     stop_siren()
                     print(f"\n[비상 재감지] {zone_id}구역: 진행 중인 대피 지침 안내를 이어갑니다.")
                     return
@@ -127,32 +149,93 @@ class EdgeSaver:
             self._event_zone = zone_id
             self._pending_evac_event = self._event_id
             self._request_id += 1
-            self.current_level = level
+            self.current_level = max([level] + [event.level for event in self._remote_events.values()]
+                                     + ([self._local_incident['level']] if self._local_incident else []))
             self._safe_since = None
-            self._cached_evac_guidance = EMERGENCY_GUIDANCE
+            first_guidance = first_emergency_guidance(zone_id)
+            self._cached_evac_guidance = first_guidance
             self._discard_pending_jobs()
             self.tts.stop()
             trigger_alarm(level, sensor_info)
-            send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
-            print(f"\n[첫 비상 안내] {EMERGENCY_GUIDANCE}")
-            self.tts.speak_async(EMERGENCY_GUIDANCE, lang="ko", speed=self._speed())
-            zone_guidance = evacuation_for_zone(zone_id)
+            send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
+            print(f"\n[첫 비상 안내] {first_guidance}")
+            self.tts.speak_async(first_guidance, lang="ko", speed=self._speed())
+            zone_guidance = evacuation_for_zone(self.local_zone, fire_zone=zone_id)
             if zone_guidance:
                 print(f"\n[구역 대피 안내] {zone_guidance}")
                 # TTS queues speech in order. This must not wait for search or AI.
                 self.tts.speak_async(zone_guidance, lang="ko", speed=self._speed())
                 self._cached_evac_guidance += "\n" + zone_guidance
             else:
-                print(f"[구역 대피 안내] {zone_id}구역의 등록된 대피로가 없습니다.")
+                print(f"[구역 대피 안내] {self.local_zone}구역의 등록된 대피로가 없습니다.")
             stop_siren()
             self._jobs.put_nowait((0, next(self._sequence), {
                 "emergency": True, "id": self._event_id, "question": prompt,
                 "zone": zone_id, "lang": "ko", "level": level,
+                "fire_zone": zone_id, "local_zone": self.local_zone,
+                "first_guidance": first_guidance,
                 "zone_guidance": zone_guidance,
             }))
 
+    def _publish_local(self, active):
+        if self._alert_link and self._local_incident:
+            incident = self._local_incident
+            self._alert_link.publish(FireEvent(self._node_id, self._source_epoch,
+                next(self._http_sequence), incident['id'], self.detection_zone, active,
+                incident['level'], incident['details']))
+
+    def _activate_local_fire(self, prompt, details, level=4):
+        with self._state_lock:
+            changed = self._local_incident is None or level > self._local_incident['level']
+            if self._local_incident is None:
+                self._local_incident = {'id': uuid.uuid4().hex, 'level': level, 'details': details}
+            if changed:
+                self._local_incident.update(level=level, details=details)
+                self._publish_local(True)
+            self._trigger_rag_alert(prompt, details, self.detection_zone, level)
+
+    def handle_fire_event(self, event):
+        """Receive origin state without forwarding it or consulting local SAFE observations."""
+        if isinstance(event, dict):
+            event = FireEvent.parse(event)
+        with self._state_lock:
+            if self._stop.is_set() or event.source_node == self._node_id:
+                return
+            version = (event.source_epoch, event.sequence)
+            if version <= self._remote_versions.get(event.source_node, (0, 0)):
+                return
+            self._remote_versions[event.source_node] = version
+            previous = self._remote_events.get(event.source_node)
+            if event.active:
+                self._remote_events[event.source_node] = event
+                self.current_level = max(self.current_level, event.level)
+                if previous is None or previous.incident_id != event.incident_id:
+                    print(f"[구역 경보 수신] 화재 {event.fire_zone}구역 / 현재 {self.local_zone}구역")
+                    self._trigger_rag_alert(
+                        f"[화재 {event.fire_zone}구역 / 현재 {self.local_zone}구역] 화재 대응 수칙",
+                        event.details, event.fire_zone, event.level)
+            elif previous and previous.incident_id == event.incident_id:
+                del self._remote_events[event.source_node]
+                print(f"[구역 경보 해제 수신] {event.fire_zone}구역")
+                if self._local_incident:
+                    local = self._local_incident
+                    self._trigger_rag_alert('현장 화재 대응 수칙', local['details'], self.detection_zone, local['level'])
+                elif self._remote_events:
+                    remaining = next(reversed(self._remote_events.values()))
+                    self._trigger_rag_alert('수신 화재 대응 수칙', remaining.details, remaining.fire_zone, remaining.level)
+                else:
+                    self._clear_alarm()
+
     def _clear_alarm(self):
         with self._state_lock:
+            if self._local_incident:
+                self._publish_local(False)
+                self._local_incident = None
+            if self._remote_events:
+                remaining = next(reversed(self._remote_events.values()))
+                self._trigger_rag_alert('수신 화재 대응 수칙', remaining.details, remaining.fire_zone, remaining.level)
+                self._safe_since = None
+                return
             if not self._alarm_active:
                 return
             self._alarm_active = False
@@ -233,7 +316,7 @@ class EdgeSaver:
                             print("[추가 화재 대응 수칙] AI 안내를 만들지 못했습니다. 등록된 구역 안내는 유지합니다.")
                             text = ""
                         else:
-                            text = without_repeated_guidance(text, EMERGENCY_GUIDANCE+"\n"+job["zone_guidance"])
+                            text = without_repeated_guidance(text, job["first_guidance"]+"\n"+EMERGENCY_GUIDANCE+"\n"+job["zone_guidance"])
                             if text:
                                 print(f"\n[추가 화재 대응 수칙 · AI: {result.provider}] {text}")
                             else:
@@ -245,7 +328,7 @@ class EdgeSaver:
                     print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
                     if job["emergency"]:
                         self._cached_evac_guidance = "\n".join(filter(None, [
-                            EMERGENCY_GUIDANCE, job["zone_guidance"], text]))
+                            job["first_guidance"], job["zone_guidance"], text]))
                     if text:
                         self.tts.speak_async(text, lang=job["lang"], speed=self._speed(), provider=result.provider)
             except Exception:
@@ -295,15 +378,17 @@ class EdgeSaver:
         with self._state_lock:
             self.current_level = max(risk["level"], self.current_level) if self._alarm_active else risk["level"]
             if risk["level"] >= 4:
-                prompt = f"[공장 {config.ZONE_ID}구역] {risk['details']}. 대피 지침을 알려주세요."
-                self._trigger_rag_alert(prompt, risk["details"], config.ZONE_ID, risk["level"])
+                prompt = f"[화재 {self.detection_zone}구역 / 현재 {self.local_zone}구역] {risk['details']}. 대피 지침을 알려주세요."
+                self._activate_local_fire(prompt, risk["details"], risk["level"])
                 self._safe_since = None
-            elif self._alarm_active and clear_observation and risk["level"] < 2 and now >= self._alarm_hold_until:
+            elif (self._alarm_active and (self._local_incident or not self._remote_events)
+                    and clear_observation and risk["level"] < 2 and now >= self._alarm_hold_until):
                 if self._safe_since is None:
                     self._safe_since = now
                 elif now-self._safe_since >= config.ALARM_RECOVERY_SECONDS and not self.tts.is_speaking():
                     self._clear_alarm()
-                    self.current_level = risk["level"]
+                    if not self._alarm_active:
+                        self.current_level = risk["level"]
             else:
                 self._safe_since = None
             label = config.RISK_LEVELS.get(self.current_level, "정상")
@@ -325,6 +410,8 @@ class EdgeSaver:
             with self._state_lock:
                 if (self._alarm_active and self._pending_evac_event is None
                         and time.monotonic()-last_play >= 25 and not self.tts.is_speaking()):
+                    print(f"\n[비상 안내 반복 재생] 화재 {self._event_zone}구역 / 현재 {self.local_zone}구역")
+                    print(self._cached_evac_guidance)
                     self.tts.speak_async(self._cached_evac_guidance, lang="ko", speed=self._speed())
                     last_play = time.monotonic()
                 elif not self._alarm_active:
@@ -380,12 +467,24 @@ class EdgeSaver:
                     if mode_response is not None:
                         print(mode_response)
                         continue
+                    demo_event = re.fullmatch(r"test (fire|clear) ([ABC])", query, re.IGNORECASE)
+                    if demo_event:
+                        if config.SENSOR_MODE != "demo":
+                            print("[시스템] 구역 경보 테스트는 SENSOR_MODE=demo에서 사용하세요.")
+                            continue
+                        action, zone = demo_event.group(1).lower(), demo_event.group(2).upper()
+                        node = f"demo-{zone}"
+                        previous = self._remote_events.get(node)
+                        self.handle_fire_event(FireEvent(node, self._source_epoch,
+                            next(self._http_sequence), previous.incident_id if previous else uuid.uuid4().hex,
+                            zone, action == 'fire', 4, '수신 경보 데모'))
+                        continue
                     if query.lower() in {"test fire", "fire test", "화재 테스트", "화재실험"}:
                         if config.SENSOR_MODE != "demo":
                             print("[시스템] test fire는 SENSOR_MODE=demo에서 사용하세요.")
                             continue
                         self._alarm_hold_until = time.monotonic()+config.DEMO_ALARM_HOLD_SECONDS
-                        self._trigger_rag_alert(f"[공장 {config.ZONE_ID}구역] 화재 대피 방법", "데모 화재", config.ZONE_ID)
+                        self._activate_local_fire(f"[화재 {self.detection_zone}구역 / 현재 {self.local_zone}구역] 화재 대피 방법", "데모 화재")
                         continue
                     if not query or query.lower() in {"v", "voice"}:
                         query, lang = self._listen()
@@ -405,6 +504,8 @@ class EdgeSaver:
             self._discard_pending_jobs()
             cctv_service.camera_running = False
             stop_siren(force=True)
+        if self._alert_link:
+            self._alert_link.close()
         for resource, method in [(self._stt_stream, "stop_stream"), (self._stt_stream, "close"), (self._pa, "terminate")]:
             if resource:
                 try:

@@ -14,6 +14,8 @@ from sensors.fusion import calculate_risk_level
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
+        patch.object(config, 'ZONE_ID', 'A').start()
+        patch.object(config, 'DETECTION_ZONE_ID', 'A').start()
         self.app = main.EdgeSaver()
         self.app._tts = Mock()
         self.app._tts.is_speaking.return_value = False
@@ -37,9 +39,9 @@ class IntegrationTests(unittest.TestCase):
             self.assertTrue(started.wait(1))
             try:
                 self.app._trigger_rag_alert('fire', 'smoke', 'B', level=5)
-                self.notify.assert_called_once_with(zone='B', risk_level=5, sensor_details='smoke')
+                self.notify.assert_called_once_with(zone='B', local_zone='A', risk_level=5, sensor_details='smoke')
                 spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
-                self.assertIn(main.EMERGENCY_GUIDANCE, spoken)
+                self.assertIn(main.first_emergency_guidance('B'), spoken)
             finally:
                 release.set()
             deadline = time.monotonic()+2
@@ -51,7 +53,7 @@ class IntegrationTests(unittest.TestCase):
     def test_zone_guidance_precedes_ai_rules_and_survives_recovery(self):
         from rag.layout import evacuation_for_zone
         started, release = threading.Event(), threading.Event()
-        zone = evacuation_for_zone('A')
+        zone = evacuation_for_zone('A', fire_zone='A')
         rule = '전기 화재인 경우 메인 전원을 내린 후 전용 소화기를 사용하십시오.'
         def generate(*args, **kwargs):
             started.set()
@@ -63,7 +65,7 @@ class IntegrationTests(unittest.TestCase):
              patch('main.generate_guidance', side_effect=generate) as generator:
             self.app._trigger_rag_alert('A구역 화재 대피', 'smoke', 'A')
             self.assertEqual([c.args[0] for c in self.app.tts.speak_async.call_args_list],
-                             [main.EMERGENCY_GUIDANCE, zone])
+                             [main.first_emergency_guidance('A'), zone])
             self.app._start_thread(self.app._guidance_worker, 'test-guidance')
             self.assertTrue(started.wait(1))
             try:
@@ -77,7 +79,7 @@ class IntegrationTests(unittest.TestCase):
             while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertEqual([c.args[0] for c in self.app.tts.speak_async.call_args_list],
-                             [main.EMERGENCY_GUIDANCE, zone, rule])
+                             [main.first_emergency_guidance('A'), zone, rule])
             self.assertEqual(search.call_count, 2)
 
     def test_model_failure_keeps_zone_speech_pending_through_recovery(self):
@@ -91,7 +93,7 @@ class IntegrationTests(unittest.TestCase):
             self.app.tts.stop.reset_mock()
             time.sleep(0.1)
             self.assertIsNotNone(self.app._pending_evac_event)
-            self.assertIn(evacuation_for_zone('A'), [c.args[0] for c in self.app.tts.speak_async.call_args_list])
+            self.assertIn(evacuation_for_zone('A', fire_zone='A'), [c.args[0] for c in self.app.tts.speak_async.call_args_list])
             self.app.tts.stop.assert_not_called()
             self.app.tts.is_speaking.return_value = False
             deadline = time.monotonic()+2
@@ -231,7 +233,7 @@ class IntegrationTests(unittest.TestCase):
             generator.assert_called_once()
             spoken = [c.args[0] for c in self.app.tts.speak_async.call_args_list]
             self.assertEqual(spoken.count('A route'), 1)
-            self.assertEqual(spoken.count(main.EMERGENCY_GUIDANCE), 1)
+            self.assertEqual(spoken.count(main.first_emergency_guidance('A')), 1)
             self.assertIn('A route', self.app._cached_evac_guidance)
 
     def test_different_zone_preempts_even_while_alarm_active(self):

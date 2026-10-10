@@ -7,7 +7,7 @@ Phase 2+: MQTT 또는 HTTP API를 통한 실제 전송
 """
 
 
-def send_alert(zone, risk_level, sensor_details, ai_guidance=""):
+def send_alert(zone, risk_level, sensor_details, ai_guidance="", local_zone=None):
     """
     관제실에 알림을 전송합니다.
 
@@ -23,7 +23,9 @@ def send_alert(zone, risk_level, sensor_details, ai_guidance=""):
     """
     print("\n" + "=" * 55)
     print(f"📱 [관제실 알림 전송]")
-    print(f"   위치: {zone}")
+    print(f"   화재 감지 구역: {zone}")
+    if local_zone:
+        print(f"   현재 안내 구역: {local_zone}")
     print(f"   위험도: Level {risk_level}")
     print(f"   센서: {sensor_details}")
     if ai_guidance:

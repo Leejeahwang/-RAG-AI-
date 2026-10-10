@@ -348,7 +348,17 @@ SDL_AUDIODRIVER=pulseaudio STT_ENABLED=false python main_test.py
 
 개선안은 앱 초기화 중 예제 문장을 한 번 임베딩하고 워밍업 완료 후 준비 상태를 표시하는 것입니다. 이는 첫 질문 지연을 시작 단계로 옮기는 방식이며 전체 준비 비용이 사라지는 것은 아닙니다. **현재 브랜치에는 이 워밍업 개선을 적용하지 않았습니다.**
 
-## 공식 참고 자료
+## 여러 구역의 라즈베리파이 연결
+
+설치 구역은 각 Pi의 `.env`에서 `ZONE_ID=A` 또는 `B`, `C`로 설정합니다. 직접 감지 구역은 `DETECTION_ZONE_ID`로 별도 설정하며 생략하면 `ZONE_ID`를 사용합니다. 안내 B / 감지 A라면 `ZONE_ID=B`, `DETECTION_ZONE_ID=A`로 설정합니다. 화재 발생 구역은 HTTP 이벤트의 별도 `fire_zone`으로 전달됩니다. A 화재를 B에서 수신하면 B의 대피로와 A 화재 발생지를 안내합니다. B 센서가 정상이어도 A 장치의 정상 복귀 이벤트 전에는 원격 경보를 해제하지 않습니다.
+
+연결할 각 Pi에 `ALERT_HTTP_ENABLED=true`, `ALERT_HTTP_HOST=0.0.0.0`, `ALERT_HTTP_PORT=8765`, 같은 `ALERT_HTTP_TOKEN`, 서로 다른 `ALERT_NODE_ID`를 설정합니다. `ALERT_HTTP_PEERS`는 상대의 `http://IP:8765` 주소이며 여러 주소는 쉼표로 구분합니다. README의 A/B 설정 예제를 참고하고 프로그램을 재시작하세요. 의존성 추가는 없습니다. 내부망의 TCP 8765 접근이 필요하며 토큰은 커밋하지 않습니다.
+
+데모 모드에서 A 장치의 `test fire`를 실행해 B 수신을 확인합니다. B에서 `test fire A`를 입력하면 네트워크 없이 수신 처리만 시험할 수 있으며 `test clear A`로 해제합니다. 실제 두 Pi 사이 연결과 스피커 재생은 해당 장치에서 별도 검증해야 합니다. 통신 단절·프로그램 종료만으로 화재 해제하지 않습니다. 화재 중 발생 장치 재시작 시 기존 수신 경보가 남을 수 있습니다.
+
+대피로는 각 구역 파일에 등록된 경로입니다. 통로 연결·차단 정보를 이용한 우회 경로 계산은 포함하지 않습니다.
+
+## 공식 참고 자료 링크
 
 - [CPU PyTorch 설치](https://pytorch.org/get-started/locally/)
 - [python-mecab-ko 설치](https://python-mecab-ko.readthedocs.io/en/latest/install/)

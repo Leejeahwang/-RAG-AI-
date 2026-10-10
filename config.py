@@ -121,6 +121,16 @@ DEMO_VISION_ESCALATION = os.getenv("DEMO_VISION_ESCALATION", "true").lower() == 
 ZONE_ID = os.getenv("ZONE_ID", "A").upper()
 if ZONE_ID not in {"A", "B", "C"}:
     raise ValueError("ZONE_ID must be A, B or C")
+DETECTION_ZONE_ID = os.getenv("DETECTION_ZONE_ID", ZONE_ID).upper()
+if DETECTION_ZONE_ID not in {"A", "B", "C"}:
+    raise ValueError("DETECTION_ZONE_ID must be A, B or C")
+# ZONE_ID is the installation/listener zone; remote events carry fire_zone.
+ALERT_HTTP_ENABLED = os.getenv("ALERT_HTTP_ENABLED", "false").lower() == "true"
+ALERT_HTTP_HOST = os.getenv("ALERT_HTTP_HOST", "127.0.0.1")
+ALERT_HTTP_PORT = int(os.getenv("ALERT_HTTP_PORT", "8765"))
+ALERT_HTTP_TOKEN = os.getenv("ALERT_HTTP_TOKEN", "")
+ALERT_HTTP_PEERS = [value.strip() for value in os.getenv("ALERT_HTTP_PEERS", "").split(',') if value.strip()]
+ALERT_NODE_ID = os.getenv("ALERT_NODE_ID", "")
 BYPASS_MOTION_FILTER = False
 MONITOR_INTERVAL = 0.15
 FRAME_MAX_AGE = 2.0
