@@ -272,12 +272,110 @@ class IntegrationTests(unittest.TestCase):
             self.app._monitor_once()
             return detect.call_count
 
-    def test_original_fusion_smoke_contract_is_preserved(self):
+    def test_legacy_smoke_contract_now_issues_one_local_warning(self):
         analysis = {'fire_detected':True,'is_real_smoke':True,'status':'REAL_SMOKE_RISING'}
         risk = calculate_risk_level(80,120,{'temperature':24.5},analysis)
         self.assertEqual(risk['level'], 2)
-        self.assertFalse(risk['is_early_detection'])
+        self.assertTrue(risk['is_early_detection'])
         self.monitor(analysis)
+        self.assertEqual(self.app.current_level, 2)
+        self.alarm.assert_not_called()
+        self.assertIn('상승하는 연기', self.app.tts.speak_async.call_args.args[0])
+        self.monitor(analysis, frame_id=2)
+        self.app.tts.speak_async.assert_called_once()
+        self.assertIsNone(self.app._local_incident)
+        self.notify.assert_called_once()
+
+    def test_warning_does_not_interrupt_pending_or_active_evacuation(self):
+        self.app._pending_evac_event = 1
+        self.monitor({'fire_detected':False, 'is_real_smoke':True, 'status':'REAL_SMOKE_RISING'})
+        self.app.tts.speak_async.assert_not_called()
+        self.app.tts.stop.assert_not_called()
+
+    def test_warning_rearms_only_after_sustained_healthy_clear(self):
+        risk = calculate_risk_level(80, 120, {'temperature':24}, {'is_real_smoke':True})
+        safe = calculate_risk_level(80, 120, {'temperature':24}, False)
+        self.app._handle_vision_warning(risk, 0, False)
+        self.app._handle_vision_warning(safe, 1, True)
+        self.app._handle_vision_warning(safe, 10, False)  # camera outage breaks recovery
+        self.app._handle_vision_warning(risk, 11, False)
+        self.app.tts.speak_async.assert_called_once()
+        self.app._handle_vision_warning(safe, 12, True)
+        self.app._handle_vision_warning(safe, 12+config.ALARM_RECOVERY_SECONDS, True)
+        self.app._handle_vision_warning(risk, 20, False)
+        self.assertEqual(self.app.tts.speak_async.call_count, 2)
+
+    def test_new_question_cannot_interrupt_warning_speech(self):
+        self.monitor({'is_real_smoke':True, 'status':'REAL_SMOKE_RISING'})
+        self.app.tts.is_speaking.return_value = True
+        self.app.tts.stop.reset_mock()
+        self.app._process_query('question')
+        self.app.tts.stop.assert_not_called()
+        self.assertEqual(self.app._jobs.qsize(), 0)
+
+    def test_warning_discards_late_general_answer(self):
+        started, release = threading.Event(), threading.Event()
+        def generate(*args, **kwargs):
+            started.set()
+            release.wait(2)
+            return SimpleNamespace(text='obsolete answer', provider='test')
+        with patch('main.rag_manager.search',return_value=[]), \
+             patch('main.generate_guidance',side_effect=generate):
+            self.app._start_thread(self.app._guidance_worker,'warning-test-guidance')
+            self.app._process_query('question')
+            self.assertTrue(started.wait(1))
+            try:
+                self.monitor({'is_real_smoke':True,'status':'REAL_SMOKE_RISING'})
+            finally:
+                release.set()
+            deadline = time.monotonic()+2
+            while self.app._jobs.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(.01)
+        self.assertEqual(self.app._jobs.unfinished_tasks,0)
+        speech = [call.args[0] for call in self.app.tts.speak_async.call_args_list]
+        self.assertEqual(len(speech),1)
+        self.assertNotIn('obsolete answer',speech)
+
+    def test_completed_warning_allows_a_new_query(self):
+        self.monitor({'is_real_smoke':True,'status':'REAL_SMOKE_RISING'})
+        self.app.tts.is_speaking.return_value = False
+        self.app._process_query('question')
+        self.assertFalse(self.app._vision_warning_speech)
+        self.assertEqual(self.app._jobs.qsize(),1)
+
+    def test_warning_escalates_to_emergency_with_real_sensor_evidence(self):
+        analysis = {'contract_version':1, 'is_real_smoke':True, 'fire_detected':False, 'status':'REAL_SMOKE_RISING'}
+        self.monitor(analysis)
+        with patch('main.read_smoke_level', return_value=350), \
+             patch('main.read_gas_level', return_value=120), \
+             patch('main.read_temperature', return_value={'temperature':24, 'humidity':50}):
+            # Use a new frame, keep the real detector output contract and fusion.
+            frame = np.zeros((200,200,3), dtype=np.uint8)
+            with patch('main.vision_bridge.frame_snapshot', return_value=(frame,time.monotonic(),2,False)), \
+                 patch('main.fire_detector.detect_fire', return_value=analysis), \
+                 patch.object(config, 'SENSOR_MODE', 'hardware'):
+                self.app._monitor_once()
+        self.assertEqual(self.app.current_level, 4)
+        self.assertTrue(self.app._alarm_active)
+        self.alarm.assert_called_once()
+
+    def test_full_smoke_detector_to_monitor_path(self):
+        from test_vision_contract import detections, rising
+        fire_detector.reset_motion()
+        self.addCleanup(fire_detector.reset_motion)
+        model = Mock()
+        model.predict.return_value = detections((1,.9,[10,10,110,110]))
+        frame = np.zeros((160,160,3), dtype=np.uint8)
+        with patch.object(fire_detector, 'model', model), \
+             patch('vision.smoke_motion.cv2.calcOpticalFlowFarneback', side_effect=rising), \
+             patch('main.read_smoke_level', return_value=80), \
+             patch('main.read_gas_level', return_value=120), \
+             patch('main.read_temperature', return_value={'temperature':24, 'humidity':50}), \
+             patch.object(config, 'SENSOR_MODE', 'hardware'):
+            for sequence in range(1,5):
+                with patch('main.vision_bridge.frame_snapshot', return_value=(frame.copy(), time.monotonic(), sequence, False)):
+                    self.app._monitor_once()
+                self.assertEqual(self.app.tts.speak_async.call_count, 1 if sequence == 4 else 0)
         self.assertEqual(self.app.current_level, 2)
         self.alarm.assert_not_called()
 
@@ -285,6 +383,47 @@ class IntegrationTests(unittest.TestCase):
         self.monitor({'fire_detected':True,'status':'REAL_FIRE_FLICKERING'}, sensor_mode='hardware')
         self.assertEqual(self.app.current_level, 2)
         self.alarm.assert_not_called()
+
+    def test_pending_candidate_never_escalates_demo_sensors(self):
+        self.monitor({'contract_version':1, 'fire_detected':True,
+                      'is_real_fire':False, 'status':'EVALUATING_FIRE_MOTION'})
+        self.assertEqual(self.app.current_level, 0)
+        self.app.tts.speak_async.assert_not_called()
+        self.alarm.assert_not_called()
+
+    def test_camera_loss_discards_temporal_evidence_before_reconnection(self):
+        self.monitor({'fire_detected':False, 'status':'EVALUATING_FIRE_MOTION'})
+        with patch('main.fire_detector.reset_motion') as reset:
+            self.monitor({}, offline=True)
+            reset.assert_called_once()
+
+    def test_alternating_smoke_and_flame_does_not_repeat_warnings(self):
+        smoke = calculate_risk_level(80,120,{'temperature':24},{'is_real_smoke':True})
+        fire = calculate_risk_level(80,120,{'temperature':24},{'fire_detected':True})
+        for timestamp, risk in enumerate((smoke,fire,smoke,fire,smoke)):
+            self.app._handle_vision_warning(risk, timestamp, False)
+        self.assertEqual(self.app.tts.speak_async.call_count, 2)
+
+    def test_full_flame_pipeline_cannot_trigger_demo_alarm_until_motion_confirmed(self):
+        from test_vision_contract import detections, turbulent
+        fire_detector.reset_motion()
+        self.addCleanup(fire_detector.reset_motion)
+        model = Mock()
+        model.predict.return_value = detections((0,.9,[10,10,110,110]))
+        frame = np.zeros((160,160,3), dtype=np.uint8)
+        with patch.object(fire_detector,'model',model), \
+             patch('vision.smoke_motion.cv2.calcOpticalFlowFarneback',side_effect=turbulent), \
+             patch('main.read_smoke_level',return_value=80), \
+             patch('main.read_gas_level',return_value=120), \
+             patch('main.read_temperature',return_value={'temperature':24,'humidity':50}), \
+             patch.object(config,'SENSOR_MODE','demo'), \
+             patch.object(config,'DEMO_VISION_ESCALATION',True), \
+             patch.object(config,'BYPASS_MOTION_FILTER',False):
+            for sequence in range(1,5):
+                with patch('main.vision_bridge.frame_snapshot',return_value=(frame.copy(),time.monotonic(),sequence,False)):
+                    self.app._monitor_once()
+                self.assertEqual(self.app.current_level,5 if sequence == 4 else 0)
+        self.alarm.assert_called_once()
 
     def test_same_acquired_frame_is_not_counted_twice(self):
         self.assertEqual(self.monitor({'fire_detected':False,'status':'SAFE'}), 1)

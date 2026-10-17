@@ -1,0 +1,20 @@
+description: Ultralytics fire_smoke model trained on upload/data.yaml
+author: Ultralytics
+date: '2026-10-18T03:57:34.373339'
+version: 8.4.22
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: fire
+  1: smoke
+args:
+  batch: 1
+  half: false
+channels: 3
+end2end: false

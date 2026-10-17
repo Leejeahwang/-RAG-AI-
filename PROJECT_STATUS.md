@@ -1,5 +1,9 @@
 # 📋 엣지 세이버 — 구현 현황 & 담당자
 
+> 아래 표는 2026-03-28의 과거 현황입니다. 박규태 담당 Vision의 현재 계약·경보 정책은
+> [vision/README.md](vision/README.md), 2026-10-18 수정·검증 결과는
+> [vision/VALIDATION_2026-10-18.md](vision/VALIDATION_2026-10-18.md)를 참고하세요.
+
 > 마지막 업데이트: 2026-03-28
 
 ---

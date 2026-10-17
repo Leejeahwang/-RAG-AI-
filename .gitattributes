@@ -1,0 +1,2 @@
+# Preserve exported model bytes and manifest hashes across Windows/Linux clones.
+vision/models/fire_smoke_ncnn_model/* -text whitespace=cr-at-eol

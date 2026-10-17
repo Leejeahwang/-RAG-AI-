@@ -34,7 +34,7 @@ def print_banner(title: str):
 
 def benchmark_disk_vs_memory(frame: np.ndarray, num_iterations: int = 10):
     """[테스트 1] MicroSD 디스크 I/O 방식 vs 메모리 직결 방식 비교"""
-    print_banner("1. 프레임 전달 방식 비교: 디스크 I/O (MicroSD) vs 메모리 직접 전달")
+    print_banner("1. 현재 장치의 디스크 I/O vs 메모리 직접 전달 (장치별 측정)")
     tmp_path = os.path.join(ROOT_DIR, "vision", "captures", "bench_temp.jpg")
     os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
 
@@ -113,17 +113,18 @@ def benchmark_model_inference(frame: np.ndarray):
         except Exception as e:
             results["YOLOv10-M (33MB)"] = f"에러: {e}"
 
-    print(f"  • [신규 적용] YOLOv8-Nano 추론 지연 : {results.get('YOLOv8-Nano (5MB)', 'N/A'):.1f} ms")
+    nano = results.get('YOLOv8-Nano (5MB)')
+    print(f"  • YOLOv8-Nano 추론 지연 : {nano:.1f} ms" if isinstance(nano, float) else f"  • Nano 측정 불가: {nano}")
     if "YOLOv10-M (33MB)" in results and isinstance(results["YOLOv10-M (33MB)"], float):
         print(f"  • [기존 모델] YOLOv10-M 추론 지연   : {results.get('YOLOv10-M (33MB)'):.1f} ms")
-        ratio = results['YOLOv10-M (33MB)'] / max(1e-4, results['YOLOv8-Nano (5MB)'])
-        print(f"  👉 [결과] Nano 모델이 Medium 대비 약 {ratio:.1f}배 빠름!")
-        print(f"     (라즈베리파이 ARM CPU에서는 이 격차가 5~10배 이상 더 벌어져 M모델 시 1초 렉 발생)")
+        if isinstance(nano, float):
+            ratio = results['YOLOv10-M (33MB)'] / max(1e-4, nano)
+            print(f"  👉 현재 장치의 이번 표본에서 Nano가 약 {ratio:.1f}배 빠름 (Pi 결과로 외삽하지 않음)")
 
 
 def benchmark_reaction_time():
     """[테스트 3] 화재 발생 시 최종 알람 확정까지의 반응 속도 비교"""
-    print_banner("3. 화재 발생 시 경보 확정(3프레임 검증)까지의 체감 지연 시간 비교")
+    print_banner("3. 가정값을 이용한 지연 계산 예시 — 실제 경보 반응 시간 측정 아님")
 
     # 1) 기존 방식
     old_loop_sleep = 3.0  # main.py sleep
@@ -141,7 +142,8 @@ def benchmark_reaction_time():
     print(f"      (3.0s + 0.8s) x 3회 = 약 {old_total:.1f} 초 소요! ❌ (팀장님이 렉으로 느낀 원인)")
     print(f"  • [개선 구조] 0.15초 루프 + Nano 모델 (3프레임 검증 시):")
     print(f"      (0.15s + 0.05s) x 3회 = 약 {new_total:.2f} 초 소요! ✅ (즉각 감지)")
-    print(f"  👉 [결과] 화재 감지 최종 반응 속도 {old_total / new_total:.1f}배 개선!")
+    print(f"  가정값의 비율: {old_total / new_total:.1f}. 실측 반응 시간·Pi 성능을 입증하지 않습니다.")
+    print("  실제 모델·카메라 지연은 tools/check_vision_runtime.py --camera로 장치별 기록하세요.")
 
 
 def test_webcam_live():

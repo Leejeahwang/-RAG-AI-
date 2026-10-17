@@ -50,6 +50,7 @@ from rag.native_retriever import rag_manager
 import config
 from rag.provider import ai_mode_label, mode_command_response
 from vision_bridge import cctv_service, fire_detector
+import vision_bridge
 from sensors import fusion
 from sensors.temperature import read_temperature, is_temperature_abnormal
 from sensors.smoke import read_smoke_level, is_smoke_detected
@@ -79,6 +80,8 @@ class EdgeSaverTest:
         self._initialized = False
         self._monitor_running = False
         self._monitor_thread = None
+        self._last_frame_id = -1
+        self._last_analysis = {}
         self._query_queue = queue.Queue(maxsize=1)
         self._query_stop = threading.Event()
         self._query_lock = threading.RLock()
@@ -219,6 +222,18 @@ class EdgeSaverTest:
             f'</style>'
         )
 
+    def _sample_vision(self):
+        frame, acquired, sequence, offline = vision_bridge.frame_snapshot()
+        if frame is None or offline or time.monotonic()-acquired > config.FRAME_MAX_AGE:
+            if self._last_frame_id != -1:
+                fire_detector.reset_motion()
+            self._last_frame_id, self._last_analysis = -1, {}
+            return {'status':'CAMERA_OFFLINE', 'fire_detected':False}
+        if sequence != self._last_frame_id:
+            self._last_analysis = fire_detector.detect_fire(frame)
+            self._last_frame_id = sequence
+        return self._last_analysis
+
     def _monitor_sensors(self):
         """백그라운드 센서 및 비전 감시 (4단계 경보 격발 미작동 모드)"""
         alarm_handled = False
@@ -233,34 +248,27 @@ class EdgeSaverTest:
                 temp_data = read_temperature(simulate=True)
                 gas_val = read_gas_level(simulate=True)
                 smoke_val = read_smoke_level(simulate=True)
-                frame = cctv_service.latest_frame
-                
-                fire_detected = False
-                fire_desc = ""
-                if frame is not None and not getattr(cctv_service, 'camera_offline', False):
-                    # Preserve the current vision module's in-memory input path.
-                    analysis = fire_detector.detect_fire(frame)
-                    fire_detected = analysis.get('fire_detected', False)
-                    fire_desc = analysis.get('description', '')
+                analysis = self._sample_vision()
+                fire_desc = analysis.get('description', '')
+                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, vision_input=analysis)
 
                 # 시뮬레이터 보정
-                if fire_detected:
+                if config.DEMO_VISION_ESCALATION and risk['vision_confirmed'] and risk['vision_kind'] in {'fire','demo'}:
                     temp_data["temperature"] = 75.0  
                     smoke_val = 550                  
                     gas_val = 600                    
 
-                risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, fire_detected)
+                    risk = fusion.calculate_risk_level(smoke_val, gas_val, temp_data, vision_input=analysis)
                 level = risk['level']
                 self.current_level = level  
                 
-                if fire_detected and fire_desc:
+                if risk['vision_confirmed'] and fire_desc:
                     risk['details'] += f" | {fire_desc}"
 
                 # 하단 툴바 갱신
-                if level >= 4:
-                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']} | [LLM BYPASS]"
-                else:
-                    self.current_risk_stats = f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} | CAM: {f'[FIRE: {fire_desc}]' if fire_detected else 'SAFE'} | {risk['label']}"
+                self.current_risk_stats = (f"T: {temp_data['temperature']}C | G: {gas_val} | S: {smoke_val} "
+                                           f"| CAM: {analysis.get('status','UNKNOWN')} | {risk['label']}"
+                                           + (" | [LLM BYPASS]" if level >= 4 else ""))
                 
                 if level >= 4:
                     # [TEST MODE] 4단계 이상 비상 경보 격발(RAG 알림 바이패스, 음성 비상 스레드)을 미작동시킵니다.

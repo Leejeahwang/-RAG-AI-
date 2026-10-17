@@ -91,6 +91,11 @@ SIREN_VOLUME = 0.25        # 사이렌 볼륨 크기 (0.0 ~ 1.0)
 # Integrated vision/RAG deployment settings. Paths resolve from this file.
 from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
+# Vision inference uses the same fire/smoke weights, exported as NCNN FP32.
+# Keep the neural-network input separate from the camera capture dimensions.
+VISION_IMAGE_SIZE = 640
+_vision_model = Path(os.getenv("VISION_MODEL_PATH", "vision/models/fire_smoke_ncnn_model"))
+VISION_MODEL_PATH = str((_vision_model if _vision_model.is_absolute() else BASE_DIR / _vision_model).resolve())
 _numba_cache = BASE_DIR / "scratch" / "numba_cache"
 _numba_cache.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("NUMBA_CACHE_DIR", str(_numba_cache))

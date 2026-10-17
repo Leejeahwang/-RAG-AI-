@@ -36,7 +36,7 @@ class MotionAnalysisResult:
 class SmokeMotionAnalyzer:
     """
     OpenCV Farneback Dense Optical Flow 기반 연기/불꽃 동역학 및 사진 오탐 차단 분석기
-    - 강체 평행 이동(Rigid Motion) 필터: 손에 든 스마트폰/인쇄물 사진의 흔들림 완벽 차단
+    - 강체 평행 이동(Rigid Motion) 필터: 사진 흔들림 후보를 휴리스틱으로 차단
     - 유체 난류(Fluid Turbulence) 분석: 실제 불꽃의 사방 플리커링 및 연기 상방 대류 검증
     """
     def __init__(
@@ -99,7 +99,8 @@ class SmokeMotionAnalyzer:
             curr_gray = current_frame
 
         # 첫 프레임인 경우 이전 프레임만 저장하고 대기 상태 반환
-        if self.prev_gray is None:
+        if self.prev_gray is None or self.prev_gray.shape != curr_gray.shape:
+            self.reset()
             self.prev_gray = curr_gray.copy()
             result.status = "WARMING_UP"
             return result
@@ -116,6 +117,7 @@ class SmokeMotionAnalyzer:
         box_h = y2 - y1
 
         if box_w < 10 or box_h < 10:
+            self.reset()
             result.status = "BOX_TOO_SMALL"
             self.prev_gray = curr_gray.copy()
             return result
@@ -168,8 +170,8 @@ class SmokeMotionAnalyzer:
 
         # 움직이는 픽셀 비율이 기준치 미만이면 완전 정지된 사진으로 간주!
         if moving_ratio < self.static_motion_ratio:
-            self.consecutive_upward_frames = max(0, self.consecutive_upward_frames - 1)
-            self.consecutive_fire_frames = max(0, self.consecutive_fire_frames - 1)
+            self.consecutive_upward_frames = 0
+            self.consecutive_fire_frames = 0
             result.is_static_photo = True
             result.is_real_smoke = False
             result.is_real_fire = False
@@ -194,11 +196,12 @@ class SmokeMotionAnalyzer:
 
         # 6. 클래스별 동역학 검증
         if "fire" in class_name.lower():
+            self.consecutive_upward_frames = 0
             # 🔥 [불꽃 사진 방어]:
             # 불꽃은 자체 연소 반응으로 사방으로 펄럭이는 유체 난류(Turbulence)를 동반함
             # 손에 든 스마트폰/인쇄물 사진은 손떨림/이동 시 내부 모든 픽셀이 같은 방향으로 이동 (R >= 0.78)
             if R >= self.rigid_coherence_threshold and moving_ratio < 0.85:
-                self.consecutive_fire_frames = max(0, self.consecutive_fire_frames - 1)
+                self.consecutive_fire_frames = 0
                 result.is_rigid_motion = True
                 result.is_static_photo = True
                 result.is_real_fire = False
@@ -214,9 +217,9 @@ class SmokeMotionAnalyzer:
             self.recent_fire_results.append(is_frame_fire)
 
             if is_frame_fire:
-                self.consecutive_fire_frames += 1
+                self.consecutive_fire_frames = min(self.required_consecutive_frames, self.consecutive_fire_frames + 1)
             else:
-                self.consecutive_fire_frames = max(0, self.consecutive_fire_frames - 1)
+                self.consecutive_fire_frames = 0
 
             result.consecutive_count = self.consecutive_fire_frames
 
@@ -231,6 +234,7 @@ class SmokeMotionAnalyzer:
                 result.status = "EVALUATING_FIRE_MOTION"
 
         else:
+            self.consecutive_fire_frames = 0
             # 💨 [연기 상방 확산 동역학]:
             # 연기는 위쪽(-Y)으로 피어오르는 상방 대류(Upward Diffusion)가 핵심
             upward_mask = v_mov < -0.15 # 위쪽 방향 drift
@@ -240,7 +244,7 @@ class SmokeMotionAnalyzer:
 
             # 손에 든 연기 사진을 좌우나 아래로 흔드는 경우(R 높고 upward 부족) 차단
             if R >= 0.85 and upward_ratio < 0.35:
-                self.consecutive_upward_frames = max(0, self.consecutive_upward_frames - 1)
+                self.consecutive_upward_frames = 0
                 result.is_rigid_motion = True
                 result.is_static_photo = True
                 result.is_real_smoke = False
@@ -255,9 +259,9 @@ class SmokeMotionAnalyzer:
             self.recent_results.append(is_frame_upward) # 하위 호환
 
             if is_frame_upward:
-                self.consecutive_upward_frames += 1
+                self.consecutive_upward_frames = min(self.required_consecutive_frames, self.consecutive_upward_frames + 1)
             else:
-                self.consecutive_upward_frames = max(0, self.consecutive_upward_frames - 1)
+                self.consecutive_upward_frames = 0
 
             result.consecutive_count = self.consecutive_upward_frames
             result.consecutive_upward_count = self.consecutive_upward_frames

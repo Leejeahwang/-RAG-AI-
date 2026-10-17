@@ -1,5 +1,12 @@
 # Edge Saver — 비전 + RAG·음성 통합
 
+2026-10-18 비전 후속 수정: 검증된 불꽃·상승 연기 결과 계약 v1, Level 2 고정 경고,
+3회 연속 모션 확인, 카메라 실제 수집 시각과 중단 시 상태 초기화를 반영했습니다.
+같은 화재·연기 가중치를 NCNN FP32로 변환했고 기본 추론 입력은 640×640으로 유지합니다.
+기본 모델 폴더 `vision/models/fire_smoke_ncnn_model/`의 실행 파일 4개도 이 브랜치에 포함합니다.
+현재 정책·검증 명령·실장비 후속 절차는 [Vision 안내](vision/README.md)를 따르세요.
+과거 통합 시 비전 파일을 복원했다는 아래 기록은 2026-10-09 당시의 이력입니다.
+
 현재 프로젝트의 경량 YOLO·Optical Flow·메모리 프레임 전달을 유지하고, `feature/RAG` 커밋 `ec99c872e9f2074a569d81db1dadd47f16ccc91c`의 검색·답변 공급자·음성 기능을 연결한 버전입니다.
 
 ## Windows 실행
@@ -73,7 +80,7 @@ ollama pull qwen2.5:0.5b
 
 ## Raspberry Pi 설치
 
-64-bit Raspberry Pi OS와 Python 3.11을 기준으로 가상환경을 만들고 CPU PyTorch와 공통 패키지를 설치합니다. 통합 버전은 `integration/vision-rag-voice` 브랜치를 사용합니다. PPASO·검색·STT 모델 캐시와 개인 설정은 별도로 준비합니다. Windows 가상환경은 복사하지 않습니다. 상세 설치·MeCab 문제 해결은 [raspberry_pi_migration.md](raspberry_pi_migration.md), Pi 5 실행 순서는 [rpi5_setup_guide.md](rpi5_setup_guide.md)를 따르세요.
+64-bit Raspberry Pi OS와 Python 3.11을 기준으로 가상환경을 만들고 CPU PyTorch와 공통 패키지를 설치합니다. 현재 비전 수정과 NCNN 모델은 `codex/vision-rag-voice` 브랜치를 사용합니다. PPASO·검색·STT 모델 캐시와 개인 설정은 별도로 준비합니다. Windows 가상환경은 복사하지 않습니다. 상세 설치·MeCab 문제 해결은 [raspberry_pi_migration.md](raspberry_pi_migration.md), Pi 5 실행 순서는 [rpi5_setup_guide.md](rpi5_setup_guide.md)를 따르세요.
 
 ```bash
 sudo apt update
@@ -93,7 +100,7 @@ PPASO의 한국어 G2P는 `from mecab import MeCab`로 실제 형태소 분석�
 
 실제 온도 센서는 현재 `Adafruit_DHT.DHT11`/GPIO4이며 이 구형 드라이버의 Pi 5 호환성은 미검증입니다. 기본 설치 목록에 자동으로 추가하지 않았습니다. `hardware` 모드는 드라이버·배선 검증 후 사용하세요. 현재 Windows에서 수행한 성능·음성 검증을 Pi 결과로 해석하지 마세요. STT 모델이 필요하면 별도로 `--target stt`를 실행합니다. `--target all`은 PPASO와 RAG만 준비합니다.
 
-비전 소스와 센서 퓨전은 통합 전 버전으로 복원했습니다. Windows import 호환성과 프레임 중복 확인은 `vision_bridge.py`가 담당합니다. 상세 복원 범위는 INTEGRATION_RESULT.md를 참고하세요.
+2026-10-09 통합 시 비전 소스와 센서 퓨전을 복원했고, 2026-10-18 후속 작업에서 감지 결과 계약과 경보 연결을 수정했습니다. 현재 `vision_bridge.py`는 카메라의 실제 수집 시각·프레임 번호를 전달하며, Windows sys 누락도 카메라 모듈에서 수정했습니다. 상세 이력은 INTEGRATION_RESULT.md, 현재 정책은 vision/README.md를 참고하세요.
 
 ## 검증
 

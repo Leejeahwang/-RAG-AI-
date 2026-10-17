@@ -69,6 +69,9 @@ class EdgeSaver:
         self._safe_since = None
         self._last_frame_id = -1
         self._last_analysis = {}
+        self._vision_warning_kind = None
+        self._vision_warning_speech = False
+        self._warning_safe_since = None
         self._tts = self._stt_model = self._pa = self._stt_stream = None
         self.current_level = 0
         self.current_risk_stats = "시스템 초기화 중"
@@ -145,6 +148,7 @@ class EdgeSaver:
                     print(f"\n[비상 재감지] {zone_id}구역: 진행 중인 대피 지침 안내를 이어갑니다.")
                     return
             self._alarm_active = True
+            self._vision_warning_speech = False
             self._event_id += 1
             self._event_zone = zone_id
             self._pending_evac_event = self._event_id
@@ -254,6 +258,11 @@ class EdgeSaver:
 
     def _process_query(self, query, lang="ko"):
         with self._state_lock:
+            if self._vision_warning_speech:
+                if self.tts.is_speaking():
+                    print("[시스템] 비전 경고 안내 종료 후 질문해 주세요.")
+                    return
+                self._vision_warning_speech = False
             if self._alarm_active or self._pending_evac_event is not None:
                 print("[시스템] 비상 안내를 우선합니다. 대피 지침 안내 종료 후 질문해 주세요.")
                 return
@@ -362,20 +371,25 @@ class EdgeSaver:
                 self._last_analysis = fire_detector.detect_fire(frame)
             analysis = self._last_analysis
         else:
+            if self._last_frame_id != -1:
+                fire_detector.reset_motion()
             analysis = {"status": "CAMERA_OFFLINE", "fire_detected": False}
             self._last_analysis = {}
             self._last_frame_id = -1
         healthy = fresh and analysis.get("status") not in {
-            "MODEL_NOT_INITIALIZED", "ANALYSIS_ERROR", "MOTION_ERROR", "INVALID_INPUT", "NO_RESULT"
+            "MODEL_NOT_INITIALIZED", "ANALYSIS_ERROR", "MOTION_ERROR", "INVALID_INPUT", "FILE_NOT_FOUND", "NO_RESULT"
         }
         clear_observation = healthy and analysis.get("status") in {
             "SAFE", "STATIC_PHOTO_BLOCKED", "HANDHELD_PHOTO_BLOCKED"
         }
         # Virtual sensor elevation is demo-only. Early smoke retains Level 2.
-        if simulate and config.DEMO_VISION_ESCALATION and analysis.get("fire_detected") and not analysis.get("is_real_smoke"):
-            temp["temperature"], smoke, gas = 75.0, 550, 600
         risk = fusion.calculate_risk_level(smoke, gas, temp, vision_input=analysis)
+        if (simulate and config.DEMO_VISION_ESCALATION and risk["vision_confirmed"]
+                and risk["vision_kind"] in {"fire", "demo"}):
+            temp["temperature"], smoke, gas = 75.0, 550, 600
+            risk = fusion.calculate_risk_level(smoke, gas, temp, vision_input=analysis)
         with self._state_lock:
+            self._handle_vision_warning(risk, now, clear_observation)
             self.current_level = max(risk["level"], self.current_level) if self._alarm_active else risk["level"]
             if risk["level"] >= 4:
                 prompt = f"[화재 {self.detection_zone}구역 / 현재 {self.local_zone}구역] {risk['details']}. 대피 지침을 알려주세요."
@@ -394,6 +408,42 @@ class EdgeSaver:
             label = config.RISK_LEVELS.get(self.current_level, "정상")
             self.current_risk_stats = (f"[{config.SENSOR_MODE}] T:{temp['temperature']}C G:{gas} S:{smoke} "
                                        f"CAM:{analysis.get('status', 'UNKNOWN')} | {label}")
+
+    def _handle_vision_warning(self, risk, now, clear_observation):
+        """One fixed local Level 2 speech per episode; never interrupt evacuation.
+
+        Re-arm only after sustained healthy SAFE/blocked observations. Camera
+        loss, candidate motion and errors are not evidence of recovery.
+        """
+        if self._vision_warning_speech and not self.tts.is_speaking():
+            self._vision_warning_speech = False
+        if risk["level"] == 2 and risk.get("vision_confirmed"):
+            self._warning_safe_since = None
+            if self._alarm_active or self._pending_evac_event is not None:
+                return
+            kind = risk["vision_kind"]
+            if self._vision_warning_kind == kind or self._vision_warning_kind == "fire":
+                return
+            self._vision_warning_kind = kind
+            self._request_id += 1
+            self._discard_pending_jobs()
+            message = (f"{self.detection_zone}구역에서 "
+                       + ("상승하는 연기가 감지되었습니다. 화재 가능성에 주의하고 안전한 곳으로 이동하십시오."
+                          if kind == "smoke" else
+                          "불꽃 움직임이 감지되었습니다. 화재 가능성에 주의하고 안전한 곳으로 이동하십시오."))
+            print(f"\n[Level 2 비전 경고] {message}")
+            send_alert(zone=self.detection_zone, local_zone=self.local_zone,
+                       risk_level=2, sensor_details=risk["details"], ai_guidance=message)
+            self.tts.stop()
+            self._vision_warning_speech = True
+            self.tts.speak_async(message, lang="ko", speed=1.0)
+        elif clear_observation and risk["level"] < 2:
+            if self._warning_safe_since is None:
+                self._warning_safe_since = now
+            elif now - self._warning_safe_since >= config.ALARM_RECOVERY_SECONDS:
+                self._vision_warning_kind = None
+        else:
+            self._warning_safe_since = None
 
     def _monitor_sensors(self):
         while not self._stop.is_set():

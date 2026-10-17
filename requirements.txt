@@ -12,6 +12,7 @@ colorama
 
 # --- Vision & Sensors (Area strictly preserved) ---
 ultralytics
+ncnn==1.0.20260526  # Vision NCNN CPU runtime (Windows and Raspberry Pi)
 opencv-python>=4.10,<4.12
 psutil
 paho-mqtt

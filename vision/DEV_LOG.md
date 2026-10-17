@@ -1,5 +1,79 @@
 # 📝 Vision AI 모듈 개발 일지 (박규태)
 
+## 2026-10-18 — 감지기·퓨전·경보 계약 정리
+
+- 불꽃은 난류 모션이 3회 연속 확인된 경우에만 확정. 상승 연기는 별도 플래그로 반환.
+- 불꽃·연기의 가장 높은 점수 후보를 별도로 분석하고, 감지 소멸·후보 교체·오류 시 시간축 상태 초기화.
+- Level 2에서 발생 구역을 포함한 로컬 고정 음성 및 콘솔 경고. 정상 관찰 후 재허용하고, Level 4·5 대피 안내를 우선.
+- 카메라가 실제 수집한 시각과 프레임 번호를 원자적으로 전달. 중단 시 과거 모션 상태 제거.
+- 합성 입력 회귀·실제 ONNX 검정 프레임 검사와 실장비 검증을 구분하는 점검 도구 추가.
+- 최신 사용법·남은 실험은 README.md, 이번 결과는 VALIDATION_2026-10-18.md에 기록.
+
+### NCNN 전환 및 640×640 입력 유지 (같은 날 추가 작업)
+
+#### 결정과 이유
+
+- Pi 5 CPU 실행을 위해 기존 ONNX 기본 경로를 NCNN으로 변경.
+- 초기·원거리 불꽃과 옅은 연기의 정보 손실을 줄이기 위해 416/320 축소는 적용하지 않고 640×640 유지.
+- 새 모델을 학습하거나 다른 가중치로 교체하지 않고 로컬 `vision/models/fire_smoke.pt`를 변환.
+- 변환 옵션: NCNN, `imgsz=640`, `batch=1`, `half=False`, CPU. INT8 양자화는 미적용.
+
+#### 코드·환경 변경
+
+- `config.py`: `VISION_MODEL_PATH` 추가. 기본값은 `vision/models/fire_smoke_ncnn_model/`, `VISION_IMAGE_SIZE=640`.
+- `vision/fire_detector.py`: 기존 파일명 우선순위 검색을 명시적 모델 경로로 교체.
+  `predict(imgsz=640, rect=False, device="cpu")`로 입력을 정사각형 640×640으로 고정.
+  모델 누락 시 다른 가중치로 자동 전환하지 않고 오류 상태를 반환.
+- `tools/export_vision_ncnn.py` 추가: 로컬 PT 클래스 확인 → 격리된 scratch 폴더에서 변환
+  → 실제 NCNN 검정 프레임 확인 → 배치. 기존 출력 폴더는 덮어쓰지 않음.
+- 변환물: `model.ncnn.param`, `model.ncnn.bin`, `metadata.yaml`, `export_manifest.json`.
+  manifest에 원본·출력 SHA-256, 도구 버전, 입력 크기·정밀도·클래스 기록.
+- `requirements.txt`: NCNN 실행 의존성 추가. `requirements_vision_export.txt`: 변환 도구 버전 고정.
+  `requirements_rpi.txt`, `.env.example`, `rpi5_setup_guide.md`, 루트/Vision README 갱신.
+- `tools/check_vision_runtime.py`: NCNN 패키지 버전·모델 폴더의 파일별 해시·입력 크기·CPU 설정 기록.
+- 기존 모션 검증, 감지 계약 v1, 센서 퓨전 및 Level 2/4/5 경보 동작 유지.
+
+#### 실제 결과와 재현 기록
+
+- 변환 성공. fire/smoke 2클래스, 입력 `[1, 3, 640, 640]`, FP32 변환물.
+- 도구: Ultralytics 8.4.22, PyTorch 2.10.0, NCNN 1.0.20260526, PNNX 20260526.
+- 원본 PT SHA-256: `ac0a10257b2bc1f20c9d957f8adeeb61dd6140322fc19d0b4a116cb491776d16`.
+- NCNN 가중치 SHA-256: `e70476a04ce7eba7e61bdba6894c4fe7286c58f43bae72e6df489929f878d174`.
+- 기존 전체 회귀 **117개 통과 (7.274초)**. 기존 합성 Optical Flow 5종·퓨전 5종,
+  실제 NCNN 검정 이미지 및 VLM 모의 검사도 전체 통과.
+- 실제 NCNN 실행 경로의 검정 프레임 **12/12 SAFE**. 현재 Windows AMD64에서
+  평균 **30.76ms**, p50 **30.93ms**, p95 **32.47ms**, 첫 워밍업 **76.15ms**.
+  수집·감시 대기·음성을 포함한 앱 FPS 또는 Pi 성능이 아님.
+- Pi용 CPython 3.11·Linux ARM64 NCNN wheel의 다운로드 가능 여부 확인.
+  실제 Pi에서 설치·실행한 결과는 아님.
+- 원시 기록: `scratch/vision_ncnn_export.log`, `scratch/vision_ncnn_runtime.json`,
+  `scratch/vision_ncnn_regression.log`, `scratch/vision_ncnn_algorithm.log`.
+
+```text
+python -m pip install -r requirements_vision_export.txt
+python tools/export_vision_ncnn.py
+python tools/check_vision_runtime.py --frames 12 --output scratch/vision_ncnn_runtime.json
+```
+
+#### GitHub 공유 준비
+
+- 노트북에서 이어서 개발할 수 있도록 `codex/vision-rag-voice`의 코드·문서와
+  기본 NCNN 모델 4개 파일(약 12MB)을 함께 커밋 대상으로 포함.
+- 일반 models 무시 규칙은 유지하고 기본 NCNN 변환물만 명시적으로 추적.
+  개인 `.env`, `.venv`, scratch의 로그·임시 변환물은 포함하지 않음.
+- `.gitattributes`로 모델 파일의 자동 줄바꿈 변환을 막아 Windows/Linux 간 변환물 해시 유지.
+- clone/pull에 기본 모델이 포함되도록 README와 Pi 설치 가이드의 배치 안내 갱신.
+
+#### 남은 실장비 확인
+
+- 이 브랜치를 clone/pull하면 기본 NCNN 모델도 내려받음. 수동 복사 시에는 모델 폴더 전체를 포함해야 함.
+- Pi 5에서 실제 카메라·음성/RAG를 함께 실행하며 FPS·지연·CPU 온도 확인.
+- 같은 라벨 영상으로 ONNX/NCNN의 작은 불꽃·연기 재현율, 오경보, 최초 확정 지연 비교.
+- 검정 프레임·합성 회귀 성공만으로 실제 화재 정확도 유지나 Pi 속도 향상을 확정하지 않음.
+
+아래 2026-10-02~09 기록의 3분·100%·19배·Pi 속도 주장은 당시 서술 및 가정값을
+포함합니다. 현재 환경의 실제 장비 검증 수치로 간주하지 않습니다.
+
 본 문서는 **엣지 세이버(Edge Saver)** 프로젝트의 **Vision AI 및 센서 퓨전** 파트 담당자(박규태)의 일일 작업 내역, 알고리즘 개선 과정, 테스트 결과 및 향후 계획을 기록하는 개발 로그입니다.
 
 ---

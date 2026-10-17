@@ -2,6 +2,7 @@
 import unittest
 import threading
 import time
+import numpy as np
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from contextlib import nullcontext
@@ -23,6 +24,35 @@ class NormalQATestMode(unittest.TestCase):
         while self.app._query_queue.unfinished_tasks and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.app._query_queue.unfinished_tasks, 0)
+
+    def test_smoke_contract_is_displayed_without_interrupting_qa(self):
+        frame = np.zeros((160,160,3), dtype=np.uint8)
+        analysis = {'contract_version':1,'fire_detected':False,'is_real_smoke':True,'status':'REAL_SMOKE_RISING'}
+        self.app._monitor_running = True
+        with patch('main_test.vision_bridge.frame_snapshot',return_value=(frame,time.monotonic(),1,False)), \
+             patch('main_test.fire_detector.detect_fire',return_value=analysis), \
+             patch('main_test.read_temperature',return_value={'temperature':24,'humidity':50}), \
+             patch('main_test.read_gas_level',return_value=120), \
+             patch('main_test.read_smoke_level',return_value=80), \
+             patch('main_test.time.sleep',side_effect=lambda _: setattr(self.app,'_monitor_running',False)), \
+             patch('main_test.trigger_alarm') as alarm:
+            self.app._monitor_sensors()
+        self.assertEqual(self.app.current_level,2)
+        self.assertIn('REAL_SMOKE_RISING',self.app.current_risk_stats)
+        self.app.tts.speak_async.assert_not_called()
+        alarm.assert_not_called()
+
+    def test_sample_vision_does_not_count_duplicate_or_stale_frames(self):
+        frame = np.zeros((160,160,3),dtype=np.uint8)
+        with patch('main_test.vision_bridge.frame_snapshot',return_value=(frame,time.monotonic(),1,False)), \
+             patch('main_test.fire_detector.detect_fire',return_value={'status':'SAFE'}) as detect:
+            self.app._sample_vision()
+            self.app._sample_vision()
+        detect.assert_called_once()
+        with patch('main_test.vision_bridge.frame_snapshot',return_value=(frame,0,1,False)), \
+             patch('main_test.fire_detector.reset_motion') as reset:
+            self.assertEqual(self.app._sample_vision()['status'],'CAMERA_OFFLINE')
+        reset.assert_called_once()
 
     def test_high_risk_does_not_interrupt_normal_qa(self):
         app = self.app

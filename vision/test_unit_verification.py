@@ -272,7 +272,7 @@ def test_fire_detector_model():
         print(f"   - fire_detected: {res.get('fire_detected')}")
         print(f"   - confidence: {res.get('confidence')}")
         print(f"   - description: {res.get('description')}")
-        return True
+        return res.get('status') == 'SAFE' and not res.get('fire_detected') and not res.get('is_real_smoke')
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
@@ -301,3 +301,4 @@ if __name__ == "__main__":
     else:
         print("⚠️ 일부 테스트 실패 발생")
     print("=" * 65 + "\n")
+    sys.exit(0 if t1 and t2 and t3 and t4 else 1)
