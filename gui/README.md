@@ -23,8 +23,10 @@
 | `mqtt_settings.py` | 브로커 주소·토픽·주기 설정 | 양쪽 |
 | `edge_publisher.py` | Pi 발행 모듈 (`main.py`가 호출) | Pi |
 | `fake_edge.py` | PC 테스트용 가짜 Pi | 관제 PC |
+| `measure_link.py` | Pi ↔ 노트북 지연·재연결 측정 도구 | 관제 PC |
 | `PROTOCOL.md` | 메시지 형식 문서 | |
 | `MAIN_INTEGRATION.md` | `main.py`에 넣을 발행 코드와 Pi 설정 | |
+| `PI_TEST_GUIDE.md` | 실제 Pi ↔ 노트북 연동 테스트 순서와 결과표 | |
 | `tests/` | 메시지 형식·수신·발행 테스트 | |
 
 ## 실행

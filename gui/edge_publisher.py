@@ -293,8 +293,12 @@ class EdgePublisher:
                     info.wait_for_publish(timeout=_CLOSE_WAIT)
                 except Exception:
                     pass
-            client.disconnect()
-            client.loop_stop()
+                client.disconnect()
+                client.loop_stop()
+            else:
+                # 연결 시도 중이면 loop_stop 이 최대 수 초 기다린다. 보낼 것도 없으니 종료를 막지 않게 뒤에서 정리.
+                client.disconnect()
+                threading.Thread(target=client.loop_stop, name="edge-close", daemon=True).start()
         except Exception:
             LOG.debug("[edge] 종료 정리 실패", exc_info=True)
         self._connected = False
