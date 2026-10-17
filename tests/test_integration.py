@@ -20,10 +20,29 @@ class IntegrationTests(unittest.TestCase):
         self.app._tts = Mock()
         self.app._tts.is_speaking.return_value = False
         self.alarm = patch('main.trigger_alarm').start()
-        patch('main.stop_siren').start()
+        self.siren = patch('main.stop_siren').start()
         self.notify = patch('main.send_alert').start()
         self.addCleanup(patch.stopall)
         self.addCleanup(self.app.cleanup)
+
+    @patch.object(config, 'AI_PROVIDER', 'gemini')
+    def test_first_audio_prefers_cloud_without_stopping_siren_during_synthesis(self):
+        self.app._trigger_rag_alert('A fire', 'smoke', 'A')
+        first = self.app.tts.speak_async.call_args_list[0]
+        self.assertEqual(first.kwargs['provider'], 'emergency')
+        self.assertEqual(first.kwargs['cache_key'], (self.app._event_id, 'first'))
+        self.assertEqual(self.app.tts.speak_async.call_args_list[1].kwargs['provider'], 'zone')
+        self.assertEqual(self.app.tts.speak_async.call_args_list[1].kwargs['cache_key'], (self.app._event_id, 'zone'))
+        self.siren.assert_not_called()
+        first.kwargs['on_ready']()
+        self.siren.assert_called_once_with()
+        self.assertTrue(self.app._first_audio_ready.is_set())
+
+    @patch.object(config, 'AI_PROVIDER', 'local')
+    def test_first_audio_in_local_ai_mode_stays_local(self):
+        self.app._trigger_rag_alert('A fire', 'smoke', 'A')
+        self.assertEqual(self.app.tts.speak_async.call_args_list[0].kwargs['provider'], 'fixed')
+        self.assertEqual(self.app.tts.speak_async.call_args_list[1].kwargs['provider'], 'fixed')
 
     def test_emergency_does_not_wait_for_running_general_answer(self):
         started, release = threading.Event(), threading.Event()

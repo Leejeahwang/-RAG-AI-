@@ -30,6 +30,9 @@ GEMINI_READ_TIMEOUT = float(os.getenv("GEMINI_READ_TIMEOUT", "15"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "2048"))
 GEMINI_RETRY_COOLDOWN = float(os.getenv("GEMINI_RETRY_COOLDOWN", "60"))
 GEMINI_SEND_LAYOUT = os.getenv("GEMINI_SEND_LAYOUT", "true").lower() == "true"
+GEMINI_GUIDANCE_STYLE = os.getenv("GEMINI_GUIDANCE_STYLE", "extractive").lower()
+if GEMINI_GUIDANCE_STYLE not in {"extractive", "contextual"}:
+    raise ValueError("GEMINI_GUIDANCE_STYLE must be extractive or contextual")
 OLLAMA_EMERGENCY_TIMEOUT = float(os.getenv("OLLAMA_EMERGENCY_TIMEOUT", "15"))
 
 # ── TTS(음성 출력) 설정 ──
@@ -105,7 +108,7 @@ PPASO_MODEL_DIR = str(BASE_DIR / "models" / "ppaso")
 SIREN_FILE_PATH = str(BASE_DIR / "data" / "siren.mp3")
 LLM_MODEL = os.getenv("LLM_MODEL", LLM_MODEL)
 TTS_ENGINE = os.getenv("TTS_ENGINE", TTS_ENGINE).upper()
-GEMINI_TTS_ENABLED = os.getenv("GEMINI_TTS_ENABLED", "false").lower() == "true"
+GEMINI_TTS_ENABLED = os.getenv("GEMINI_TTS_ENABLED", "true").lower() == "true"
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 GEMINI_TTS_READ_TIMEOUT = float(os.getenv("GEMINI_TTS_READ_TIMEOUT", "30"))

@@ -30,6 +30,9 @@ class ProviderTests(unittest.TestCase):
 
     def setUp(self):
         provider._failure_until = 0.0
+        style = patch.object(config, 'GEMINI_GUIDANCE_STYLE', 'extractive')
+        style.start()
+        self.addCleanup(style.stop)
 
     def test_grounding_accepts_factory_markdown_and_quote_differences(self):
         source = "* **상황 A: 전기 화재**\n  - '메인 전원(차단기)'을 내린 후, `CO2` 소화기를 사용합니다."

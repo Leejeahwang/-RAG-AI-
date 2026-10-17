@@ -101,7 +101,8 @@ class FireEventsTests(unittest.TestCase):
                 patch('main.time.monotonic', side_effect=[0, 30, 30]), patch('builtins.print') as output:
             self.app._run_evac_broadcast()
         output.assert_any_call('stored route and precautions')
-        self.app.tts.speak_async.assert_called_once()
+        self.app.tts.replay_event_audio.assert_called_once_with(self.app._event_id)
+        self.app.tts.speak_async.assert_not_called()
 
     def test_http_auth_validation_and_real_sender_receiver(self):
         receiver = FireEventLink('127.0.0.1', 0, 'test-secret', [], self.app.handle_fire_event, .05)

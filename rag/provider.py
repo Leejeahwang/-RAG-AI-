@@ -121,6 +121,16 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         }]}],
         "generationConfig": {"temperature": 0, "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS},
     }
+    answer = _gemini_request(payload)
+    if require_quotes and not _is_grounded(answer, context):
+        raise ValueError("Gemini 답변이 매뉴얼 원문과 일치하지 않습니다")
+    return answer
+
+
+def _gemini_request(payload):
+    model = config.GEMINI_MODEL
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
+        raise ValueError("Gemini 모델명 형식이 올바르지 않습니다")
     response = requests.post(
         _GEMINI_URL.format(model=model),
         headers={"x-goog-api-key": config.GEMINI_API_KEY},
@@ -141,9 +151,19 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
     answer = "".join(part.get("text", "") for part in parts).strip()
     if not answer:
         raise ValueError("Gemini 답변이 비어 있습니다")
-    if require_quotes and not _is_grounded(answer, context):
-        raise ValueError("Gemini 답변이 매뉴얼 원문과 일치하지 않습니다")
     return answer
+
+
+def _call_gemini_contextual(context, question, situation, emergency):
+    from rag.contextual import contextual_request, render_contextual
+    system, user, schema, passages, facts = contextual_request(context, question, situation, emergency)
+    payload = {
+        'systemInstruction': {'parts': [{'text': system}]},
+        'contents': [{'role': 'user', 'parts': [{'text': user}]}],
+        'generationConfig': {'temperature': 0, 'maxOutputTokens': config.GEMINI_MAX_OUTPUT_TOKENS,
+            'responseMimeType': 'application/json', 'responseJsonSchema': schema},
+    }
+    return render_contextual(_gemini_request(payload), passages, facts)
 
 
 def _local(context: str, question: str, emergency: bool) -> str:
@@ -194,6 +214,7 @@ def generate_guidance(
     question: str,
     emergency: bool = False,
     cloud_context: str | None = None,
+    situation: dict | None = None,
 ) -> GuidanceResult:
     """API 실패 시 로컬로 전환하고, 긴급 상황에선 고정 안내를 최후 수단으로 사용한다."""
     global _failure_until
@@ -210,7 +231,10 @@ def generate_guidance(
         fallback_reason = "전송 가능한 매뉴얼 없음"
     elif mode != "local":
         try:
-            answer = _call_gemini(remote_context, question, require_quotes=emergency)
+            if config.GEMINI_GUIDANCE_STYLE == 'contextual':
+                answer = _call_gemini_contextual(remote_context, question, situation, emergency)
+            else:
+                answer = _call_gemini(remote_context, question, require_quotes=emergency)
             with _failure_lock:
                 _failure_until = 0.0
             return GuidanceResult(answer, "gemini")

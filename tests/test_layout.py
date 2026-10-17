@@ -9,6 +9,11 @@ from rag import provider
 
 
 class LayoutTests(unittest.TestCase):
+    def setUp(self):
+        style = patch.object(config, 'GEMINI_GUIDANCE_STYLE', 'extractive')
+        style.start()
+        self.addCleanup(style.stop)
+
     def test_local_evacuation_contains_routes_and_precautions_without_metadata(self):
         answer = evacuation_for_zone('A')
         self.assertIn('A구역 대피 안내', answer)

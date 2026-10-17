@@ -244,23 +244,29 @@ python main.py
 
 ## 8. 음성 출력과 설정 확인
 
-Gemini TTS는 당분간 **기본 비활성화**합니다. Gemini 답변과 첫 비상 고정 안내·반복 비상 방송 모두 로컬 TTS로 읽습니다. main.py와 main_test.py 모두 같은 정책을 적용합니다.
+Gemini 답변은 **기본적으로 Gemini TTS 우선**으로 읽습니다. 실행 중 `/tts gemini`로 다시 활성화할 수도 있습니다. 첫 비상 고정 안내도 온라인 AI 모드에서는 Gemini TTS를 우선 사용합니다. `/ai local` 또는 로컬 TTS 고정에서는 첫 안내도 로컬 음성을 사용합니다. 등록 구역 안내(대피로·소화기 위치)도 Gemini TTS 우선으로 읽고 실패하면 로컬로 전환합니다. Ollama 답변은 로컬 TTS로 읽으며, 반복 비상 방송은 처음 재생한 음성 파일을 재사용합니다. main.py와 main_test.py 모두 같은 정책을 적용합니다.
 
 실행 중 질문 프롬프트에서 `/tts`로 현재 정책을 확인하고 `/tts auto`로 설정된 기본 정책으로 돌아갑니다. Gemini TTS를 비활성화한 상태에서는 이 명령도 로컬 음성을 유지합니다. `/tts pyttsx3`와 `/tts ppaso`는 해당 로컬 엔진으로 고정하므로 이후 Gemini 답변도 로컬로 읽습니다. 정책 전환은 현재 발화와 대기 중 음성을 취소하고 이후 발화에 적용하며, 처리 중인 LLM 답변은 취소하지 않습니다. `.env`는 변경하지 않습니다. PPASO 초기화가 실패하면 기존 정책을 유지합니다.
 
-Gemini TTS는 기존 `GEMINI_API_KEY`로 별도 음성 생성 요청을 보냅니다. 답변 텍스트만 전송하며 생성된 WAV는 기존 pygame 경로로 재생합니다. 기본 모델은 `gemini-3.8-flash-lite-tts`, 목소리는 `Kore`입니다. 추가 Python 패키지 설치는 필요하지 않습니다. 키의 해당 모델 접근 권한과 무료 티어 잔여 한도는 별도 확인해야 하며 무료 티어가 무제한을 뜻하지 않습니다. 실제 계정 API 호출과 Pi의 Gemini TTS 재생은 아직 검증하지 않았습니다.
+Gemini TTS는 기존 `GEMINI_API_KEY`로 별도 음성 생성 요청을 보냅니다. 답변 텍스트만 전송하며 생성된 WAV는 기존 pygame 경로로 재생합니다. 기본 모델은 `gemini-3.8-flash-lite-tts`, 목소리는 `Kore`입니다. 추가 Python 패키지 설치는 필요하지 않습니다. 키의 해당 모델 접근 권한과 사용 한도는 계정에 따라 확인해야 합니다. 2026-10-17 Windows에서 실제 API 합성에 성공했습니다(짧은 한국어 문장 약 2.9초, WAV 3.88초/24kHz). 실제 스피커 청취와 Pi에서의 Gemini TTS 재생은 별도 검증해야 합니다.
 
 `.env`에서 다음을 선택적으로 설정합니다. 기존 `.env`를 `.env.example`로 덮어쓰지 마세요.
 
 ```dotenv
-GEMINI_TTS_ENABLED=false
+GEMINI_TTS_ENABLED=true
 GEMINI_TTS_MODEL=gemini-3.8-flash-lite-tts
 GEMINI_TTS_VOICE=Kore
 GEMINI_TTS_READ_TIMEOUT=30
 GEMINI_TTS_RETRY_COOLDOWN=60
 ```
 
-설정을 생략해도 위 기본값이 적용됩니다. 다시 시험할 때만 `.env`에 `GEMINI_TTS_ENABLED=true`를 지정하고 프로그램을 재시작하세요. 기존 `.env`에 이미 true를 지정했다면 false로 변경하세요. HTTP 오류·타임아웃·빈 음성 등의 실패 시 현재 로컬 엔진으로 전환하고 기본 60초간 TTS API 재시도를 쉬어 반복 지연을 줄입니다. `[TTS] 재생 엔진: GEMINI` 또는 로컬 엔진 로그로 실제 경로를 확인하세요. 이미 전송한 HTTP 요청은 발화 중단 시 즉시 취소되지 않을 수 있지만 취소된 음성은 재생하지 않습니다. Gemini TTS 성공 시 위험 단계별 로컬 배속 설정은 적용하지 않습니다.
+설정을 생략해도 위 기본값이 적용됩니다. `/tts gemini`는 환경 설정이 false여도 해당 실행 동안 Gemini TTS를 켭니다. 기존 `.env`에 `GEMINI_TTS_ENABLED=false`가 있으면 `true`로 바꾸고 재시작하세요. 로컬 음성을 계속 사용하려면 `false`를 유지합니다. `/tts ppaso`로 로컬 고정, `/tts auto`로 환경 설정의 기본 정책에 돌아갑니다. HTTP 오류·타임아웃·빈 음성 등의 실패 시 현재 로컬 엔진으로 전환하고 기본 60초간 TTS API 재시도를 쉽니다. `/tts`에서 최근 실패 이유를 확인하거나 `/tts gemini`로 재시도 대기를 초기화할 수 있습니다. `[TTS] 재생 엔진: GEMINI` 또는 로컬 엔진 로그로 실제 경로를 확인하세요. 이미 전송한 HTTP 요청은 발화 중단 시 즉시 취소되지 않을 수 있으며, 해당 요청이 끝나기 전 다음 합성이 지연될 수 있지만 취소된 음성은 재생하지 않습니다. Gemini TTS 성공 시 위험 단계별 로컬 배속 설정은 적용하지 않습니다.
+
+Pi 가상환경에서 앱을 실행하기 전 API만 확인하려면 다음 명령을 사용합니다. 파일이 이미 있으면 다른 출력 경로를 지정하세요. 이 명령은 자동 재생하지 않습니다.
+
+```bash
+python tools/diagnose_gemini_tts.py --output gemini_tts_test.wav
+```
 
 PYTTSX3는 Linux의 eSpeak 계열 라이브러리와 한국어 목소리가 필요합니다. 아래 패키지를 준비하고 `/tts pyttsx3` 전환 후 새 질문으로 실제 소리를 확인하세요. Linux에서는 PYTTSX3가 WAV를 합성하고 PPASO와 같은 pygame 경로로 재생하므로 원격 오디오 설정도 함께 사용합니다. 이전 직접 재생 방식에서는 eSpeak의 `aplay`가 ALSA 오류 524를 내면서도 성공으로 종료하는 현상을 확인했습니다. 이를 우회하도록 WAV 합성·재생을 분리했으며, 수정 후 실제 Pi 재생은 추가 확인이 필요합니다.
 

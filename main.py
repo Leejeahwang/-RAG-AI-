@@ -24,7 +24,7 @@ from alerts.fire_events import FireEvent, FireEventLink
 from rag.context import build_manual_context, additional_fire_context, without_repeated_guidance
 from rag.layout import layout_for_question, evacuation_for_zone
 from rag.native_retriever import rag_manager
-from rag.provider import EMERGENCY_GUIDANCE, generate_guidance, mode_command_response
+from rag.provider import EMERGENCY_GUIDANCE, generate_guidance, mode_command_response, get_ai_mode
 from sensors import fusion
 from sensors.temperature import read_temperature
 from sensors.gas import read_gas_level
@@ -55,6 +55,7 @@ class EdgeSaver:
         self._alarm_active = False
         self._pending_evac_event = None
         self._event_zone = None
+        self._first_audio_ready = threading.Event()
         self.local_zone = config.ZONE_ID
         self.detection_zone = config.DETECTION_ZONE_ID
         self._node_id = config.ALERT_NODE_ID or f"{socket.gethostname()}-{self.local_zone}"
@@ -141,7 +142,8 @@ class EdgeSaver:
                     self._safe_since = None
                     trigger_alarm(level, sensor_info)
                     send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
-                    stop_siren()
+                    if self._first_audio_ready.is_set():
+                        stop_siren()
                     print(f"\n[비상 재감지] {zone_id}구역: 진행 중인 대피 지침 안내를 이어갑니다.")
                     return
             self._alarm_active = True
@@ -154,21 +156,32 @@ class EdgeSaver:
             self._safe_since = None
             first_guidance = first_emergency_guidance(zone_id)
             self._cached_evac_guidance = first_guidance
+            self._first_audio_ready = threading.Event()
+            ready_event = self._first_audio_ready
             self._discard_pending_jobs()
             self.tts.stop()
+            self.tts.begin_event_audio(self._event_id)
             trigger_alarm(level, sensor_info)
             send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
             print(f"\n[첫 비상 안내] {first_guidance}")
-            self.tts.speak_async(first_guidance, lang="ko", speed=self._speed())
+            def first_audio_ready():
+                # Called only for an uncancelled TTS generation; never acquire
+                # _state_lock while TTS holds its playback lock.
+                ready_event.set()
+                stop_siren()
+            self.tts.speak_async(first_guidance, lang="ko", speed=self._speed(),
+                                 provider="emergency" if get_ai_mode() != 'local' else "fixed",
+                                 on_ready=first_audio_ready, cache_key=(self._event_id, 'first'))
             zone_guidance = evacuation_for_zone(self.local_zone, fire_zone=zone_id)
             if zone_guidance:
-                print(f"\n[구역 대피 안내] {zone_guidance}")
+                print(f"\n[구역 대피 안내 · 출처: 등록 구역 자료] {zone_guidance}")
                 # TTS queues speech in order. This must not wait for search or AI.
-                self.tts.speak_async(zone_guidance, lang="ko", speed=self._speed())
+                self.tts.speak_async(zone_guidance, lang="ko", speed=self._speed(),
+                                     provider="zone" if get_ai_mode() != 'local' else "fixed",
+                                     cache_key=(self._event_id, 'zone'))
                 self._cached_evac_guidance += "\n" + zone_guidance
             else:
                 print(f"[구역 대피 안내] {self.local_zone}구역의 등록된 대피로가 없습니다.")
-            stop_siren()
             self._jobs.put_nowait((0, next(self._sequence), {
                 "emergency": True, "id": self._event_id, "question": prompt,
                 "zone": zone_id, "lang": "ko", "level": level,
@@ -247,6 +260,7 @@ class EdgeSaver:
             # A different zone or a new event after completion cancels audio.
             if self._pending_evac_event is None:
                 self.tts.stop()
+                self.tts.clear_event_audio(self._event_id)
             stop_siren(force=True)
             print("\n[시스템] 정상 복귀, 반복 비상 방송 종료")
             if self._pending_evac_event is not None:
@@ -295,7 +309,7 @@ class EdgeSaver:
                     manual = additional_fire_context(docs)
                     layout = ""
                     question = (job["question"] + "\n구역 대피로는 별도로 안내합니다. "
-                                "관련 화재 대응 수칙과 금지 사항을 매뉴얼 원문으로 추가 안내하십시오. "
+                                "관련 화재 대응 수칙과 금지 사항을 매뉴얼에 근거하여 추가 안내하십시오. "
                                 "다른 구역의 대피로와 이미 안내한 대피로는 반복하지 마십시오.")
                 else:
                     manual = build_manual_context(docs)
@@ -306,7 +320,9 @@ class EdgeSaver:
                     if not self._job_valid(job):
                         continue
                 result = generate_guidance(layout+manual, question, emergency=job["emergency"],
-                                           cloud_context=layout+manual if config.GEMINI_SEND_LAYOUT else manual)
+                                           cloud_context=layout+manual if config.GEMINI_SEND_LAYOUT else manual,
+                                           situation={"fire_zone": job["fire_zone"], "local_zone": job["local_zone"]}
+                                           if job['emergency'] else None)
                 with self._state_lock:
                     if not self._job_valid(job):
                         continue
@@ -318,7 +334,7 @@ class EdgeSaver:
                         else:
                             text = without_repeated_guidance(text, job["first_guidance"]+"\n"+EMERGENCY_GUIDANCE+"\n"+job["zone_guidance"])
                             if text:
-                                print(f"\n[추가 화재 대응 수칙 · AI: {result.provider}] {text}")
+                                print(f"\n[추가 화재 대응 수칙 · 텍스트 AI: {result.provider}] {text}")
                             else:
                                 print("[추가 화재 대응 수칙] 이미 안내한 내용 외에 추가 수칙이 없습니다.")
                     else:
@@ -330,7 +346,11 @@ class EdgeSaver:
                         self._cached_evac_guidance = "\n".join(filter(None, [
                             job["first_guidance"], job["zone_guidance"], text]))
                     if text:
-                        self.tts.speak_async(text, lang=job["lang"], speed=self._speed(), provider=result.provider)
+                        if job['emergency']:
+                            self.tts.speak_async(text, lang=job['lang'], speed=self._speed(),
+                                                 provider=result.provider, cache_key=(job['id'], 'rules'))
+                        else:
+                            self.tts.speak_async(text, lang=job['lang'], speed=self._speed(), provider=result.provider)
             except Exception:
                 LOG.exception("답변 생성 실패; 감시는 계속됩니다")
             finally:
@@ -346,6 +366,7 @@ class EdgeSaver:
                             self._pending_evac_event = None
                             if not self._alarm_active:
                                 self._cached_evac_guidance = ""
+                                self.tts.clear_event_audio(job['id'])
                 self._jobs.task_done()
 
     def _monitor_once(self):
@@ -412,7 +433,8 @@ class EdgeSaver:
                         and time.monotonic()-last_play >= 25 and not self.tts.is_speaking()):
                     print(f"\n[비상 안내 반복 재생] 화재 {self._event_zone}구역 / 현재 {self.local_zone}구역")
                     print(self._cached_evac_guidance)
-                    self.tts.speak_async(self._cached_evac_guidance, lang="ko", speed=self._speed())
+                    if not self.tts.replay_event_audio(self._event_id):
+                        print('[TTS] 저장된 안내 음성이 없어 반복 재생을 건너뜁니다.')
                     last_play = time.monotonic()
                 elif not self._alarm_active:
                     last_play = time.monotonic()
@@ -451,7 +473,7 @@ class EdgeSaver:
         self.initialize()
         if self.session is None and not config.SIMPLE_UI:
             self.session = PromptSession()
-        print("질문 | v: 음성 | test fire: 데모 경보 | /ai auto|api|local | /tts auto|ppaso|pyttsx3 | q: 종료")
+        print("질문 | v: 음성 | test fire: 데모 경보 | /ai auto|api|local | /tts auto|gemini|ppaso|pyttsx3 | q: 종료")
         with patch_stdout():
             while not self._stop.is_set():
                 try:
