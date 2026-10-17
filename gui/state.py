@@ -24,6 +24,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional, Tuple
 
+from gui.early import EarlyTracker, EarlyView
 from gui.mqtt_settings import STALE_SECONDS
 from gui.protocol import (
     EVENT_ALARM_END,
@@ -49,14 +50,8 @@ LOG_MAX = 120
 TREND_WINDOW = 120   # 약 2분 (@1s status)
 EVENT_MAX = 50
 
-# Fragment 갱신 주기 (초)
-REFRESH_CAMERA = 0.5
-REFRESH_SENSORS = 1.0
-REFRESH_GAUGE = 1.0
-REFRESH_AI = 1.0
-REFRESH_TREND = 1.0
-REFRESH_LOG = 2.0
-REFRESH_STATUS = 1.0
+# 화면 갱신 주기 (초). dashboard.py 의 fragment 하나가 이 주기로 모든 패널을 다시 그린다.
+LIVE_REFRESH = 1.0
 
 # Worker 주기
 STT_IDLE_WAIT = 0.3
@@ -102,6 +97,7 @@ class ZoneView:
     frame_rx: float
     events: Tuple[EventMsg, ...]
     alarm_since: float             # 경보 시작 수신 시각, 경보 아니면 0
+    early: EarlyView = EarlyView() # Level 2 조기 감지 → 센서 반응 측정
 
     @property
     def last_seen(self) -> float:
@@ -137,6 +133,7 @@ class _ZoneData:
     seen_events: Deque[Tuple[int, float]] = field(default_factory=lambda: deque(maxlen=EVENT_MAX))
     trend: Deque[TrendPoint] = field(default_factory=lambda: deque(maxlen=TREND_WINDOW))
     alarm_since: float = 0.0
+    early: EarlyTracker = field(default_factory=EarlyTracker)
 
     def view(self, zone: str) -> ZoneView:
         return ZoneView(
@@ -144,6 +141,7 @@ class _ZoneData:
             online=self.online, online_rx=self.online_rx,
             frame=self.frame, frame_rx=self.frame_rx,
             events=tuple(self.events), alarm_since=self.alarm_since,
+            early=self.early.view(),
         )
 
 
@@ -228,8 +226,19 @@ class RuntimeState:
                 z.alarm_since = rx
             elif not msg.alarm:
                 z.alarm_since = 0.0
+            early_note = z.early.update(msg, rx)
+            if early_note:
+                self._log(f"⏱ [{msg.zone}구역] {early_note}")
             if prev is None:
                 self._log(f"📡 [{msg.zone}구역] 상태 수신 시작 ({msg.sensor_mode})")
+            elif prev.provider.known and msg.provider.known:
+                if msg.provider.cooling and not prev.provider.cooling:
+                    self._log(f"🔁 [{msg.zone}구역] Gemini 실패 — 로컬 AI 사용, "
+                              f"{msg.provider.retry_in:.0f}초 뒤 재시도")
+                elif prev.provider.cooling and not msg.provider.cooling:
+                    self._log(f"🔁 [{msg.zone}구역] Gemini 재시도 대기 종료")
+                if prev.provider.mode != msg.provider.mode:
+                    self._log(f"🔁 [{msg.zone}구역] AI 모드 변경: {prev.provider.mode} → {msg.provider.mode}")
 
     def apply_event(self, msg: EventMsg, rx: Optional[float] = None) -> bool:
         """새 이벤트면 True. QoS1 중복 수신은 무시한다."""

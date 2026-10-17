@@ -33,6 +33,7 @@ from typing import Any, Callable, Mapping, Optional
 from gui import mqtt_settings as S
 from gui.protocol import (
     AIState,
+    ProviderState,
     EVENT_ALARM_END,
     EVENT_ALARM_START,
     EVENT_GUIDANCE,
@@ -46,6 +47,30 @@ LOG = logging.getLogger(__name__)
 
 _MAX_QUEUED = 100      # 끊긴 동안 쌓아둘 QoS1 이벤트 최대 개수
 _CLOSE_WAIT = 1.0      # 종료 시 offline 메시지 전송 대기 (초)
+
+
+def read_provider_state() -> Optional[ProviderState]:
+    """Pi 의 rag/provider.py 에서 AI 모드와 Gemini 재시도 대기 시간을 읽는다.
+
+    rag/provider.py 는 다른 담당 파일이라 고치지 않고 읽기만 한다. 재시도 시각은 공개 함수가 없어
+    모듈 변수 _failure_until(time.monotonic 기준)을 읽는다. 이름이 바뀌면 재시도 시간만 0 으로 보낸다.
+    읽을 수 없으면 None (status 에 provider 를 넣지 않음)."""
+    try:
+        import config
+        from rag import provider as P
+
+        mode = P.get_ai_mode()
+        failure_until = float(getattr(P, "_failure_until", 0.0) or 0.0)
+        retry_in = max(0.0, failure_until - time.monotonic()) if mode == "auto" else 0.0
+        return ProviderState(
+            mode=mode,
+            gemini_key=bool(getattr(config, "GEMINI_API_KEY", "")),
+            retry_in=retry_in,
+            cooldown=float(getattr(config, "GEMINI_RETRY_COOLDOWN", 0.0) or 0.0),
+        )
+    except Exception:
+        LOG.debug("[edge] AI 공급자 상태 읽기 실패", exc_info=True)
+        return None
 
 
 def encode_frame(
@@ -103,6 +128,7 @@ class EdgePublisher:
         status_interval: float = S.STATUS_INTERVAL,
         frame_fps: float = S.FRAME_FPS,
         client_factory: Optional[Callable[[str], Any]] = None,
+        provider_state: Optional[Callable[[], Optional[ProviderState]]] = read_provider_state,
     ) -> None:
         self.zone = zone
         self.sensor_mode = sensor_mode
@@ -111,6 +137,7 @@ class EdgePublisher:
         self.status_interval = status_interval
         self.frame_fps = frame_fps
         self._client_factory = client_factory or S.new_client
+        self.provider_state = provider_state or (lambda: None)
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -223,7 +250,14 @@ class EdgePublisher:
                 self._frame_ready.set()
 
             shown = clamp_level(risk.get("level", 0) if level is None else level)
-            key = (shown, bool(alarm), bool(risk.get("is_early_detection")))
+            try:
+                provider = self.provider_state()
+            except Exception:   # AI 상태를 못 읽어도 센서·경보 status 는 보낸다
+                LOG.debug("[edge] provider_state 실패", exc_info=True)
+                provider = None
+            # AI 모드 변경, Gemini 재시도 대기 시작·종료도 즉시 보낸다
+            key = (shown, bool(alarm), bool(risk.get("is_early_detection")),
+                   provider.mode if provider else "", bool(provider and provider.cooling))
             now = time.monotonic()
             if key == self._last_key and now - self._last_status_at < self.status_interval:
                 return
@@ -231,7 +265,7 @@ class EdgePublisher:
                 self.zone,
                 sensor_mode=sensor_mode or self.sensor_mode,
                 temp=temp, gas=gas, smoke=smoke, risk=risk, level=shown,
-                analysis=analysis or {}, alarm=alarm, ai=self.ai_state,
+                analysis=analysis or {}, alarm=alarm, ai=self.ai_state, provider=provider,
             )
             if self._publish(S.KIND_STATUS, payload, qos=0, retain=True):
                 self._last_key, self._last_status_at = key, now

@@ -1,22 +1,25 @@
 """
-gui/components.py - CSS + 모든 UI fragment 한 파일.
+gui/components.py - CSS + 모든 화면 패널 한 파일.
 
 표시 전용: 모든 값은 RUNTIME 에 들어온 Pi 의 MQTT 수신값이다.
 여기서 위험도를 다시 계산하거나 경보를 울리지 않는다.
+
+패널 함수에는 st.fragment 를 붙이지 않는다. 패널마다 따로 자동 갱신하면 갱신 요청이
+서로 끊어 먹어 일부 패널이 10초 넘게 옛 값을 보여 준다 (2026-10-17 확인).
+dashboard.py 의 fragment 하나가 1초마다 모든 패널을 같은 시점 값으로 다시 그린다.
 """
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Optional
 
 import streamlit as st
 
-from gui.protocol import LEVEL_LABELS, MAX_LEVEL, provider_label
+from gui.protocol import AI_MODE_LABELS, LEVEL_LABELS, MAX_LEVEL, provider_label
 from gui.state import (
     RUNTIME, ZoneView, GAUGE_COLORS, ALERT_THRESHOLD,
-    REFRESH_CAMERA, REFRESH_SENSORS, REFRESH_GAUGE, REFRESH_AI,
-    REFRESH_TREND, REFRESH_LOG, REFRESH_STATUS,
     escape_html,
 )
 from gui import workers as W
@@ -210,7 +213,7 @@ div[data-testid="stButton"] button:hover { border-color:var(--accent); color:var
 [data-testid="stImage"] img { border-radius:var(--radius-sm); }
 
 /* 마커는 DOM에만 존재, 시각적으로 안 보이게 */
-.es-zone-card-marker, .es-emerg-marker {
+.es-zone-card-marker, .es-emerg-marker, .es-early-marker {
     display:block; width:0; height:0; overflow:hidden;
     position:absolute; opacity:0; pointer-events:none; }
 
@@ -271,16 +274,53 @@ div[data-testid="stButton"] button:hover { border-color:var(--accent); color:var
 .es-ai-meta { color:var(--muted); font-size:11px; margin-top:8px; }
 .es-ai-sub { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:1px;
     margin:12px 0 6px; }
+
+/* 카메라 영상: Streamlit 마크다운의 기본 이미지 크기·가운데 정렬을 덮어써 패널 폭에 맞춘다 */
+img.es-cam-img { width:100% !important; max-width:100% !important; height:auto !important;
+    display:block !important; margin:0 !important; object-fit:contain !important; border-radius:var(--radius-sm);
+    border:1px solid var(--border); }
+
+/* Level 2 조기 알림 배너 (노랑) */
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-early-marker) {
+    background:linear-gradient(90deg,#facc15,#eab308) !important;
+    border-radius:10px !important; padding:2px 8px !important; margin-bottom:8px !important;
+    box-shadow:0 0 14px rgba(234,179,8,0.45) !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-early-marker) [data-testid="stHorizontalBlock"] {
+    background:transparent !important; border:none !important; box-shadow:none !important;
+    height:auto !important; padding:0 !important; margin:0 !important; align-items:center !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-early-marker) [data-testid="stColumn"] {
+    padding:0 !important; background:transparent !important; }
+[data-testid="stVerticalBlock"]:has(> div:first-child .es-early-marker) button {
+    background:rgba(0,0,0,0.12) !important; border:1px solid rgba(0,0,0,0.45) !important;
+    color:#1c1917 !important; font-weight:700 !important; }
+
+/* 경보 이력 */
+.es-inc { border:1px solid var(--border); border-left:4px solid var(--muted);
+    border-radius:var(--radius-sm); background:var(--card-2); padding:10px 12px; margin-bottom:8px; }
+.es-inc.ongoing { border-left-color:var(--danger); }
+.es-inc.done { border-left-color:var(--accent); }
+.es-inc-head { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;
+    color:var(--text); font-size:13px; font-weight:700; }
+.es-inc-sub { color:var(--muted); font-size:12px; margin-top:4px; }
+.es-inc-list { list-style:none; margin:8px 0 0; padding:0; }
+.es-inc-list li { display:flex; gap:8px; align-items:baseline; padding:4px 0;
+    border-top:1px dashed var(--border); font-size:12px; color:var(--text-soft); }
+.es-inc-list .es-inc-time { font-family:'JetBrains Mono',monospace; color:var(--muted); flex:none; }
+.es-inc-list details { min-width:0; flex:1; }
+.es-inc-list summary { cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.es-inc-list details[open] summary { white-space:normal; }
+.es-inc-full { white-space:pre-wrap; margin-top:4px; color:var(--text); }
 """
 
 
 def inject_css(theme: str = "dark") -> None:
-    attr = "light" if theme == "light" else "dark"
-    st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
-    st.html(
-        f"<style>html,body{{margin:0;padding:0;}}</style>"
-        f"<script>window.parent.document.documentElement.setAttribute('data-theme','{attr}');</script>"
-    )
+    # Streamlit 은 st.html 의 <script> 를 실행하지 않아 data-theme 속성을 붙일 수 없다.
+    # 라이트 테마면 라이트 색 변수 블록의 선택자를 :root:root (다크 :root 보다 우선)로 바꿔 CSS 만으로 전환한다.
+    css = _CSS
+    if theme == "light":
+        css = css.replace(':root[data-theme="light"] {', ":root:root {", 1)
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.html("<style>html,body{margin:0;padding:0;}</style>")
 
 
 # ════════════════════════════════════════════════════════════
@@ -288,12 +328,20 @@ def inject_css(theme: str = "dark") -> None:
 # ════════════════════════════════════════════════════════════
 
 def active_zone() -> Optional[str]:
-    """브라우저 탭별로 보고 있는 구역 (None = 구역 목록)."""
+    """브라우저 탭별로 보고 있는 구역 (None = 구역 목록).
+    주소에 ?zone=A 가 있으면 그 구역으로 바로 연다 (시연용 즐겨찾기)."""
+    if "active_zone" not in st.session_state:
+        zone = (st.query_params.get("zone") or "").strip().upper()
+        st.session_state["active_zone"] = zone or None
     return st.session_state.get("active_zone")
 
 
 def set_active_zone(zone: Optional[str]) -> None:
     st.session_state["active_zone"] = zone
+    if zone:
+        st.query_params["zone"] = zone
+    else:
+        st.query_params.pop("zone", None)
 
 
 def zone_label(zone: str) -> str:
@@ -344,8 +392,7 @@ def _offline_box(icon: str, title: str, sub: str = "") -> str:
 #  Header
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=1.0)
-def _clock_fragment() -> None:
+def _render_clock() -> None:
     st.markdown(
         f'<div style="text-align:right;">'
         f'<span class="es-clock">{time.strftime("%Y-%m-%d  %H:%M:%S")}</span>'
@@ -354,8 +401,7 @@ def _clock_fragment() -> None:
     )
 
 
-@st.fragment(run_every=REFRESH_STATUS)
-def _armed_status_fragment() -> None:
+def _render_armed_chip() -> None:
     zones = [v for v in RUNTIME.all_zones() if v.connected]
     broker_ok, _, _ = RUNTIME.get_broker()
     level = max((v.level for v in zones), default=0)
@@ -385,9 +431,9 @@ def render_header(on_theme_toggle, zone: Optional[str]) -> None:
             unsafe_allow_html=True,
         )
     with c_clock:
-        _clock_fragment()
+        _render_clock()
     with c_chip:
-        _armed_status_fragment()
+        _render_armed_chip()
     with c_btn:
         cur = RUNTIME.get_theme()
         icon = "☀️" if cur == "dark" else "🌙"
@@ -399,7 +445,6 @@ def render_header(on_theme_toggle, zone: Optional[str]) -> None:
 #  Status bar (MQTT / PI / CAM / 센서 모드 / AI)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_STATUS)
 def render_status_bar(zone: Optional[str]) -> None:
     broker_ok, broker_err, target = RUNTIME.get_broker()
     chips = _chip(broker_ok, f"MQTT {target}" if broker_ok else f"MQTT {broker_err or '끊김'}")
@@ -417,6 +462,9 @@ def render_status_bar(zone: Optional[str]) -> None:
                 chips += _chip(False, "DEMO · 가상 센서", "warn")
             else:
                 chips += _chip(True, "실센서")
+            left = retry_left(v)
+            if left > 0:
+                chips += _chip(False, f"로컬 AI 전환 · 재시도 {int(left + 0.999)}초", "warn")
     else:
         n = sum(1 for v in RUNTIME.all_zones() if v.connected)
         chips += _chip(n > 0, f"{n}개 구역 연결", "warn")
@@ -437,7 +485,6 @@ def render_status_bar(zone: Optional[str]) -> None:
 #  Sensor mini row (원시값 표시)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_SENSORS)
 def render_sensor_mini(zone: str) -> None:
     v = RUNTIME.get_zone(zone)
     s = v.status if v is not None and v.connected else None
@@ -489,7 +536,6 @@ def render_sensor_mini(zone: str) -> None:
 #  Camera panel (Pi 가 보낸 JPEG)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_CAMERA)
 def render_camera_panel(zone: str) -> None:
     v = RUNTIME.get_zone(zone)
     if v is None or not v.connected:
@@ -499,17 +545,15 @@ def render_camera_panel(zone: str) -> None:
 
     vision = v.status.vision
     if vision.camera_offline:
-        st.markdown(_offline_box("📷", "카메라 오프라인", "Pi 가 카메라 프레임을 받지 못하고 있습니다"),
-                    unsafe_allow_html=True)
+        view = _offline_box("📷", "카메라 오프라인", "Pi 가 카메라 프레임을 받지 못하고 있습니다")
     elif v.frame_live:
-        try:
-            st.image(v.frame, width="stretch")
-        except Exception as e:
-            st.error("카메라 영상 표시 오류")
-            RUNTIME.add_log(f"❌ [카메라] 표시 오류: {e}")
+        # st.image 는 매초 새 파일 URL 을 만들고 옛 파일을 지워, 브라우저가 받기 전에 사라지면
+        # 깨진 이미지가 된다. 수 KB 짜리 JPEG 라 페이지에 직접 넣는다.
+        b64 = base64.b64encode(v.frame).decode("ascii")
+        view = f"<img class='es-cam-img' src='data:image/jpeg;base64,{b64}' alt='Pi 카메라'>"
     else:
         sub = f"마지막 영상: {_ago(v.frame_rx)}" if v.frame_rx else "Pi 의 EDGE_FRAME_FPS 설정을 확인하세요"
-        st.markdown(_offline_box("🎞️", "영상 수신 없음", sub), unsafe_allow_html=True)
+        view = _offline_box("🎞️", "영상 수신 없음", sub)
 
     # 비전 판정 배지: 사진 차단은 실제 판정 상태일 때만
     badges = [_badge(f"비전: {_vision_label(vision.status)}", "danger" if vision.fire_detected else "")]
@@ -519,16 +563,37 @@ def render_camera_panel(zone: str) -> None:
         badges.append(_badge(f"🛡️ 사진 오탐 차단 · {_vision_label(vision.status)}", "info"))
     if v.status.risk.early or vision.real_smoke:
         badges.append(_badge("⏱ 조기 감지", "warn"))
-    st.markdown(f"<div>{''.join(badges)}</div>", unsafe_allow_html=True)
+    fire = ""
     if vision.fire_detected and vision.description:
-        st.error(f"🚨 {vision.description}")
+        fire = (f"<div style='margin-top:6px;padding:10px 12px;border-radius:var(--radius-sm);"
+                f"background:var(--danger-soft);border:1px solid var(--danger);color:var(--danger);"
+                f"font-weight:600;'>🚨 {escape_html(vision.description)}</div>")
+    # 한 번에 그려서 매초 갱신해도 요소 개수가 바뀌지 않게 한다
+    st.markdown(f"{view}<div style='margin-top:6px;'>{''.join(badges)}</div>{fire}",
+                unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════
 #  Risk gauge (LV 0~5)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_GAUGE)
+def _early_html(v: ZoneView) -> str:
+    """비전 감지 → 센서 반응 선행 시간 (진행 중이면 경과 시간, 끝났으면 마지막 결과)."""
+    e = v.early
+    if e.waiting:
+        text = f"⏱ 조기 감지 측정 중 · 센서 반응 대기 {_duration_text(time.time() - e.since_rx)} 경과"
+        return f"<div style='margin-top:8px;'>{_badge(text, 'warn')}</div>"
+    last = e.last
+    if last is None:
+        return ""
+    if last.lead is None:
+        text = f"⏱ 최근 조기 감지 ({_clock(last.vision_ts)}): 센서 반응 없이 종료"
+        return f"<div style='margin-top:8px;'>{_badge(text)}</div>"
+    text = (f"⏱ 비전이 센서보다 {last.lead:.1f}초 먼저 감지 "
+            f"({', '.join(last.sensors)} 반응 · {_clock(last.sensor_ts)})")
+    return f"<div style='margin-top:8px;'>{_badge(text, 'ok')}</div>"
+
+
 def render_risk_gauge(zone: str) -> None:
     v = RUNTIME.get_zone(zone)
     connected = v is not None and v.connected
@@ -547,6 +612,7 @@ def render_risk_gauge(zone: str) -> None:
         badges += _badge("⏱ 조기 감지", "warn")
     if risk and risk.fused_level != level:
         badges += _badge(f"현재 계산값 LV{risk.fused_level} (경보 유지 중)")
+    early_line = _early_html(v) if connected else ""
     ticks = "".join(f"<span>{i}</span>" for i in range(MAX_LEVEL + 1))
 
     st.markdown(
@@ -565,6 +631,7 @@ def render_risk_gauge(zone: str) -> None:
             </div>
             <div style='color:var(--text-soft);font-size:12px;margin-top:6px;'>{escape_html(details)}</div>
             <div style='margin-top:6px;'>{badges}</div>
+            {early_line}
         </div>
         """,
         unsafe_allow_html=True,
@@ -575,7 +642,6 @@ def render_risk_gauge(zone: str) -> None:
 #  Trend (시계열 라인 차트, 원시값)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_TREND)
 def render_trend_panel(zone: str) -> None:
     import pandas as pd
 
@@ -600,7 +666,38 @@ def render_trend_panel(zone: str) -> None:
 #  AI panel (Pi 비상 지침 + 관제사 질의 답변, STT 큐 소비)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_AI)
+def retry_left(v: Optional[ZoneView], now: Optional[float] = None) -> float:
+    """Gemini 재시도까지 남은 초. Pi 가 보낸 값에서 받은 뒤 지난 시간을 빼서 매초 줄어들게 한다."""
+    if v is None or v.status is None or not v.status.provider.cooling:
+        return 0.0
+    now = time.time() if now is None else now
+    return max(0.0, v.status.provider.retry_in - max(0.0, now - v.status_rx))
+
+
+def _provider_html(v: Optional[ZoneView]) -> str:
+    """현재 AI 모드와 Gemini 사용 가능 여부, 실패 시 재시도 카운트다운."""
+    if v is None or not v.connected or v.status is None or not v.status.provider.known:
+        return ""
+    pv = v.status.provider
+    mode = AI_MODE_LABELS.get(pv.mode, pv.mode)
+    left = retry_left(v)
+    bar = ""
+    if pv.mode == "local":
+        state = _badge("로컬 Qwen 고정 · Gemini 사용 안 함")
+    elif not pv.gemini_key:
+        state = _badge("Gemini API 키 없음 → 로컬 Qwen 사용", "warn")
+    elif left > 0:
+        state = _badge(f"Gemini 실패 → 로컬 Qwen 사용 중 · 재시도까지 {int(left + 0.999)}초", "warn")
+        if pv.cooldown > 0:
+            pct = max(0.0, min(100.0, 100.0 * (1 - left / pv.cooldown)))
+            bar = (f"<div class='es-gauge-track' style='height:6px;margin-top:6px;'>"
+                   f"<div class='es-gauge-fill' style='width:{pct:.0f}%;background:var(--warn);'></div></div>")
+    else:
+        state = _badge("Gemini 사용 가능", "ok")
+    return (f"<div style='margin-bottom:10px;'><div class='es-ai-meta' style='margin:0 0 4px;'>"
+            f"AI 모드: {escape_html(mode)}</div>{state}{bar}</div>")
+
+
 def render_ai_panel(zone: str, llm_queue) -> None:
     # 1) STT 큐 소비 → 관제사 질의 큐
     if RUNTIME.is_qa_ready():
@@ -648,8 +745,76 @@ def render_ai_panel(zone: str, llm_queue) -> None:
     meta_html = f"<div class='es-ai-meta'>{escape_html(meta)}</div>" if meta else ""
     st.markdown(
         f"<div class='es-panel'><div class='es-panel-title'>🤖 현장 AI 지침</div>"
+        f"{_provider_html(v)}"
         f"<div class='{cls}'>{escape_html(text)}</div>{meta_html}"
         f"<div class='es-ai-sub'>관제사 질의 답변</div>{q_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ════════════════════════════════════════════════════════════
+#  경보 이력 (경보 1건 단위: 시작 → 지침 → 종료)
+# ════════════════════════════════════════════════════════════
+
+def _clock(ts: Optional[float]) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(ts)) if ts else "--:--:--"
+
+
+def _duration_text(sec: Optional[float]) -> str:
+    if sec is None:
+        return ""
+    sec = int(round(sec))
+    return f"{sec // 60}분 {sec % 60:02d}초" if sec >= 60 else f"{sec}초"
+
+
+def _incident_html(inc, now: float) -> str:
+    dur = _duration_text(inc.duration(now))
+    if inc.ongoing:
+        cls, head = "es-inc ongoing", f"🚨 진행 중{' · ' + dur + ' 경과' if dur else ''}"
+    elif inc.end_unknown:
+        cls, head = "es-inc", "⚪ 종료됨 (종료 기록 없음)"
+    else:
+        cls, head = "es-inc done", f"✅ 종료 · {dur}" if dur else "✅ 종료"
+
+    start = _clock(inc.start_ts) if inc.start_ts else "시작 기록 없음"
+    end = _clock(inc.end_ts) if inc.end_ts else ("진행 중" if inc.ongoing else "?")
+    level = f"LV{inc.level} {LEVEL_LABELS.get(inc.level, '')}" if inc.level else ""
+
+    rows = []
+    for g in inc.guidances:
+        source = "첫 고정 안내" if g.type == "alarm_start" else f"AI 지침 · {provider_label(g.provider)}"
+        reason = f" (전환 이유: {g.fallback_reason})" if g.fallback_reason else ""
+        rows.append(
+            f"<li><span class='es-inc-time'>{_clock(g.ts)}</span>"
+            f"<details><summary>{escape_html(source + reason)} — {escape_html(g.text)}</summary>"
+            f"<div class='es-inc-full'>{escape_html(g.text)}</div></details></li>"
+        )
+    if inc.end_ts:
+        rows.append(f"<li><span class='es-inc-time'>{_clock(inc.end_ts)}</span><span>정상 복귀, 경보 종료</span></li>")
+
+    details = f"<div class='es-inc-sub'>{escape_html(inc.details)}</div>" if inc.details else ""
+    return (
+        f"<div class='{cls}'>"
+        f"<div class='es-inc-head'><span>{escape_html(head)}</span>"
+        f"<span>{escape_html(start)} ~ {escape_html(end)}{' · ' + escape_html(level) if level else ''}</span></div>"
+        f"{details}<ul class='es-inc-list'>{''.join(rows)}</ul></div>"
+    )
+
+
+def render_event_history(zone: str) -> None:
+    from gui.history import group_incidents
+
+    v = RUNTIME.get_zone(zone)
+    alarm = bool(v is not None and v.connected and v.status is not None and v.status.alarm)
+    incidents = group_incidents(v.events if v else (), alarm_active=alarm,
+                                alarm_since=v.alarm_since if v else None)
+    if incidents:
+        body = "".join(_incident_html(inc, time.time()) for inc in incidents)
+    else:
+        body = "<div class='es-ai-meta'>경보 기록 없음 (대시보드 실행 후 받은 경보만 표시됩니다)</div>"
+    st.markdown(
+        f"<div class='es-panel'><div class='es-panel-title'>🗂 경보 이력"
+        f"<span style='color:var(--muted);font-weight:600;'>· {len(incidents)}건</span></div>{body}</div>",
         unsafe_allow_html=True,
     )
 
@@ -658,7 +823,6 @@ def render_ai_panel(zone: str, llm_queue) -> None:
 #  Log panel
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=REFRESH_LOG)
 def render_log_panel() -> None:
     logs = RUNTIME.snapshot_logs()
     body = "\n".join(escape_html(line) for line in reversed(logs))
@@ -673,20 +837,27 @@ def render_log_panel() -> None:
 #  Emergency banner (모든 구역 감시)
 # ════════════════════════════════════════════════════════════
 
-@st.fragment(run_every=1.0)
 def render_emergency_banner() -> None:
     """경보 중이거나 LV4 이상인 구역이 있으면 상단에 빨간 배너 + 이동 버튼."""
     danger = [
         v for v in RUNTIME.all_zones()
         if v.connected and (v.level >= ALERT_THRESHOLD or v.status.alarm)
     ]
-    if not danger:
+    # Level 2 조기 알림: 비전이 먼저 감지하고 센서 반응을 기다리는 구역 (경보 중인 구역은 빨간 배너만)
+    danger_zones = {v.zone for v in danger}
+    early = [v for v in RUNTIME.all_zones()
+             if v.connected and v.early.waiting and v.zone not in danger_zones]
+    # fragment 가 아무것도 그리지 않으면 이전 배너가 화면에 남는다.
+    # 자리(slot)를 항상 하나 두고, 경보가 없으면 빈 자리로 덮어써서 지운다.
+    slot = st.empty()
+    if not danger and not early:
         return
 
     current = active_zone()
+    banners = slot.container()
     for v in danger:
         r = v.status.risk
-        with st.container():
+        with banners, st.container():
             st.markdown('<span class="es-emerg-marker"></span>', unsafe_allow_html=True)
             c_msg, c_btn = st.columns([6, 1.2])
             with c_msg:
@@ -706,6 +877,32 @@ def render_emergency_banner() -> None:
                         unsafe_allow_html=True,
                     )
                 elif st.button(f"→ {zone_label(v.zone)}", key=f"emerg_jump_{v.zone}"):
+                    set_active_zone(v.zone)
+                    st.rerun(scope="app")
+
+    now = time.time()
+    for v in early:
+        elapsed = _duration_text(now - v.early.since_rx)
+        what = "연기 상승" if (v.status.vision.real_smoke or v.status.risk.early) else "불꽃"
+        with banners, st.container():
+            st.markdown('<span class="es-early-marker"></span>', unsafe_allow_html=True)
+            c_msg, c_btn = st.columns([6, 1.2])
+            with c_msg:
+                st.markdown(
+                    f"<div style='color:#1c1917;font-weight:700;font-size:16px;padding:2px 0;'>"
+                    f"⚠️ 조기 감지 — <b>{escape_html(zone_label(v.zone))}</b> · LV{v.level} 경고"
+                    f"<span style='font-weight:600;margin-left:8px;'>"
+                    f"비전이 {what}을 먼저 포착 · 센서 반응 대기 중 {escape_html(elapsed)} 경과</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with c_btn:
+                if current == v.zone:
+                    st.markdown(
+                        "<div style='color:#44403c;font-weight:600;text-align:center;"
+                        "padding:8px 0;'>현재 보는 중</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif st.button(f"→ {zone_label(v.zone)}", key=f"early_jump_{v.zone}"):
                     set_active_zone(v.zone)
                     st.rerun(scope="app")
 
@@ -752,8 +949,12 @@ def _zone_card(v: ZoneView) -> str:
     if s is not None:
         if s.vision.fire_detected:
             badges += _badge("🔥 화재 감지", "danger")
-        if s.risk.early:
+        if v.early.waiting:
+            badges += _badge(f"⏱ 센서 대기 {_duration_text(time.time() - v.early.since_rx)}", "warn")
+        elif s.risk.early:
             badges += _badge("⏱ 조기 감지", "warn")
+        if v.early.last is not None and v.early.last.lead is not None:
+            badges += _badge(f"선행 {v.early.last.lead:.1f}초", "ok")
         if s.vision.camera_offline:
             badges += _badge("📷 카메라 오프라인", "danger")
         if s.sensor_mode == "demo":
@@ -781,7 +982,6 @@ def _zone_card(v: ZoneView) -> str:
     """
 
 
-@st.fragment(run_every=2.0)
 def render_zone_overview() -> None:
     """연결된 모든 라즈베리파이 구역 카드 목록."""
     zones = RUNTIME.all_zones()

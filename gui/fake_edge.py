@@ -5,7 +5,8 @@ PC 테스트용 가짜 Pi. 실제 Pi 와 같은 EdgePublisher 로 같은 형식�
 
 시나리오:
     정상 → 사진 오탐 차단 → 조기 연기(LV2) → 화재(LV5, 첫 고정 안내)
-    → Gemini 실패로 로컬 Qwen 지침 → 카메라 오프라인 → 정상 복귀
+    → Gemini 실패로 로컬 Qwen 지침 (이후 60초 Gemini 재시도 대기) → 카메라 오프라인 → 정상 복귀
+    --loop 로 반복하면 2회차 화재는 재시도 대기 중이라 "Gemini 재시도 대기 중" 으로 로컬 지침
 
 실행 (프로젝트 루트에서):
     mosquitto -v                                   # 브로커 (별도 창)
@@ -28,7 +29,7 @@ import numpy as np
 
 from gui import mqtt_settings as S
 from gui.edge_publisher import EdgePublisher
-from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE
+from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE, ProviderState
 
 # rag/provider.py EMERGENCY_GUIDANCE 와 같은 문장 (Pi 를 흉내 내기 위해 복사)
 FIRST_GUIDANCE = (
@@ -41,6 +42,7 @@ LOCAL_GUIDANCE = (
 )
 
 TICK = 0.15   # main.py MONITOR_INTERVAL 과 같은 감시 주기
+GEMINI_COOLDOWN = 60.0   # config.GEMINI_RETRY_COOLDOWN 기본값
 
 
 @dataclass
@@ -76,6 +78,22 @@ class FakeEdge:
         self.alarm = False
         self.alarm_level = 0
         self._t0 = time.monotonic()
+        # rag/provider.py 흉내: auto 모드, Gemini 실패 시 60초 동안 로컬만 사용
+        self.ai_mode = "auto"
+        self.speed = 1.0
+        self._gemini_retry_at = 0.0
+
+    def provider_state(self) -> ProviderState:
+        left = max(0.0, (self._gemini_retry_at - time.monotonic()) * self.speed)   # 시나리오 시간(초)
+        return ProviderState(mode=self.ai_mode, gemini_key=True, retry_in=left, cooldown=GEMINI_COOLDOWN)
+
+    def gemini_fallback(self, text: str) -> None:
+        """Gemini 가 실패해 로컬 Qwen 으로 답한 상황. 재시도 대기 중이면 Gemini 를 부르지 않는다."""
+        if self.provider_state().cooling:
+            self.guidance("ollama", "Gemini 재시도 대기 중", text)
+        else:
+            self._gemini_retry_at = time.monotonic() + GEMINI_COOLDOWN / self.speed
+            self.guidance("ollama", "ConnectTimeout", text)
 
     # ── 이벤트 (main.py 의 4개 연결 지점과 같은 순서) ──
     def alarm_start(self, level: int, details: str) -> None:
@@ -126,6 +144,8 @@ class FakeEdge:
     # ── 한 단계 실행 ──
     def run_phase(self, p: Phase, speed: float) -> None:
         print(f"[{self.zone}] {p.name} ({p.seconds:.0f}s)")
+        self.speed = speed
+        self.pub.provider_state = self.provider_state
         if p.on_enter:
             p.on_enter(self)
         start = time.monotonic()
@@ -144,7 +164,9 @@ class FakeEdge:
             shown = max(p.level, self.alarm_level) if self.alarm else p.level
             self.pub.publish_monitor(
                 temp=temp, gas=gas, smoke=smoke, risk=risk, analysis=p.vision,
-                level=shown, alarm=self.alarm, frame=self.frame(p.frame, p.name),
+                level=shown, alarm=self.alarm,
+                # OpenCV putText 는 한글을 못 그려서 영상 라벨은 영문으로
+                frame=self.frame(p.frame, f"{p.frame.upper()} LV{shown}"),
             )
             time.sleep(TICK)
 
@@ -169,7 +191,7 @@ def scenario(zone: str) -> list[Phase]:
               5, "🚨 대형 재난 화재 확정! (비전 감지 + 연기센서(천장), 가스센서, 고온감지)",
               frame="fire",
               on_enter=lambda e: e.alarm_start(5, "🚨 대형 재난 화재 확정! (비전 감지 + 연기센서(천장), 가스센서, 고온감지)"),
-              at=(4, lambda e: e.guidance("ollama", "ConnectTimeout", LOCAL_GUIDANCE.format(zone=zone)))),
+              at=(4, lambda e: e.gemini_fallback(LOCAL_GUIDANCE.format(zone=zone)))),
         Phase("카메라 오프라인", 5, 520, 580, 70.0,
               {"status": "CAMERA_OFFLINE", "fire_detected": False},
               4, "🔥 실제 화재 확정! (카메라 오프라인, 센서 유지)", frame="none"),

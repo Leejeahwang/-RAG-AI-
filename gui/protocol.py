@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from gui.mqtt_settings import SCHEMA_VERSION
 
@@ -146,6 +146,31 @@ class AIState:
     ts: float = 0.0
 
 
+# rag/provider.py 의 AI 모드 → 화면 표시 이름
+AI_MODE_LABELS = {
+    "auto": "자동 (Gemini 우선, 실패 시 로컬)",
+    "gemini": "Gemini 우선",
+    "local": "로컬 고정",
+}
+
+
+@dataclass(frozen=True)
+class ProviderState:
+    """Pi 의 답변 공급자 상태 (rag/provider.py). mode 가 빈 문자열이면 보내지 않은 것."""
+    mode: str = ""              # auto | gemini | local
+    gemini_key: bool = True     # GEMINI_API_KEY 설정 여부
+    retry_in: float = 0.0       # Gemini 재시도까지 남은 초 (auto 모드에서 실패 후 대기 중일 때만 > 0)
+    cooldown: float = 0.0       # 재시도 대기 전체 길이 (config.GEMINI_RETRY_COOLDOWN)
+
+    @property
+    def known(self) -> bool:
+        return bool(self.mode)
+
+    @property
+    def cooling(self) -> bool:
+        return self.retry_in > 0
+
+
 @dataclass(frozen=True)
 class StatusMsg:
     zone: str
@@ -156,6 +181,7 @@ class StatusMsg:
     vision: Vision = field(default_factory=Vision)
     alarm: bool = False
     ai: AIState = field(default_factory=AIState)
+    provider: ProviderState = field(default_factory=ProviderState)
     version: int = SCHEMA_VERSION
 
 
@@ -196,6 +222,7 @@ def build_status(
     analysis: Mapping[str, Any],
     alarm: bool,
     ai: AIState,
+    provider: Optional[ProviderState] = None,
     ts: float | None = None,
 ) -> bytes:
     """main.py _monitor_once 의 지역 변수를 그대로 받아 status JSON 을 만든다."""
@@ -234,6 +261,12 @@ def build_status(
             "fallback_reason": _str(ai.fallback_reason),
             "ts": ai.ts,
         },
+        **({"provider": {
+            "mode": _str(provider.mode),
+            "gemini_key": bool(provider.gemini_key),
+            "retry_in": round(max(0.0, _float(provider.retry_in)), 1),
+            "cooldown": round(max(0.0, _float(provider.cooldown)), 1),
+        }} if provider is not None and provider.known else {}),
     })
 
 
@@ -268,7 +301,7 @@ def build_online(zone: str, online: bool, ts: float | None = None) -> bytes:
 
 def parse_status(raw: bytes | str, zone: str) -> StatusMsg:
     d = _decode(raw)
-    s, r, v, a = (_dict(d.get(k)) for k in ("sensors", "risk", "vision", "ai"))
+    s, r, v, a, pv = (_dict(d.get(k)) for k in ("sensors", "risk", "vision", "ai", "provider"))
     level = clamp_level(r.get("level"))
     return StatusMsg(
         zone=zone,
@@ -301,6 +334,12 @@ def parse_status(raw: bytes | str, zone: str) -> StatusMsg:
             provider=_str(a.get("provider")),
             fallback_reason=_str(a.get("fallback_reason")),
             ts=_float(a.get("ts")),
+        ),
+        provider=ProviderState(
+            mode=_str(pv.get("mode")).lower(),
+            gemini_key=_bool(pv.get("gemini_key", True)),
+            retry_in=max(0.0, _float(pv.get("retry_in"))),
+            cooldown=max(0.0, _float(pv.get("cooldown"))),
         ),
         version=_int(d.get("v"), SCHEMA_VERSION),
     )

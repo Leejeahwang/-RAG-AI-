@@ -39,7 +39,7 @@ os.chdir(ROOT_DIR)
 
 import streamlit as st  # noqa: E402
 
-from gui.state import RUNTIME  # noqa: E402
+from gui.state import RUNTIME, LIVE_REFRESH  # noqa: E402
 from gui import workers as W, components as C  # noqa: E402
 
 
@@ -90,9 +90,6 @@ C.inject_css(theme=RUNTIME.get_theme())
 llm_queue = W.start_workers(qa, stt_bundle, tts_helper)
 
 zone = C.active_zone()
-C.render_header(on_theme_toggle=_on_theme_toggle, zone=zone)
-C.render_emergency_banner()
-C.render_status_bar(zone)
 
 
 @st.fragment
@@ -122,17 +119,32 @@ def _render_input_widgets(llm_queue) -> None:
                 st.success("질의 전송 완료. AI 응답을 기다리세요.")
 
 
-if zone is None:
-    C.render_zone_overview()
-    C.render_log_panel()
-else:
+@st.fragment(run_every=LIVE_REFRESH)
+def _render_live(zone, llm_queue) -> None:
+    """수신값을 보여 주는 화면 전체. 1초마다 모든 패널을 같은 시점 값으로 다시 그린다.
+
+    패널마다 따로 자동 갱신하면 갱신 요청끼리 서로 끊어 일부 패널이 옛 값에 머문다.
+    그래서 자동 갱신은 이 fragment 하나만 둔다."""
+    C.render_header(on_theme_toggle=_on_theme_toggle, zone=zone)
+    C.render_emergency_banner()
+    C.render_status_bar(zone)
+    if zone is None:
+        C.render_zone_overview()
+        C.render_log_panel()
+        return
     C.render_zone_nav(zone)
     col_left, col_right = st.columns([1.4, 1], gap="large")
     with col_left:
         C.render_camera_panel(zone)
-        _render_input_widgets(llm_queue)
+        C.render_event_history(zone)
     with col_right:
         C.render_sensor_mini(zone)
         C.render_risk_gauge(zone)
         C.render_log_panel()
         C.render_ai_panel(zone, llm_queue)
+
+
+_render_live(zone, llm_queue)
+if zone is not None:
+    # 입력 위젯은 자동 갱신 영역 밖에 둔다 (입력 중 화면 갱신에 끊기지 않게)
+    _render_input_widgets(llm_queue)

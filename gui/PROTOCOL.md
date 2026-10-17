@@ -38,7 +38,8 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
     "confidence": 0.86, "description": "🚨 [로컬 감지] 위험 요소: [FIRE] (AI 확신도: 86.0%)"
   },
   "alarm": true,
-  "ai": {"text": "…대피하십시오.", "provider": "ollama", "fallback_reason": "ConnectTimeout", "ts": 1791600003.5}
+  "ai": {"text": "…대피하십시오.", "provider": "ollama", "fallback_reason": "ConnectTimeout", "ts": 1791600003.5},
+  "provider": {"mode": "auto", "gemini_key": true, "retry_in": 42.0, "cooldown": 60.0}
 }
 ```
 
@@ -56,6 +57,14 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 | `vision.*` | `analysis[...]` | `fire_detector.detect_fire` 결과를 그대로 옮깁니다 |
 | `alarm` | `self._alarm_active` | Pi가 경보·대피 방송 중인지 |
 | `ai` | 마지막 비상 지침 | `alarm_start`/비상 `guidance` 이벤트로 바뀌고 `alarm_end`에서 비워집니다. 현장 일반 질문 답변은 여기 들어가지 않습니다 |
+| `provider.mode` | `rag.provider.get_ai_mode()` | `auto`(Gemini 우선, 실패 시 로컬) · `gemini` · `local`. Pi에서 `/ai` 명령으로 바꾸면 바로 반영됩니다 |
+| `provider.gemini_key` | `config.GEMINI_API_KEY` | 키가 없으면 항상 로컬 Qwen을 씁니다 |
+| `provider.retry_in` | `rag.provider._failure_until` | auto 모드에서 Gemini가 실패하면 이 초 동안 Gemini를 부르지 않고 로컬만 씁니다. 대시보드는 받은 뒤 지난 시간을 빼서 카운트다운합니다 |
+| `provider.cooldown` | `config.GEMINI_RETRY_COOLDOWN` | 재시도 대기 전체 길이 (기본 60초). 진행 막대에 사용합니다 |
+
+- `provider`가 없는 status(이전 버전 Pi)는 대시보드가 AI 모드 줄을 숨깁니다.
+- AI 모드가 바뀌거나 재시도 대기가 시작·끝나면 1초를 기다리지 않고 바로 status를 보냅니다.
+- `rag/provider.py`는 고치지 않고 `gui/edge_publisher.read_provider_state()`가 읽기만 합니다. `_failure_until` 이름이 바뀌면 재시도 시간만 0으로 보냅니다.
 
 ### vision.status 값
 
