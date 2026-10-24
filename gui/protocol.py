@@ -29,6 +29,7 @@ PROVIDER_LABELS = {
     "gemini": "Gemini",
     "ollama": "로컬 Qwen",
     "fixed": "고정 안내",
+    "zone": "등록 구역 대피로",
 }
 
 # vision/smoke_motion.py 가 실제 사진으로 판정했을 때만 쓰는 상태값
@@ -38,7 +39,8 @@ CAMERA_OFFLINE_STATUS = "CAMERA_OFFLINE"
 EVENT_ALARM_START = "alarm_start"
 EVENT_ALARM_END = "alarm_end"
 EVENT_GUIDANCE = "guidance"
-EVENT_TYPES = (EVENT_ALARM_START, EVENT_ALARM_END, EVENT_GUIDANCE)
+EVENT_WARNING = "warning"      # Level 2 비전 경고 (Pi 가 고정 경고 음성 1회 방송)
+EVENT_TYPES = (EVENT_ALARM_START, EVENT_ALARM_END, EVENT_GUIDANCE, EVENT_WARNING)
 
 _TEXT_LIMIT = 2000
 
@@ -128,6 +130,7 @@ class Vision:
     static_photo: bool = False
     confidence: float = 0.0
     description: str = ""
+    demo_bypass: bool = False   # demo 모드 시연 우회 (실제 불꽃 검증 아님)
 
     @property
     def camera_offline(self) -> bool:
@@ -172,6 +175,22 @@ class ProviderState:
 
 
 @dataclass(frozen=True)
+class Zones:
+    """구역 구분 (main.py: local_zone=ZONE_ID, detection_zone=DETECTION_ZONE_ID).
+
+    local: 이 Pi 가 방송하는 곳 (스피커 위치), detection: 이 Pi 의 카메라·센서가 보는 곳,
+    fire: 지금 경보 중인 화재 구역 (경보가 아니면 빈 문자열). 다른 Pi 의 HTTP 경보를 받으면
+    fire 가 local 과 달라진다."""
+    local: str = ""
+    detection: str = ""
+    fire: str = ""
+
+    @property
+    def remote_fire(self) -> bool:
+        return bool(self.fire and self.local and self.fire != self.local)
+
+
+@dataclass(frozen=True)
 class StatusMsg:
     zone: str
     ts: float
@@ -182,6 +201,7 @@ class StatusMsg:
     alarm: bool = False
     ai: AIState = field(default_factory=AIState)
     provider: ProviderState = field(default_factory=ProviderState)
+    zones: Zones = field(default_factory=Zones)
     version: int = SCHEMA_VERSION
 
 
@@ -197,6 +217,8 @@ class EventMsg:
     provider: str = ""
     fallback_reason: str = ""
     emergency: bool = False
+    fire_zone: str = ""
+    local_zone: str = ""
 
 
 @dataclass(frozen=True)
@@ -223,6 +245,7 @@ def build_status(
     alarm: bool,
     ai: AIState,
     provider: Optional[ProviderState] = None,
+    zones: Optional[Zones] = None,
     ts: float | None = None,
 ) -> bytes:
     """main.py _monitor_once 의 지역 변수를 그대로 받아 status JSON 을 만든다."""
@@ -253,8 +276,11 @@ def build_status(
             "static_photo": _bool(analysis.get("is_static_photo")),
             "confidence": round(_float(analysis.get("confidence")), 3),
             "description": _str(analysis.get("description")),
+            "demo_bypass": _bool(analysis.get("demo_bypass")),
         },
         "alarm": bool(alarm),
+        **({"zones": {"local": _str(zones.local), "detection": _str(zones.detection),
+                      "fire": _str(zones.fire)}} if zones is not None else {}),
         "ai": {
             "text": _str(ai.text),
             "provider": _str(ai.provider),
@@ -280,7 +306,8 @@ def build_event(zone: str, seq: int, event_type: str, ts: float | None = None, *
         "seq": int(seq),
         "type": event_type,
     }
-    for key in ("level", "details", "text", "provider", "fallback_reason", "emergency"):
+    for key in ("level", "details", "text", "provider", "fallback_reason", "emergency",
+                "fire_zone", "local_zone"):
         if key in fields and fields[key] is not None:
             payload[key] = fields[key]
     return _encode(payload)
@@ -301,7 +328,7 @@ def build_online(zone: str, online: bool, ts: float | None = None) -> bytes:
 
 def parse_status(raw: bytes | str, zone: str) -> StatusMsg:
     d = _decode(raw)
-    s, r, v, a, pv = (_dict(d.get(k)) for k in ("sensors", "risk", "vision", "ai", "provider"))
+    s, r, v, a, pv, z = (_dict(d.get(k)) for k in ("sensors", "risk", "vision", "ai", "provider", "zones"))
     level = clamp_level(r.get("level"))
     return StatusMsg(
         zone=zone,
@@ -327,8 +354,11 @@ def parse_status(raw: bytes | str, zone: str) -> StatusMsg:
             static_photo=_bool(v.get("static_photo")),
             confidence=_float(v.get("confidence")),
             description=_str(v.get("description")),
+            demo_bypass=_bool(v.get("demo_bypass")),
         ),
         alarm=_bool(d.get("alarm")),
+        zones=Zones(local=_str(z.get("local")).upper(), detection=_str(z.get("detection")).upper(),
+                    fire=_str(z.get("fire")).upper()),
         ai=AIState(
             text=_str(a.get("text")),
             provider=_str(a.get("provider")),
@@ -361,6 +391,8 @@ def parse_event(raw: bytes | str, zone: str) -> EventMsg:
         provider=_str(d.get("provider")),
         fallback_reason=_str(d.get("fallback_reason")),
         emergency=_bool(d.get("emergency")),
+        fire_zone=_str(d.get("fire_zone")).upper(),
+        local_zone=_str(d.get("local_zone")).upper(),
     )
 
 

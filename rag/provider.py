@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import json
 import re
 import threading
 import time
@@ -10,6 +11,7 @@ import requests
 
 import config
 from rag.chain import call_ollama_native
+from rag.context import instruction_passages
 
 _LOG = logging.getLogger(__name__)
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -98,11 +100,14 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         raise ValueError("Gemini 모델명 형식이 올바르지 않습니다")
     response_style = (
         "질문에 관련된 문장을 원문 그대로 한 줄씩 인용하십시오. "
+        "수칙에 적용 조건이 있으면 그 조건도 원문으로 함께 인용하십시오. "
+        "문서 제목이나 목차만 답하지 마십시오. "
         if require_quotes else
-        "질문에 관련된 내용을 요약하고 자연스러운 한국어로 바꾸어 설명해도 됩니다. "
-        "핵심 행동을 최대 6개의 짧은 항목으로 안내하고 서론은 생략하십시오. "
-        "같은 조건에서 같은 행동은 한 번만 설명하고 비슷한 문장을 반복하지 마십시오. "
-        "공통 행동은 묶되, 대피 가능 여부나 화재 위치 등 조건이 다른 지침은 구분해서 유지하십시오. "
+        "질문에 관련된 매뉴얼 내용을 원문 중심으로 빠짐없이 안내하십시오. 요약과 표현 변경을 최소화하십시오. "
+        "구역명, 위치, 소화기 종류와 위치, 1차·2차 대피로, 행동 조건과 금지 사항을 생략하지 마십시오. "
+        "서로 다른 지침을 한 문장으로 합치지 말고 조건별로 나누어 안내하십시오. "
+        "동일한 내용의 중복만 제거하십시오. 항목 수 제한 때문에 필요한 내용을 제외하지 마십시오. "
+        "서론과 매뉴얼에 없는 설명은 생략하십시오. "
     )
     payload = {
         "systemInstruction": {"parts": [{"text": (
@@ -116,6 +121,16 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
         }]}],
         "generationConfig": {"temperature": 0, "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS},
     }
+    answer = _gemini_request(payload)
+    if require_quotes and not _is_grounded(answer, context):
+        raise ValueError("Gemini 답변이 매뉴얼 원문과 일치하지 않습니다")
+    return answer
+
+
+def _gemini_request(payload):
+    model = config.GEMINI_MODEL
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
+        raise ValueError("Gemini 모델명 형식이 올바르지 않습니다")
     response = requests.post(
         _GEMINI_URL.format(model=model),
         headers={"x-goog-api-key": config.GEMINI_API_KEY},
@@ -136,14 +151,59 @@ def _call_gemini(context: str, question: str, require_quotes: bool = False) -> s
     answer = "".join(part.get("text", "") for part in parts).strip()
     if not answer:
         raise ValueError("Gemini 답변이 비어 있습니다")
-    if require_quotes and not _is_grounded(answer, context):
-        raise ValueError("Gemini 답변이 매뉴얼 원문과 일치하지 않습니다")
     return answer
+
+
+def _call_gemini_contextual(context, question, situation, emergency):
+    from rag.contextual import contextual_request, render_contextual
+    system, user, schema, passages, facts = contextual_request(context, question, situation, emergency)
+    payload = {
+        'systemInstruction': {'parts': [{'text': system}]},
+        'contents': [{'role': 'user', 'parts': [{'text': user}]}],
+        'generationConfig': {'temperature': 0, 'maxOutputTokens': config.GEMINI_MAX_OUTPUT_TOKENS,
+            'responseMimeType': 'application/json', 'responseJsonSchema': schema},
+    }
+    return render_contextual(_gemini_request(payload), passages, facts)
 
 
 def _local(context: str, question: str, emergency: bool) -> str:
     timeout = (2, config.OLLAMA_EMERGENCY_TIMEOUT) if emergency else (2, config.OLLAMA_READ_TIMEOUT)
-    answer = "".join(call_ollama_native(prompt=context, question=question, timeout=timeout)).strip()
+    if emergency:
+        # The small local model selects evidence; Python copies the actual words.
+        lines = instruction_passages(context)
+        if not lines:
+            raise ValueError("선택 가능한 매뉴얼이 없습니다")
+        schema = {"type": "object", "properties": {"line_ids": {
+            "type": "array", "items": {"type": "integer", "enum": list(range(1, len(lines)+1))},
+            "minItems": 1, "maxItems": 6}}, "required": ["line_ids"], "additionalProperties": False}
+        selected = "".join(call_ollama_native(
+            prompt="\n".join(f"{i}: {line}" for i, line in enumerate(lines, 1)),
+            question=question, timeout=timeout, response_format=schema, num_predict=64,
+            system_prompt=("Select the line IDs of safety instructions relevant to the question from the manual. "
+                           "For route questions prioritize primary and secondary routes for the current zone. "
+                           "For additional fire response rules select relevant actions and prohibitions. "
+                           "Select complete instructions with their conditions and prohibitions. "
+                           "Do not select headings or metadata. Return ONLY JSON: {\"line_ids\":[1,2]}. "
+                           "Select at most 6 lines; never write the instructions themselves."),
+        ))
+        ids = json.loads(selected).get("line_ids")
+        if (not isinstance(ids, list) or not 1 <= len(ids) <= 6
+                or any(type(i) is not int or not 1 <= i <= len(lines) for i in ids)):
+            raise ValueError("Ollama 매뉴얼 문장 선택이 올바르지 않습니다")
+        # A small model may select only a nearby safety rule. Keep the current
+        # layout's explicit routes, without taking routes from other documents.
+        layout_block = re.match(r"\[현재 현장 [ABC]구역 평면도 및 대피로\]\n(.*?)(?:\n\n|$)", context, re.S)
+        routes = []
+        if layout_block:
+            for line in layout_block.group(1).splitlines():
+                line = line.strip()
+                if (re.match(r"\d+[.)]\s*\d차 대피로", line)
+                        or re.match(r"[-*]\s*화재 시 대피로:\s*\S", line)):
+                    routes.append(line)
+        chosen = [lines[i-1] for i in sorted(set(ids))]
+        answer = "\n".join(dict.fromkeys(routes + chosen))
+    else:
+        answer = "".join(call_ollama_native(prompt=context, question=question, timeout=timeout)).strip()
     if not answer:
         raise ValueError("Ollama 답변이 비어 있습니다")
     return answer
@@ -154,6 +214,7 @@ def generate_guidance(
     question: str,
     emergency: bool = False,
     cloud_context: str | None = None,
+    situation: dict | None = None,
 ) -> GuidanceResult:
     """API 실패 시 로컬로 전환하고, 긴급 상황에선 고정 안내를 최후 수단으로 사용한다."""
     global _failure_until
@@ -170,7 +231,10 @@ def generate_guidance(
         fallback_reason = "전송 가능한 매뉴얼 없음"
     elif mode != "local":
         try:
-            answer = _call_gemini(remote_context, question, require_quotes=emergency)
+            if config.GEMINI_GUIDANCE_STYLE == 'contextual':
+                answer = _call_gemini_contextual(remote_context, question, situation, emergency)
+            else:
+                answer = _call_gemini(remote_context, question, require_quotes=emergency)
             with _failure_lock:
                 _failure_until = 0.0
             return GuidanceResult(answer, "gemini")
@@ -195,6 +259,7 @@ def generate_guidance(
     try:
         answer = _local(context, question, emergency)
         if emergency and not _is_grounded(answer, context):
+            _LOG.warning("Ollama 비상 답변 원문 검증 실패; 고정 안내로 전환")
             return GuidanceResult(EMERGENCY_GUIDANCE, "fixed", "로컬 답변 근거 불충분")
         return GuidanceResult(answer, "ollama", fallback_reason)
     except Exception as exc:

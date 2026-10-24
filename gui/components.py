@@ -51,6 +51,9 @@ VISION_STATUS_LABELS = {
     "MOTION_ERROR": "움직임 분석 오류",
     "INVALID_INPUT": "입력 오류",
     "NO_RESULT": "결과 없음",
+    "FILE_NOT_FOUND": "입력 파일 없음",
+    "ANALYZING": "분석 중",
+    "DEMO_BYPASS": "시연 우회 (실제 검증 아님)",
 }
 
 
@@ -462,6 +465,9 @@ def render_status_bar(zone: Optional[str]) -> None:
                 chips += _chip(False, "DEMO · 가상 센서", "warn")
             else:
                 chips += _chip(True, "실센서")
+            zones = v.status.zones
+            if zones.detection and zones.local and zones.detection != zones.local:
+                chips += _chip(True, f"감지 {zones.detection}구역 · 안내 {zones.local}구역")
             left = retry_left(v)
             if left > 0:
                 chips += _chip(False, f"로컬 AI 전환 · 재시도 {int(left + 0.999)}초", "warn")
@@ -536,6 +542,38 @@ def render_sensor_mini(zone: str) -> None:
 #  Camera panel (Pi 가 보낸 JPEG)
 # ════════════════════════════════════════════════════════════
 
+def _vision_message(vision) -> str:
+    """검증된 불꽃·연기일 때 카메라 아래 빨간 문구. 새 감지기(계약 v1)는 description 이 없어
+    상태로 만들고, 예전 감지기가 보낸 description 이 있으면 그대로 쓴다."""
+    if vision.description and (vision.fire_detected or vision.real_smoke):
+        return f"🚨 {vision.description}"
+    if vision.fire_detected:
+        return f"🚨 검증된 불꽃 감지 (모델 점수 {vision.confidence:.2f})"
+    if vision.real_smoke:
+        return f"🌫 상승하는 연기 확인 (모델 점수 {vision.confidence:.2f})"
+    if vision.demo_bypass:
+        return "⚠️ 시연 우회 화재 후보 (실제 모션 검증 아님)"
+    return ""
+
+
+def _alarm_where(v: ZoneView) -> str:
+    """경보 중 화재 구역 표시. 다른 Pi 의 경보를 받아 방송 중이면 '화재 B구역 → A구역 안내'."""
+    z = v.status.zones if v.status else None
+    if z is None or not z.fire:
+        return ""
+    if z.remote_fire:
+        return f"화재 {z.fire}구역 → {z.local}구역 안내 중"
+    return f"화재 {z.fire}구역"
+
+
+def _last_alarm_details(v: ZoneView) -> str:
+    """다른 구역 경보를 받은 경우 이 Pi 의 센서 판정 대신 경보를 보낸 쪽의 사유를 보여 준다."""
+    for ev in reversed(v.events):
+        if ev.type == "alarm_start":
+            return ev.details
+    return ""
+
+
 def render_camera_panel(zone: str) -> None:
     v = RUNTIME.get_zone(zone)
     if v is None or not v.connected:
@@ -564,10 +602,11 @@ def render_camera_panel(zone: str) -> None:
     if v.status.risk.early or vision.real_smoke:
         badges.append(_badge("⏱ 조기 감지", "warn"))
     fire = ""
-    if vision.fire_detected and vision.description:
+    message = _vision_message(vision)
+    if message:
         fire = (f"<div style='margin-top:6px;padding:10px 12px;border-radius:var(--radius-sm);"
                 f"background:var(--danger-soft);border:1px solid var(--danger);color:var(--danger);"
-                f"font-weight:600;'>🚨 {escape_html(vision.description)}</div>")
+                f"font-weight:600;'>{escape_html(message)}</div>")
     # 한 번에 그려서 매초 갱신해도 요소 개수가 바뀌지 않게 한다
     st.markdown(f"{view}<div style='margin-top:6px;'>{''.join(badges)}</div>{fire}",
                 unsafe_allow_html=True)
@@ -603,11 +642,16 @@ def render_risk_gauge(zone: str) -> None:
     width_pct = level * 100 // MAX_LEVEL
     label = LEVEL_LABELS[level] if connected else "신호 없음"
     details = risk.details if risk else ""
+    if connected and v.status.zones.remote_fire and v.status.alarm:
+        # 다른 구역 경보 수신 중: 이 Pi 의 센서 판정(정상) 대신 경보를 보낸 쪽 사유
+        details = _last_alarm_details(v) or details
 
     badges = ""
     if connected and v.status.alarm:
         since = f" · {_ago(v.alarm_since)} 시작" if v.alarm_since else ""
         badges += _badge(f"🚨 Pi 경보·대피 방송 중{since}", "danger")
+        if _alarm_where(v):
+            badges += _badge(f"📍 {_alarm_where(v)}", "danger")
     if risk and risk.early:
         badges += _badge("⏱ 조기 감지", "warn")
     if risk and risk.fused_level != level:
@@ -768,6 +812,15 @@ def _duration_text(sec: Optional[float]) -> str:
 
 
 def _incident_html(inc, now: float) -> str:
+    if inc.kind == "warning":
+        g = inc.guidances[0] if inc.guidances else None
+        where = f"감지 {inc.fire_zone}구역 · " if inc.fire_zone else ""
+        return (
+            "<div class='es-inc' style='border-left-color:var(--warn);'>"
+            f"<div class='es-inc-head'><span>⚠️ Level 2 비전 경고 방송</span>"
+            f"<span>{escape_html(where)}{_clock(inc.start_ts)}</span></div>"
+            f"<div class='es-inc-sub'>{escape_html(g.text if g else '')}</div></div>"
+        )
     dur = _duration_text(inc.duration(now))
     if inc.ongoing:
         cls, head = "es-inc ongoing", f"🚨 진행 중{' · ' + dur + ' 경과' if dur else ''}"
@@ -779,10 +832,17 @@ def _incident_html(inc, now: float) -> str:
     start = _clock(inc.start_ts) if inc.start_ts else "시작 기록 없음"
     end = _clock(inc.end_ts) if inc.end_ts else ("진행 중" if inc.ongoing else "?")
     level = f"LV{inc.level} {LEVEL_LABELS.get(inc.level, '')}" if inc.level else ""
+    if inc.fire_zone:
+        level = f"화재 {inc.fire_zone}구역 · {level}" if level else f"화재 {inc.fire_zone}구역"
 
     rows = []
     for g in inc.guidances:
-        source = "첫 고정 안내" if g.type == "alarm_start" else f"AI 지침 · {provider_label(g.provider)}"
+        if g.type == "alarm_start":
+            source = "첫 고정 안내"
+        elif g.provider == "zone":
+            source = "구역 대피로 (등록 자료)"
+        else:
+            source = f"AI 추가 수칙 · {provider_label(g.provider)}"
         reason = f" (전환 이유: {g.fallback_reason})" if g.fallback_reason else ""
         rows.append(
             f"<li><span class='es-inc-time'>{_clock(g.ts)}</span>"
@@ -864,9 +924,10 @@ def render_emergency_banner() -> None:
                 st.markdown(
                     f"<div style='color:white;font-weight:700;font-size:16px;padding:2px 0;'>"
                     f"🚨 위급상황 — <b>{escape_html(zone_label(v.zone))}</b>"
+                    f"{' · ' + escape_html(_alarm_where(v)) if _alarm_where(v) else ''}"
                     f" · LV{r.level} {escape_html(r.label)}"
                     f"<span style='opacity:0.85;font-weight:500;margin-left:8px;'>"
-                    f"({escape_html(r.details)})</span></div>",
+                    f"({escape_html(_last_alarm_details(v) if v.status.zones.remote_fire else r.details)})</span></div>",
                     unsafe_allow_html=True,
                 )
             with c_btn:
@@ -949,6 +1010,8 @@ def _zone_card(v: ZoneView) -> str:
     if s is not None:
         if s.vision.fire_detected:
             badges += _badge("🔥 화재 감지", "danger")
+        if s.zones.remote_fire:
+            badges += _badge(f"📍 {s.zones.fire}구역 화재 수신", "danger")
         if v.early.waiting:
             badges += _badge(f"⏱ 센서 대기 {_duration_text(time.time() - v.early.since_rx)}", "warn")
         elif s.risk.early:

@@ -1,7 +1,12 @@
 # main.py 관제 발행 연결 방법
 
-Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main.py`에 아래 **7줄(호출 6곳 + import 1줄)**을 넣습니다.
+Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main.py`에 아래 코드(import 1줄, 연결·종료 각 1곳, 발행 6곳)를 넣습니다.
 발행 코드는 모두 `gui/edge_publisher.py`에 있고, `main.py`는 호출만 합니다.
+
+> **기준 코드 (2026-10-24 갱신)**: `integration/vision-rag-voice`(10/18, Gemini 음성·비상 음성 캐시)와
+> `codex/vision-rag-voice`(10/18, NCNN 비전·Level 2 경고)를 합친 `main.py`입니다. 두 브랜치는 충돌 없이 합쳐지며,
+> `feature/gui-remote-dashboard`의 `main.py`에는 아래 코드가 이미 들어 있습니다.
+> 화재 구역(`zone_id`)·안내 구역(`self.local_zone`)·감지 구역(`self.detection_zone`)이 나뉜 구조에 맞췄습니다.
 
 ## 원칙
 
@@ -11,7 +16,7 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
 
 ## 넣을 코드 (diff)
 
-통합 브랜치 `main.py` 기준입니다. `+` 줄만 추가하면 됩니다.
+`+` 줄만 추가하면 됩니다.
 
 ```diff
  from voice.tts import TTSHelper
@@ -21,53 +26,70 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
 **① initialize()** — 첫 연결 준비(약 0.15초)를 감시 루프 밖에서 끝냅니다.
 
 ```diff
-         _ = self.tts
          fire_detector.warmup()
 +        edge.start()
 ```
 
-**② _trigger_rag_alert()** — 경보 시작. 첫 고정 안내도 함께 보냅니다.
+**② _trigger_rag_alert() — 경보 시작.** 새 경보일 때만(같은 구역 재감지 분기는 제외) 보냅니다.
+첫 안내 문장(`first_guidance`, 예: "B구역에서 화재 위험이…")과 화재·안내 구역을 함께 보냅니다.
 
 ```diff
-             trigger_alarm(level, sensor_info)
-             send_alert(zone=zone_id, risk_level=level, sensor_details=sensor_info)
-+            edge.publish_event("alarm_start", level=level, details=sensor_info,
-+                               text=EMERGENCY_GUIDANCE, provider="fixed")
+             send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
++            edge.publish_event("alarm_start", level=level, details=sensor_info, text=first_guidance,
++                               provider="fixed", fire_zone=zone_id, local_zone=self.local_zone)
+             print(f"\n[첫 비상 안내] {first_guidance}")
 ```
 
-**③ _clear_alarm()** — 정상 복귀.
+**③ _trigger_rag_alert() — 구역 대피로.** 등록 구역 자료로 만든 대피로를 방송할 때 함께 보냅니다.
 
 ```diff
-             self.tts.stop()
+                 self._cached_evac_guidance += "\n" + zone_guidance
++                edge.publish_event("guidance", text=zone_guidance, provider="zone", emergency=True,
++                                   fire_zone=zone_id, local_zone=self.local_zone)
+```
+
+**④ _clear_alarm() — 정상 복귀.** 다른 구역 경보가 남아 있으면 이 줄까지 오지 않고 그 경보로 다시 시작합니다.
+
+```diff
              stop_siren(force=True)
 +            edge.publish_event("alarm_end")
-             print("\n[시스템] 정상 복귀, 비상 방송 종료")
+             print("\n[시스템] 정상 복귀, 반복 비상 방송 종료")
 ```
 
-**④ _guidance_worker()** — AI 지침 생성 결과. `result`를 그대로 넘깁니다.
-(속성을 main.py에서 꺼내면, 예외가 났을 때 바로 아래 음성 안내까지 막힙니다.)
+**⑤ _guidance_worker() — AI 지침.** 실제로 방송한 문장 `text`(중복 안내를 걸러 낸 결과)를 넘깁니다.
+비상 지침인데 `text`가 비었으면(AI 실패, 추가 수칙 없음) 발행 모듈이 보내지 않습니다.
+`result`의 속성은 발행 모듈 안에서 읽습니다. main.py에서 꺼내다 예외가 나면 이후 음성 안내까지 막히기 때문입니다.
 
 ```diff
-                     print(f"\n[AI: {result.provider}] {result.text}")
-+                    edge.publish_guidance(result, emergency=job["emergency"])
                      print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
++                    edge.publish_guidance(result, emergency=job["emergency"], text=text,
++                                          fire_zone=job.get("fire_zone"), local_zone=job.get("local_zone"))
 ```
 
-**⑤ _monitor_once()** — 매 감시 주기의 상태. `with self._state_lock:` 블록 마지막, `current_risk_stats` 바로 아래에 둡니다.
-경보가 같은 주기에 시작되면 `alarm=True`가 같은 메시지에 실립니다.
+**⑥ _monitor_once() — 매 감시 주기 상태.** `with self._state_lock:` 블록 마지막, `current_risk_stats` 바로 아래에 둡니다.
 
 ```diff
              self.current_risk_stats = (f"[{config.SENSOR_MODE}] T:{temp['temperature']}C G:{gas} S:{smoke} "
                                         f"CAM:{analysis.get('status', 'UNKNOWN')} | {label}")
 +            edge.publish_monitor(temp=temp, gas=gas, smoke=smoke, risk=risk, analysis=analysis,
 +                                 level=self.current_level, alarm=self._alarm_active,
-+                                 frame=frame if fresh else None)
++                                 frame=frame if fresh else None, fire_zone=self._event_zone)
 ```
 
-- 0.15초마다 호출되지만 실제 status 발행은 1초에 한 번입니다. 위험도·경보·조기 감지 상태가 바뀌면 즉시 보냅니다.
+- 0.15초마다 호출되지만 실제 status 발행은 1초에 한 번입니다. 위험도·경보·조기 감지·AI 모드가 바뀌면 즉시 보냅니다.
+- `fire_zone`은 경보 중일 때만 status에 실립니다.
 - `frame`은 참조만 넘기고, JPEG 축소·인코딩은 발행 모듈의 별도 스레드가 초당 3장 이하로 합니다.
 
-**⑥ cleanup()** — 종료 시 대시보드에 오프라인을 알립니다.
+**⑦ _handle_vision_warning() — Level 2 비전 경고.** Pi가 고정 경고 음성을 1회 방송할 때 보냅니다.
+
+```diff
+             send_alert(zone=self.detection_zone, local_zone=self.local_zone,
+                        risk_level=2, sensor_details=risk["details"], ai_guidance=message)
++            edge.publish_event("warning", level=2, details=risk["details"], text=message, provider="fixed",
++                               fire_zone=self.detection_zone, local_zone=self.local_zone)
+```
+
+**⑧ cleanup()** — 종료 시 대시보드에 오프라인을 알립니다.
 
 ```diff
          if self._tts:
@@ -124,10 +146,26 @@ Pi에서 `main.py`를 실행한 뒤 다른 터미널에서 다음을 실행합�
 mosquitto_sub -h 127.0.0.1 -t 'edge/#' -v | grep -v /frame
 ```
 
-1초마다 `edge/A/status`가 보이고, `test fire`를 입력하면 `edge/A/event`에 `alarm_start`가 보이면 정상입니다.
+1초마다 `edge/A/status`가 보이고, 아래 명령을 입력했을 때 `edge/A/event`가 나오면 정상입니다 (`SENSOR_MODE=demo`).
+
+| 입력 | 나와야 할 event |
+|---|---|
+| `test fire` | `alarm_start`(fire_zone=A) → `guidance`(provider=zone) → AI 수칙이 있으면 `guidance` |
+| `test fire B` | 다른 구역(B) 경보 수신: `alarm_start`(fire_zone=B, local_zone=A) → `guidance`(zone) |
+| `test clear B` | B구역 경보 해제 → `alarm_end` |
 관제 PC에서는 `MQTT_BROKER_HOST=<Pi IP>`로 대시보드를 실행합니다 (`gui/README.md`).
 
-## 검증 기록 (2026-10-10, Windows PC)
+## 검증 기록
+
+### 2026-10-24 (통합 10/18 + codex 10/18 기준, Windows PC)
+
+- 위 코드를 넣은 `main.py`로 프로젝트 테스트 140개(팀원 추가분 포함)를 실행했습니다. 브로커 없음, 발행 기록용 가짜 클라이언트 모두 140/140 통과했습니다.
+- 같은 실행에서 `alarm_start`·`guidance`(zone·AI)·`alarm_end`·`warning` 이벤트가 모두 발행되고, 다른 구역 경보 수신(화재 B / 안내 A 등)의 구역 값이 맞게 실리는 것을 확인했습니다.
+- 가짜 Pi와 로컬 브로커로 대시보드를 띄워 브라우저 점검 17/17 통과: Level 2 노란 배너·경고 이력, 화재 A구역 빨간 배너, "화재 B구역 → A구역 안내 중", 구역 대피로·AI 수칙 이력, 버튼·입력 조작.
+- **실제 `main.py` 실행 점검**: 실제 NCNN 비전 모델(임시로 `ncnn` 설치)·RAG 인덱스·Ollama로 `main.py`를 띄우고(카메라는 검은 화면, 음성은 무음 대체) 로컬 화재 → 정상 복귀 → B구역 경보 수신 → 해제 → Level 2 경고를 차례로 실행했습니다. 브로커로 나간 event 9개가 순서·구역 값 모두 맞았고, 그 메시지를 대시보드 수신부에 그대로 넣어 처리 실패 0건을 확인했습니다.
+- 실제 Pi·카메라·스피커·mosquitto 환경은 아직 측정하지 않았습니다.
+
+### 2026-10-10 (통합 10/9 기준)
 
 - 위 diff를 `main.py` 복사본에 적용한 뒤 기존 `tests/test_integration.py` 10개를 실행했습니다. 브로커 없음, 가짜 브로커 모두 10/10 통과했습니다. 원본 `main.py`는 수정하지 않았습니다.
 - 같은 실행에서 `alarm_start`·`guidance`·`alarm_end` 이벤트와 status가 발행되는 것을 확인했습니다.

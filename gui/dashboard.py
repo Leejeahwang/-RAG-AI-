@@ -106,17 +106,28 @@ def _render_input_widgets(llm_queue) -> None:
     RUNTIME.set_stt_enabled(mic_on)
 
     with st.expander("⌨️ 매뉴얼 질의", expanded=False):
-        q = st.text_input("질문 입력 후 버튼 클릭", key="query_input")
-        if st.button("AI 질의 전송", key="query_send"):
-            text = q.strip()
-            if not text:
-                st.warning("질문을 입력해 주세요.")
-            elif RUNTIME.is_generating():
-                st.warning("현재 AI가 다른 질문을 처리 중입니다.")
-            else:
-                W.enqueue_query(llm_queue, text, "ko")
-                RUNTIME.add_log(f"⌨️ 관제사 질의: {text}")
-                st.success("질의 전송 완료. AI 응답을 기다리세요.")
+        st.text_input("질문 입력 후 버튼 클릭", key="query_input")
+        st.button("AI 질의 전송", key="query_send", on_click=_send_query, args=(llm_queue,))
+        kind, msg = st.session_state.pop("_query_msg", (None, None))
+        if kind == "ok":
+            st.success(msg)
+        elif kind:
+            st.warning(msg)
+
+
+def _send_query(llm_queue) -> None:
+    """전송 버튼 콜백. 전송에 성공했을 때만 입력창을 비운다 (거절되면 질문을 그대로 둔다).
+    위젯 값은 화면을 다시 그리기 전인 콜백에서만 바꿀 수 있다."""
+    text = st.session_state.get("query_input", "").strip()
+    if not text:
+        st.session_state["_query_msg"] = ("warn", "질문을 입력해 주세요.")
+    elif RUNTIME.is_generating():
+        st.session_state["_query_msg"] = ("warn", "현재 AI가 다른 질문을 처리 중입니다. 잠시 후 다시 전송하세요.")
+    else:
+        W.enqueue_query(llm_queue, text, "ko")
+        RUNTIME.add_log(f"⌨️ 관제사 질의: {text}")
+        st.session_state["query_input"] = ""
+        st.session_state["_query_msg"] = ("ok", f"질의 전송 완료: \"{text}\" — AI 응답을 기다리세요.")
 
 
 @st.fragment(run_every=LIVE_REFRESH)

@@ -125,7 +125,8 @@ class FakeEdgeScenarioTests(unittest.TestCase):
                 for phase in fake_edge.scenario("A"):
                     edge.run_phase(phase, speed=40)
             edge.pub.close()
-        reasons = [e.fallback_reason for e in rt.get_zone("A").events if e.type == "guidance"]
+        reasons = [e.fallback_reason for e in rt.get_zone("A").events
+                   if e.type == "guidance" and e.provider == "ollama"]
         self.assertEqual(reasons, ["ConnectTimeout", "Gemini 재시도 대기 중"])
 
 

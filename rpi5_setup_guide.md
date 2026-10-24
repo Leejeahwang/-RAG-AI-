@@ -1,15 +1,38 @@
 # Raspberry Pi 5 설치·실행 가이드 — 현재 통합 버전
 
+### 2026-10-18 Vision 변경: NCNN 640×640
+
+현재 `codex/vision-rag-voice` 브랜치는 NCNN FP32를 기본으로 사용합니다.
+이 브랜치에는 `vision/models/fire_smoke_ncnn_model/`의 기본 실행 파일 4개도 포함하므로
+clone/pull하면 함께 내려받습니다. 프로젝트를 수동으로 옮길 때도 모델 폴더 전체를
+포함하세요. `requirements_rpi.txt` 설치 시 NCNN 실행
+라이브러리가 준비됩니다. `.env`의 `VISION_MODEL_PATH`는
+`vision/models/fire_smoke_ncnn_model`로 설정하고 기존 ONNX 경로 지정이 있다면 수정합니다.
+
+모델이 없으면 원본 `vision/models/fire_smoke.pt`를 복사한 뒤 프로젝트 가상환경에서 실행합니다:
+
+```bash
+python -m pip install -r requirements_vision_export.txt
+python tools/export_vision_ncnn.py
+python tools/check_vision_runtime.py --frames 12 --output scratch/vision_ncnn_runtime.json
+```
+
+이후 웹캠 확인 시 마지막 명령에 `--camera --seconds 30 --frames 30`을 추가합니다.
+입력 크기는 640×640이며 CPU를 사용합니다. 변환물 배치 및 PC 실행 확인과
+Pi에서의 실제 화재 탐지 정확도·FPS 검증은 별도입니다.
+
 2026-10-09 기준 안내입니다. Raspberry Pi의 Debian 13(trixie), aarch64, Python 3.11.17 환경에서 requirements 설치와 pip check, main_test.py의 RAG 검색·Gemini 답변·원격 PC TTS 재생을 확인했습니다. STT와 실제 카메라·센서·GPIO 동작은 미검증입니다. 세부 이전·MeCab 설치 절차는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 함께 사용합니다.
 
 ## 1. 코드와 실행 환경 준비
 
 64-bit Raspberry Pi OS, aarch64, **Python 3.11**을 기준으로 준비합니다. 이번 시험에서는 기본 Python 3.13.5에서 NumPy 의존성 충돌로 설치에 실패했고, requirements를 수정하지 않고 Python 3.11.17 가상환경으로 설치·실행했습니다. 시스템 기본 Python을 교체하지 말고 별도의 Python 3.11 가상환경을 사용하세요.
 
-통합 버전은 `integration/vision-rag-voice` 브랜치입니다. 원격 feature/RAG만 clone하면 여기의 vision_bridge.py 및 통합 수정 사항은 포함되지 않습니다. 아래 브랜치를 복제하거나 현재 작업 폴더를 USB로 옮겨 사용합니다.
+현재 비전 수정 및 NCNN 전환 버전은 `codex/vision-rag-voice` 브랜치입니다.
+원본 `integration/vision-rag-voice` 또는 feature/RAG만 clone하면 이번 수정은 포함되지 않습니다.
+아래 브랜치를 복제하거나 현재 작업 폴더를 USB로 옮겨 사용합니다.
 
 ```bash
-git clone --branch integration/vision-rag-voice https://github.com/Leejeahwang/-RAG-AI-.git
+git clone --branch codex/vision-rag-voice https://github.com/Leejeahwang/-RAG-AI-.git
 cd ./-RAG-AI-
 ```
 
@@ -149,6 +172,12 @@ rpicam-jpeg -n -t 1000 -o /tmp/edge-saver-camera-test.jpg
 글자가 네모로 나오면 fonts-nanum을 설치합니다. 로케일이 필요하면 sudo dpkg-reconfigure locales에서 ko_KR.UTF-8을 선택하고 터미널을 다시 엽니다. SSH 터미널 글꼴은 접속 PC에서도 확인합니다.
 
 ## 8. 검증 범위
+
+2026-10-18 비전 계약·Level 2 경고 후속 검증은 [vision/README.md](vision/README.md)를
+따릅니다. Pi에서 `python tools/check_vision_runtime.py --camera --seconds 30 --frames 30`
+명령으로 현재 보드·모델·실제 카메라 프레임 및 지연 분포를 기록하고,
+`python -m unittest discover -s tests -v`와 기존 비전 검증 스크립트도 실행합니다.
+시연 우회를 끄고, 실제 센서와 스피커를 연결한 Level 2 → 4/5 전환은 별도 확인합니다.
 
 ```bash
 python -m unittest discover -s tests -q

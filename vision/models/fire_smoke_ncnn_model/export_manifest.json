@@ -1,0 +1,31 @@
+{
+  "created_utc": "2026-10-17T18:57:37.606939+00:00",
+  "source_name": "fire_smoke.pt",
+  "source_sha256": "ac0a10257b2bc1f20c9d957f8adeeb61dd6140322fc19d0b4a116cb491776d16",
+  "format": "ncnn",
+  "precision": "fp32",
+  "imgsz": [
+    640,
+    640
+  ],
+  "batch": 1,
+  "classes": {
+    "0": "fire",
+    "1": "smoke"
+  },
+  "architecture": null,
+  "packages": {
+    "ultralytics": "8.4.22",
+    "torch": "2.10.0",
+    "ncnn": "1.0.20260526",
+    "pnnx": "20260526"
+  },
+  "files": {
+    "model.ncnn.param": "936dc898339fd39828cad135896507a0e3b365f49f84d08cd1d3a26f0be2d7b9",
+    "model.ncnn.bin": "e70476a04ce7eba7e61bdba6894c4fe7286c58f43bae72e6df489929f878d174",
+    "metadata.yaml": "8b70d42c8a72cc842bdbbe144faf06e543fdb1322e089e36acc9d3aa289fc42b"
+  },
+  "blank_frame_check": "passed",
+  "detection_accuracy": "not_evaluated",
+  "raspberry_pi_performance": "not_measured"
+}

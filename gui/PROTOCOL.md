@@ -34,10 +34,11 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
   },
   "vision": {
     "status": "REAL_FIRE_FLICKERING", "fire_detected": true,
-    "real_smoke": false, "static_photo": false,
-    "confidence": 0.86, "description": "🚨 [로컬 감지] 위험 요소: [FIRE] (AI 확신도: 86.0%)"
+    "real_smoke": false, "static_photo": false, "demo_bypass": false,
+    "confidence": 0.86, "description": ""
   },
   "alarm": true,
+  "zones": {"local": "A", "detection": "A", "fire": "A"},
   "ai": {"text": "…대피하십시오.", "provider": "ollama", "fallback_reason": "ConnectTimeout", "ts": 1791600003.5},
   "provider": {"mode": "auto", "gemini_key": true, "retry_in": 42.0, "cooldown": 60.0}
 }
@@ -54,9 +55,13 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 | `risk.label` | `level` 기준 | 0 정상 · 1 주의 · 2 경고 · 3 위험 · 4 긴급 · 5 재난 |
 | `risk.early` | `risk["is_early_detection"]` | 비전 조기 감지(연기 상승 등) |
 | `vision.status` | `analysis["status"]` | 아래 표 참고 |
-| `vision.*` | `analysis[...]` | `fire_detector.detect_fire` 결과를 그대로 옮깁니다 |
+| `vision.*` | `analysis[...]` | `fire_detector.detect_fire` 결과를 그대로 옮깁니다. 감지 결과 계약 v1(10/18, `vision/README.md`)에서는 `fire_detected`=모션 검증된 불꽃만, 연기만 확인되면 `real_smoke`만 true, `description`은 비어 있습니다 |
+| `vision.demo_bypass` | `analysis["demo_bypass"]` | demo 모드 시연 우회 후보 (실제 불꽃 검증 아님) |
 | `alarm` | `self._alarm_active` | Pi가 경보·대피 방송 중인지 |
-| `ai` | 마지막 비상 지침 | `alarm_start`/비상 `guidance` 이벤트로 바뀌고 `alarm_end`에서 비워집니다. 현장 일반 질문 답변은 여기 들어가지 않습니다 |
+| `ai` | Pi 의 비상 방송 내용 | `alarm_start`의 첫 안내에 비상 `guidance`(구역 대피로, AI 수칙)를 줄바꿈으로 이어 붙입니다 (`main.py _cached_evac_guidance`와 같은 순서). `provider`는 마지막 지침의 출처. `alarm_end`에서 비워지고, 현장 일반 질문 답변은 들어가지 않습니다 |
+| `zones.local` | `config.ZONE_ID` | 이 Pi 가 방송하는 구역 (스피커 위치) |
+| `zones.detection` | `config.DETECTION_ZONE_ID` | 이 Pi 의 카메라·센서가 보는 구역 |
+| `zones.fire` | `self._event_zone` | 경보 중인 화재 구역. 경보가 아니면 빈 문자열. 다른 Pi 의 HTTP 경보를 받으면 `local`과 달라지고, 대시보드는 "화재 B구역 → A구역 안내 중"으로 표시합니다 |
 | `provider.mode` | `rag.provider.get_ai_mode()` | `auto`(Gemini 우선, 실패 시 로컬) · `gemini` · `local`. Pi에서 `/ai` 명령으로 바꾸면 바로 반영됩니다 |
 | `provider.gemini_key` | `config.GEMINI_API_KEY` | 키가 없으면 항상 로컬 Qwen을 씁니다 |
 | `provider.retry_in` | `rag.provider._failure_until` | auto 모드에서 Gemini가 실패하면 이 초 동안 Gemini를 부르지 않고 로컬만 씁니다. 대시보드는 받은 뒤 지난 시간을 빼서 카운트다운합니다 |
@@ -75,9 +80,10 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 | `EVALUATING_FIRE_MOTION`, `EVALUATING_SMOKE_MOTION` | 움직임 분석 중 | 문구만 |
 | `REAL_FIRE_FLICKERING` | 실제 불꽃 흔들림 확인 | 빨간 배지 |
 | `REAL_SMOKE_RISING` | 연기 상승 확인 (조기 감지) | 조기 감지 배지 |
+| `DEMO_BYPASS` | demo 모드 시연 우회 (`BYPASS_MOTION_FILTER=true`) | "시연 우회" 문구 |
 | `STATIC_PHOTO_BLOCKED`, `HANDHELD_PHOTO_BLOCKED` | 정지 사진·손에 든 사진 판정 | **사진 오탐 차단 배지 (이 두 값일 때만)** |
 | `CAMERA_OFFLINE` | `main.py`가 프레임을 못 받음 | 카메라 오프라인 화면 |
-| `MODEL_NOT_INITIALIZED`, `ANALYSIS_ERROR`, `MOTION_ERROR`, `INVALID_INPUT`, `NO_RESULT` | 비전 오류 | 문구만 |
+| `MODEL_NOT_INITIALIZED`, `ANALYSIS_ERROR`, `MOTION_ERROR`, `INVALID_INPUT`, `NO_RESULT`, `FILE_NOT_FOUND` | 비전 오류 | 문구만 |
 
 ## event
 
@@ -88,18 +94,21 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 
 | type | 호출 위치 | 필드 |
 |---|---|---|
-| `alarm_start` | `_trigger_rag_alert` | `level`, `details`, `text`(첫 고정 안내), `provider`=`fixed` |
-| `guidance` | `_guidance_worker` | `text`, `provider`(`gemini`/`ollama`/`fixed`), `fallback_reason`, `emergency` |
-| `alarm_end` | `_clear_alarm` | 없음 |
+| `alarm_start` | `_trigger_rag_alert` (새 경보만) | `level`, `details`, `text`(첫 고정 안내 "B구역에서 화재 위험이…"), `provider`=`fixed`, `fire_zone`, `local_zone` |
+| `guidance` | `_trigger_rag_alert` (구역 대피로) | `text`, `provider`=`zone`, `emergency`=true, `fire_zone`, `local_zone` |
+| `guidance` | `_guidance_worker` (AI 지침) | `text`(실제 방송한 문장, 중복 제거 후), `provider`(`gemini`/`ollama`), `fallback_reason`, `emergency`, `fire_zone`, `local_zone`. 비상 지침인데 방송할 문장이 없으면 보내지 않음 |
+| `warning` | `_handle_vision_warning` | Level 2 비전 경고 고정 음성 1회: `level`=2, `details`, `text`, `provider`=`fixed`, `fire_zone`(감지 구역), `local_zone` |
+| `alarm_end` | `_clear_alarm` | 없음. 다른 구역 경보가 남아 있으면 보내지 않고 그 경보의 `alarm_start`가 다시 옵니다 |
 
 - `seq`는 Pi 프로세스마다 1부터 증가합니다. 대시보드는 `(seq, ts)`가 같은 메시지(QoS1 재전송)를 무시합니다.
-- `provider` 표시 이름은 `gemini` → Gemini, `ollama` → 로컬 Qwen, `fixed` → 고정 안내입니다.
+- `provider` 표시 이름은 `gemini` → Gemini, `ollama` → 로컬 Qwen, `fixed` → 고정 안내, `zone` → 등록 구역 대피로입니다.
+- `warning`·`fire_zone`·`local_zone`은 2026-10-24에 추가했습니다. 이전 대시보드는 `warning`을 모르는 형식으로 로그에 남기고 무시합니다.
 - `fallback_reason`은 `rag/provider.py`가 Gemini를 쓰지 못한 이유입니다(예: `Gemini API 키 없음`, `Gemini 재시도 대기 중`, `ConnectTimeout`).
 
 ## frame
 
 - JPEG 바이트를 그대로 보냅니다. 가로 `EDGE_FRAME_WIDTH`(기본 320)로 줄이고, 감지 박스(`analysis["box"]`)와 비전 상태를 그립니다.
-  - 빨강: 화재·연기 판정, 노랑: 사진 오탐 차단, 회색: 약한 감지
+  - 빨강: 검증된 불꽃, 주황: 검증된 상승 연기, 노랑: 사진 오탐 차단, 회색: 후보·검증 중
 - 카메라가 오프라인이거나 프레임이 오래되면(`FRAME_MAX_AGE`) 보내지 않습니다. 대시보드는 3초 동안 새 프레임이 없으면 영상 없음으로 표시합니다.
 - 대시보드는 JPEG 시그니처(`FF D8`)가 아니거나 2MB를 넘는 메시지는 버립니다.
 

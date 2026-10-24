@@ -4,8 +4,9 @@ gui/fake_edge.py
 PC 테스트용 가짜 Pi. 실제 Pi 와 같은 EdgePublisher 로 같은 형식의 메시지를 보낸다.
 
 시나리오:
-    정상 → 사진 오탐 차단 → 조기 연기(LV2) → 화재(LV5, 첫 고정 안내)
+    정상 → 사진 오탐 차단 → 조기 연기(LV2, Level 2 경고 방송) → 화재(LV5, 첫 고정 안내·구역 대피로)
     → Gemini 실패로 로컬 Qwen 지침 (이후 60초 Gemini 재시도 대기) → 카메라 오프라인 → 정상 복귀
+    → 다른 구역(B) 화재 경보 수신 (이 구역은 정상이지만 경보·방송) → 정상
     --loop 로 반복하면 2회차 화재는 재시도 대기 중이라 "Gemini 재시도 대기 중" 으로 로컬 지침
 
 실행 (프로젝트 루트에서):
@@ -29,7 +30,7 @@ import numpy as np
 
 from gui import mqtt_settings as S
 from gui.edge_publisher import EdgePublisher
-from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE, ProviderState
+from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE, EVENT_WARNING, ProviderState
 
 # rag/provider.py EMERGENCY_GUIDANCE 와 같은 문장 (Pi 를 흉내 내기 위해 복사)
 FIRST_GUIDANCE = (
@@ -37,9 +38,12 @@ FIRST_GUIDANCE = (
     "대피가 어렵다면 119에 현재 위치를 알리고 구조를 요청하십시오."
 )
 LOCAL_GUIDANCE = (
-    "{zone}구역 화재입니다. 자세를 낮추고 젖은 천으로 코와 입을 막으십시오. "
-    "엘리베이터를 사용하지 말고 가장 가까운 비상구 계단으로 대피하십시오."
+    "자세를 낮추고 젖은 천으로 코와 입을 막으십시오. "
+    "엘리베이터를 사용하지 말고 연기가 없는 계단으로 이동하십시오."
 )
+# main.py 의 구역 대피로(rag.layout.evacuation_for_zone)와 Level 2 경고 문장 흉내
+ZONE_ROUTE = "{local}구역 대피로: 중앙 통로를 따라 {exit} 비상구로 대피하십시오."
+WARNING_SMOKE = "{zone}구역에서 상승하는 연기가 감지되었습니다. 화재 가능성에 주의하고 안전한 곳으로 이동하십시오."
 
 TICK = 0.15   # main.py MONITOR_INTERVAL 과 같은 감시 주기
 GEMINI_COOLDOWN = 60.0   # config.GEMINI_RETRY_COOLDOWN 기본값
@@ -77,6 +81,7 @@ class FakeEdge:
         self.pub = EdgePublisher(zone, sensor_mode=sensor_mode, host=host, port=port, enabled=True)
         self.alarm = False
         self.alarm_level = 0
+        self.fire_zone = ""
         self._t0 = time.monotonic()
         # rag/provider.py 흉내: auto 모드, Gemini 실패 시 60초 동안 로컬만 사용
         self.ai_mode = "auto"
@@ -95,20 +100,34 @@ class FakeEdge:
             self._gemini_retry_at = time.monotonic() + GEMINI_COOLDOWN / self.speed
             self.guidance("ollama", "ConnectTimeout", text)
 
-    # ── 이벤트 (main.py 의 4개 연결 지점과 같은 순서) ──
-    def alarm_start(self, level: int, details: str) -> None:
-        self.alarm, self.alarm_level = True, level
+    # ── 이벤트 (main.py 의 연결 지점과 같은 순서) ──
+    def alarm_start(self, level: int, details: str, fire_zone: Optional[str] = None) -> None:
+        """main.py _trigger_rag_alert: 첫 고정 안내("B구역에서 …") → 구역 대피로 안내."""
+        fire_zone = fire_zone or self.zone
+        self.alarm, self.alarm_level, self.fire_zone = True, level, fire_zone
         self.pub.publish_event(EVENT_ALARM_START, level=level, details=details,
-                               text=FIRST_GUIDANCE, provider="fixed")
-        print(f"  ▶ alarm_start LV{level}")
+                               text=f"{fire_zone}구역에서 {FIRST_GUIDANCE}", provider="fixed",
+                               fire_zone=fire_zone, local_zone=self.zone)
+        exit_name = "동쪽" if fire_zone != self.zone else "서쪽"
+        self.pub.publish_event(EVENT_GUIDANCE, text=ZONE_ROUTE.format(local=self.zone, exit=exit_name),
+                               provider="zone", emergency=True, fire_zone=fire_zone, local_zone=self.zone)
+        print(f"  ▶ alarm_start LV{level} (화재 {fire_zone}구역)")
+
+    def warning(self) -> None:
+        """main.py _handle_vision_warning: Level 2 고정 경고 음성 1회."""
+        self.pub.publish_event(EVENT_WARNING, level=2, details="[비전 조기 감지] 상방 확산 연기 | 센서 반응 전 선제 경고",
+                               text=WARNING_SMOKE.format(zone=self.zone), provider="fixed",
+                               fire_zone=self.zone, local_zone=self.zone)
+        print("  ▶ warning (Level 2)")
 
     def guidance(self, provider: str, fallback_reason: str, text: str) -> None:
         self.pub.publish_event(EVENT_GUIDANCE, text=text, provider=provider,
-                               fallback_reason=fallback_reason, emergency=True)
+                               fallback_reason=fallback_reason, emergency=True,
+                               fire_zone=self.fire_zone or self.zone, local_zone=self.zone)
         print(f"  ▶ guidance {provider} ({fallback_reason or '-'})")
 
     def alarm_end(self) -> None:
-        self.alarm, self.alarm_level = False, 0
+        self.alarm, self.alarm_level, self.fire_zone = False, 0, ""
         self.pub.publish_event(EVENT_ALARM_END)
         print("  ▶ alarm_end")
 
@@ -164,7 +183,7 @@ class FakeEdge:
             shown = max(p.level, self.alarm_level) if self.alarm else p.level
             self.pub.publish_monitor(
                 temp=temp, gas=gas, smoke=smoke, risk=risk, analysis=p.vision,
-                level=shown, alarm=self.alarm,
+                level=shown, alarm=self.alarm, fire_zone=self.fire_zone,
                 # OpenCV putText 는 한글을 못 그려서 영상 라벨은 영문으로
                 frame=self.frame(p.frame, f"{p.frame.upper()} LV{shown}"),
             )
@@ -173,30 +192,34 @@ class FakeEdge:
 
 def scenario(zone: str) -> list[Phase]:
     box = [240, 130, 360, 260]
-    safe = _vision("SAFE", desc="화재나 연기 객체가 감지되지 않았습니다. (안전 구역)")
+    safe = _vision("SAFE")
+    other = "B" if zone != "B" else "C"
     return [
         Phase("정상", 8, 80, 125, 24.0, safe, 0, "모든 센서 및 비전 정상"),
         Phase("사진 오탐 차단", 6, 80, 125, 24.0,
-              _vision("STATIC_PHOTO_BLOCKED", photo=True, conf=0.71, box=[220, 110, 360, 260],
-                      desc="🛡️ [사진 오탐 차단] 정지된 영상/사진 감지 (움직임 없음 - 오경보 차단)"),
-              0, "🛡️ 카메라 정지 사진 감지 (움직임 없음 - 오경보 차단 중)", frame="photo"),
+              _vision("STATIC_PHOTO_BLOCKED", photo=True, conf=0.71, box=[220, 110, 360, 260]),
+              0, "카메라 사진/강체 오탐 차단 중", frame="photo"),
         Phase("조기 연기 감지", 8, 140, 150, 25.0,
-              _vision("REAL_SMOKE_RISING", fire=True, smoke=True, conf=0.58, box=box,
-                      desc="🚨 [조기 감지] 미세 연기 상방 확산 포착 (확신도: 58.0%)"),
-              2, "🚨 [비전 조기 감지] 피어오르는 미세 연기 기둥 포착 (센서 도달 전 선제 경보)",
-              early=True, frame="smoke"),
+              _vision("REAL_SMOKE_RISING", smoke=True, conf=0.58, box=box),
+              2, "[비전 조기 감지] 상방 확산 연기 | 센서 반응 전 선제 경고",
+              early=True, frame="smoke", on_enter=lambda e: e.warning()),
         Phase("화재 확정", 10, 550, 600, 75.0,
-              _vision("REAL_FIRE_FLICKERING", fire=True, conf=0.86, box=box,
-                      desc="🚨 [로컬 감지] 위험 요소: [FIRE, SMOKE] (AI 확신도: 86.0%)"),
-              5, "🚨 대형 재난 화재 확정! (비전 감지 + 연기센서(천장), 가스센서, 고온감지)",
+              _vision("REAL_FIRE_FLICKERING", fire=True, conf=0.86, box=box),
+              5, "검증된 불꽃 | 센서 교차 검증: 연기센서(천장), 가스센서, 고온감지",
               frame="fire",
-              on_enter=lambda e: e.alarm_start(5, "🚨 대형 재난 화재 확정! (비전 감지 + 연기센서(천장), 가스센서, 고온감지)"),
-              at=(4, lambda e: e.gemini_fallback(LOCAL_GUIDANCE.format(zone=zone)))),
+              on_enter=lambda e: e.alarm_start(5, "검증된 불꽃 | 센서 교차 검증: 연기센서(천장), 가스센서, 고온감지"),
+              at=(4, lambda e: e.gemini_fallback(LOCAL_GUIDANCE))),
         Phase("카메라 오프라인", 5, 520, 580, 70.0,
               {"status": "CAMERA_OFFLINE", "fire_detected": False},
-              4, "🔥 실제 화재 확정! (카메라 오프라인, 센서 유지)", frame="none"),
-        Phase("정상 복귀", 8, 80, 125, 26.0, safe, 0, "모든 센서 및 비전 정상",
+              3, "센서 복합 반응: 연기센서(천장), 가스센서, 고온감지", frame="none"),
+        Phase("정상 복귀", 8, 80, 125, 26.0, safe, 0, "확정된 센서 및 비전 위험 없음",
               at=(2, lambda e: e.alarm_end())),
+        # 다른 Pi 의 HTTP 경보 수신 (main.py handle_fire_event): 이 구역 센서·비전은 정상이지만 경보·방송
+        Phase(f"{other}구역 화재 수신", 10, 80, 125, 25.0, safe, 0, "확정된 센서 및 비전 위험 없음",
+              on_enter=lambda e: e.alarm_start(4, f"검증된 불꽃 | 센서 교차 검증: 고온감지 ({other}구역 노드)",
+                                                fire_zone=other),
+              at=(7, lambda e: e.alarm_end())),
+        Phase("정상", 3, 80, 125, 24.0, safe, 0, "확정된 센서 및 비전 위험 없음"),
     ]
 
 

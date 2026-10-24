@@ -1,0 +1,5 @@
+# Export tools only; install in the project's prepared Python environment.
+# Matches the exporter used for the 2026-10-18 fire_smoke NCNN artifact.
+ultralytics==8.4.22
+ncnn==1.0.20260526
+pnnx==20260526

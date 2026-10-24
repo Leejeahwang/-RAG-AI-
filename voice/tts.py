@@ -11,6 +11,8 @@ import tempfile
 import threading
 import time
 import uuid
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 import pygame
 import config
@@ -18,11 +20,19 @@ from voice.ppaso_wrapper import PpasoEngine
 
 _LOGGER = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class _Replay:
+    group: int
+    generation: int
+
+
 class TTSHelper:
     def __init__(self, rate=None, volume=1.0):
         self._engine_type = config.TTS_ENGINE
         self._prefer_gemini = config.GEMINI_TTS_ENABLED
         self._gemini_failure_until = 0.0
+        self._gemini_last_error = ""
         self._rate = rate or config.TTS_RATE
         self._volume = volume
         self._queue = queue.Queue(maxsize=32)
@@ -35,6 +45,9 @@ class TTSHelper:
         self.last_error = ""
         self._temp_dir = Path(tempfile.gettempdir()) / "edge_saver_tts"
         self._temp_dir.mkdir(exist_ok=True)
+        self._audio_cache_dir = tempfile.TemporaryDirectory(prefix='event_audio_', dir=self._temp_dir)
+        self._audio_cache = {}
+        self._audio_group = None
         if self._engine_type == "PPASO":
             self._ppaso_engine = PpasoEngine()
             if not self._ppaso_engine.initialized:
@@ -48,7 +61,7 @@ class TTSHelper:
             raise ValueError(f"Unknown TTS_ENGINE: {self._engine_type}")
         self._worker_thread = threading.Thread(target=self._worker, name="tts", daemon=True)
         self._worker_thread.start()
-        print(f"[TTS] actual engine: {self._engine_type}")
+        print(f"[TTS] 로컬 엔진: {self._engine_type} | Gemini TTS 우선: {'켜짐' if self._prefer_gemini else '꺼짐'}")
 
     def _valid(self, generation):
         return not self._stop_event.is_set() and generation == self._generation
@@ -61,15 +74,18 @@ class TTSHelper:
     def set_engine(self, engine_type):
         """Switch engines without allowing cancelled work to use a new engine."""
         engine_type = engine_type.strip().upper()
-        if engine_type not in {"AUTO", "PPASO", "PYTTSX3"}:
-            raise ValueError("TTS engine must be AUTO, PPASO or PYTTSX3")
-        if engine_type == "AUTO":
+        if engine_type not in {"AUTO", "GEMINI", "PPASO", "PYTTSX3"}:
+            raise ValueError("TTS engine must be AUTO, GEMINI, PPASO or PYTTSX3")
+        if engine_type in {"AUTO", "GEMINI"}:
+            if engine_type == "GEMINI" and not config.GEMINI_API_KEY:
+                raise RuntimeError("GEMINI_API_KEY가 필요합니다")
             with self._lock:
                 if self._stop_event.is_set():
                     raise RuntimeError("TTS is closed")
                 self.stop()
-                self._prefer_gemini = config.GEMINI_TTS_ENABLED
+                self._prefer_gemini = engine_type == "GEMINI" or config.GEMINI_TTS_ENABLED
                 self._gemini_failure_until = 0.0
+                self._gemini_last_error = ""
                 return True
         # Prepare before cancelling playback so a failed switch preserves it.
         if engine_type == "PPASO" and self._ppaso_engine is None:
@@ -95,18 +111,19 @@ class TTSHelper:
         if not parts or parts[0].lower() != "/tts":
             return None
         if len(parts) == 1:
-            policy = "Gemini 답변은 Gemini TTS 우선" if self._prefer_gemini else "로컬 고정"
-            return f"[TTS] {policy} / 로컬 엔진: {self.engine_type} | /tts auto | ppaso | pyttsx3"
-        if len(parts) != 2 or parts[1].lower() not in {"auto", "ppaso", "pyttsx3"}:
-            return "[TTS] 사용법: /tts | /tts auto | /tts ppaso | /tts pyttsx3"
+            policy = "Gemini 답변·첫 비상 안내·구역 안내는 Gemini TTS 우선" if self._prefer_gemini else "로컬 고정"
+            detail = f" / 최근 Gemini 실패: {self._gemini_last_error}" if self._gemini_last_error else ""
+            return f"[TTS] {policy} / 로컬 엔진: {self.engine_type}{detail} | /tts auto | gemini | ppaso | pyttsx3"
+        if len(parts) != 2 or parts[1].lower() not in {"auto", "gemini", "ppaso", "pyttsx3"}:
+            return "[TTS] 사용법: /tts | /tts auto | /tts gemini | /tts ppaso | /tts pyttsx3"
         try:
             changed = self.set_engine(parts[1])
-            mode = "Gemini 답변은 Gemini TTS 우선" if self._prefer_gemini else self.engine_type
+            mode = "Gemini 답변·첫 비상 안내·구역 안내는 Gemini TTS 우선" if self._prefer_gemini else self.engine_type
             return f"[TTS] {'엔진 전환' if changed else '현재 엔진 유지'}: {mode}"
         except Exception as exc:
             return f"[TTS] 전환 실패: {exc} (현재 엔진: {self.engine_type})"
 
-    def _play_file(self, path, generation):
+    def _play_file(self, path, generation, on_ready=None):
         with self._lock:
             if not self._valid(generation):
                 return
@@ -114,6 +131,8 @@ class TTSHelper:
                 pygame.mixer.init()
             pygame.mixer.music.load(str(path))
             pygame.mixer.music.set_volume(self._volume)
+            if on_ready:
+                on_ready()
             pygame.mixer.music.play()
         while True:
             with self._lock:
@@ -153,7 +172,21 @@ class TTSHelper:
                 continue
             path = None
             try:
-                text, lang, speed, generation, provider = item
+                if isinstance(item, _Replay):
+                    with self._lock:
+                        if not self._valid(item.generation) or item.group != self._audio_group:
+                            continue
+                        self._is_speaking = True
+                        self.last_error = ''
+                        clips = [self._audio_cache[key] for key in ('first', 'zone', 'rules')
+                                 if key in self._audio_cache]
+                    for cached_path, engine in clips:
+                        if not self._valid(item.generation):
+                            break
+                        print(f'[TTS] 저장 음성 재생: {engine}', flush=True)
+                        self._play_file(cached_path, item.generation)
+                    continue
+                text, lang, speed, generation, provider, on_ready, cache_key = item
                 with self._lock:
                     if not self._valid(generation):
                         continue
@@ -161,7 +194,7 @@ class TTSHelper:
                     self.last_error = ""
                     engine_type = self._engine_type
                     local_engine = self._ppaso_engine if engine_type == "PPASO" else self._melo_engine
-                    use_gemini = self._prefer_gemini and provider == "gemini"
+                    use_gemini = self._prefer_gemini and provider in {"gemini", "emergency", "zone"}
                 text = self._sanitize_text(text, lang)
                 if not text:
                     continue
@@ -174,29 +207,36 @@ class TTSHelper:
                         self._gemini_failure_until = time.monotonic() + config.GEMINI_TTS_RETRY_COOLDOWN
                         # Do not expose HTTP bodies, credentials, or answer text.
                         reason = str(exc) if isinstance(exc, RuntimeError) and str(exc).startswith("Gemini TTS HTTP ") else type(exc).__name__
+                        self._gemini_last_error = reason
                         _LOGGER.warning("Gemini TTS 실패 (%s), %s로 전환", reason, engine_type)
                     else:
+                        self._gemini_last_error = ""
                         if self._valid(generation):
                             print("[TTS] 재생 엔진: GEMINI", flush=True)
-                            self._play_file(path, generation)
+                            self._play_and_cache(path, generation, on_ready, cache_key, 'GEMINI')
                         continue
                     if not self._valid(generation):
                         continue
                 print(f"[TTS] 재생 엔진: {engine_type}", flush=True)
                 if engine_type == "PYTTSX3" or (engine_type == "PPASO" and lang != "ko"):
-                    if platform.system() == "Linux":
+                    if platform.system() == "Linux" or ((on_ready or cache_key) and platform.system() == "Windows"):
                         # eSpeak's direct playback uses aplay/ALSA, bypassing
                         # the SDL driver selected for remote desktop audio.
                         path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
                         self._system_speech(text, lang, speed, generation, output_path=path)
-                        self._play_file(path, generation)
+                        self._play_and_cache(path, generation, on_ready, cache_key, engine_type)
                     else:
+                        with self._lock:
+                            if not self._valid(generation):
+                                continue
+                            if on_ready:
+                                on_ready()
                         self._system_speech(text, lang, speed, generation)
                 else:
                     path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
                     if not local_engine.speak_to_file(text, str(path), lang=lang, speed=speed):
                         raise RuntimeError("Local speech synthesis failed")
-                    self._play_file(path, generation)
+                    self._play_and_cache(path, generation, on_ready, cache_key, engine_type)
             except Exception as exc:
                 self.last_error = str(exc)
                 _LOGGER.exception("TTS failed")
@@ -205,6 +245,50 @@ class TTSHelper:
                     path.unlink()
                 self._is_speaking = False
                 self._queue.task_done()
+
+    def _play_prepared(self, path, generation, on_ready):
+        if on_ready is None:
+            self._play_file(path, generation)
+        else:
+            self._play_file(path, generation, on_ready=on_ready)
+
+    def _play_and_cache(self, path, generation, on_ready, cache_key, engine):
+        self._play_prepared(path, generation, on_ready)
+        if cache_key is None:
+            return
+        group, part = cache_key
+        with self._lock:
+            if not self._valid(generation) or group != self._audio_group:
+                return
+            target = Path(self._audio_cache_dir.name) / f'{uuid.uuid4().hex}.wav'
+            shutil.copyfile(path, target)
+            previous = self._audio_cache.get(part)
+            self._audio_cache[part] = (target, engine)
+            if previous:
+                previous[0].unlink(missing_ok=True)
+
+    def begin_event_audio(self, group):
+        """Called after stop(); keep only this incident's completed speech files."""
+        with self._lock:
+            self.clear_event_audio(self._audio_group)
+            self._audio_group = group
+
+    def clear_event_audio(self, group):
+        with self._lock:
+            if group != self._audio_group:
+                return
+            for path, _ in self._audio_cache.values():
+                path.unlink(missing_ok=True)
+            self._audio_cache.clear()
+            self._audio_group = None
+
+    def replay_event_audio(self, group):
+        """Replay existing files only; never call cloud or local synthesis."""
+        with self._lock:
+            if self._stop_event.is_set() or group != self._audio_group or not self._audio_cache:
+                return False
+            self._queue.put_nowait(_Replay(group, self._generation))
+            return True
 
     def _sanitize_text(self, text, lang='ko'):
         """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거 및 발음 최적화"""
@@ -261,16 +345,16 @@ class TTSHelper:
         
         return text
 
-    def speak(self, text, lang="ko", speed=None, provider=None):
+    def speak(self, text, lang="ko", speed=None, provider=None, on_ready=None, cache_key=None):
         if not text:
             return
         with self._lock:
             if self._stop_event.is_set():
                 return
-            self._queue.put_nowait((text, lang, speed or 1.0, self._generation, provider))
+            self._queue.put_nowait((text, lang, speed or 1.0, self._generation, provider, on_ready, cache_key))
 
-    def speak_async(self, text, lang="ko", speed=None, provider=None):
-        self.speak(text, lang, speed, provider=provider)
+    def speak_async(self, text, lang="ko", speed=None, provider=None, on_ready=None, cache_key=None):
+        self.speak(text, lang, speed, provider=provider, on_ready=on_ready, cache_key=cache_key)
 
     def warmup(self):
         # Model initialization occurs in __init__; no audible startup phrase.
@@ -306,3 +390,6 @@ class TTSHelper:
         self._stop_event.set()
         self.stop()
         self._worker_thread.join(timeout=2)
+        with self._lock:
+            self.clear_event_audio(self._audio_group)
+            self._audio_cache_dir.cleanup()

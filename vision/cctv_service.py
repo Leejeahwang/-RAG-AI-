@@ -9,6 +9,7 @@ Edge Saver 비전 모듈 백그라운드 서비스 (cctv_service.py)
 
 import cv2
 import os
+import sys
 import time
 import datetime
 import threading
@@ -29,6 +30,32 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 latest_frame = None
 camera_running = True
 camera_offline = False
+_frame_lock = threading.Lock()
+_frame_acquired_at = 0.0
+_frame_sequence = 0
+
+
+def _publish_frame(frame):
+    global latest_frame, camera_offline, _frame_acquired_at, _frame_sequence
+    with _frame_lock:
+        latest_frame = frame
+        _frame_acquired_at = time.monotonic()
+        _frame_sequence += 1
+        camera_offline = False
+
+
+def _mark_camera_offline():
+    global latest_frame, camera_offline, _frame_acquired_at
+    with _frame_lock:
+        latest_frame = None
+        _frame_acquired_at = 0.0
+        camera_offline = True
+
+
+def frame_snapshot():
+    """Read frame, host acquisition-completion time, sequence and availability."""
+    with _frame_lock:
+        return latest_frame, _frame_acquired_at, _frame_sequence, camera_offline
 
 # OS 판별 전역 변수 추가
 is_linux = platform.system().lower() == "linux" or sys.platform.startswith("linux")
@@ -83,6 +110,7 @@ def camera_worker_thread():
     - Linux: GStreamer -> V4L2 -> 기본 폴백 시도 후, 최종 실패 시 rpicam-jpeg 명령어로 구동
     """
     global latest_frame, camera_running, camera_offline
+    _mark_camera_offline()
     
     cap = None
     success = False
@@ -178,7 +206,7 @@ def camera_worker_thread():
         if is_linux:
             print("⚠️ [경고] OpenCV로 카메라 장치를 열 수 없습니다. 라즈베리파이 5 전용 'rpicam-jpeg' 백엔드로 전환합니다.")
             use_rpicam = True
-            camera_offline = False
+            _mark_camera_offline()
         else:
             print("❌ [에러] 카메라 디바이스를 열 수 없습니다. 감시 기능 없이 센서 모드로 작동합니다.")
             camera_offline = True
@@ -200,24 +228,28 @@ def camera_worker_thread():
                 target_w = 640
                 target_h = int(h * (target_w / w))
                 resized_frame = cv2.resize(frame, (target_w, target_h))
-                latest_frame = resized_frame
+                _publish_frame(resized_frame)
             else:
+                _mark_camera_offline()
                 time.sleep(0.01)
         else:
             try:
                 # rpicam-jpeg 명령어를 사용해 메모리로 직접 사진 캡처 (라즈베리파이 5 최적화)
                 cmd = ["rpicam-jpeg", "-t", "1", "-n", "-o", "-", "--width", "640", "--height", "480"]
-                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
                 
                 if result.returncode == 0 and result.stdout:
                     image_array = np.frombuffer(result.stdout, dtype=np.uint8)
                     frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
                     if frame is not None:
-                        latest_frame = frame
+                        _publish_frame(frame)
                         rpicam_fail_count = 0  # 성공 시 카운트 리셋
+                    else:
+                        raise ValueError("rpicam-jpeg returned an invalid image")
                 else:
                     raise FileNotFoundError("rpicam-jpeg returned non-zero code or empty stdout")
             except Exception as e:
+                _mark_camera_offline()
                 rpicam_fail_count += 1
                 if rpicam_fail_count <= 3:
                     print(f"❌ [에러] rpicam 캡처 실패: {e}")
@@ -233,6 +265,7 @@ def camera_worker_thread():
             
     if not use_rpicam and cap is not None and cap.isOpened():
         cap.release()
+    _mark_camera_offline()
 
 def start_cctv_service(scan_interval_sec=5):
     """

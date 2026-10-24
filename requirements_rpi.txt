@@ -10,6 +10,8 @@
 # lgpio 소스 빌드 전에 sudo apt install -y liblgpio-dev swig
 # ultralytics와 동일한 OpenCV 배포판 사용. headless를 동시에 설치하지 마세요.
 -r requirements.txt
+# NCNN runtime is included above; pnnx is only needed when exporting on this Pi.
+# python -m pip install -r requirements_vision_export.txt
 
 # MCP3008 연기/가스 센서
 gpiozero

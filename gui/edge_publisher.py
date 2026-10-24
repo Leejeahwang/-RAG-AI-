@@ -18,7 +18,7 @@ main.py 연결 방법은 gui/MAIN_INTEGRATION.md 참고.
                          frame=frame if fresh else None)
     edge.publish_event("alarm_start", level=level, details=sensor_info,
                        text=EMERGENCY_GUIDANCE, provider="fixed")
-    edge.publish_guidance(result, emergency=job["emergency"])
+    edge.publish_guidance(result, emergency=job["emergency"], text=text)
     edge.publish_event("alarm_end")
     edge.close()                                   # cleanup() 에서
 """
@@ -34,6 +34,7 @@ from gui import mqtt_settings as S
 from gui.protocol import (
     AIState,
     ProviderState,
+    Zones,
     EVENT_ALARM_END,
     EVENT_ALARM_START,
     EVENT_GUIDANCE,
@@ -97,7 +98,9 @@ def encode_frame(
         try:
             x1, y1, x2, y2 = (int(v * scale) for v in box)
             if analysis.get("fire_detected"):
-                color = (0, 0, 255)          # 빨강: 화재/연기 판정
+                color = (0, 0, 255)          # 빨강: 검증된 불꽃
+            elif analysis.get("is_real_smoke"):
+                color = (0, 140, 255)        # 주황: 검증된 상승 연기 (감지 결과 계약 v1 은 fire_detected=false)
             elif analysis.get("is_static_photo"):
                 color = (0, 200, 255)        # 노랑: 사진 오탐 차단
             else:
@@ -122,6 +125,7 @@ class EdgePublisher:
         zone: str,
         *,
         sensor_mode: str = "demo",
+        detection_zone: Optional[str] = None,
         host: str = S.BROKER_HOST,
         port: int = S.BROKER_PORT,
         enabled: bool = S.PUBLISH_ENABLED,
@@ -132,6 +136,7 @@ class EdgePublisher:
     ) -> None:
         self.zone = zone
         self.sensor_mode = sensor_mode
+        self.detection_zone = detection_zone or zone
         self.host, self.port = host, port
         self.enabled = enabled
         self.status_interval = status_interval
@@ -237,6 +242,7 @@ class EdgePublisher:
         alarm: bool = False,
         frame: Any = None,
         sensor_mode: Optional[str] = None,
+        fire_zone: Optional[str] = None,
     ) -> None:
         """main.py _monitor_once 에서 매 주기 호출. 실제 발행은 STATUS_INTERVAL 마다,
         위험도·경보·조기감지 상태가 바뀌면 즉시."""
@@ -266,6 +272,8 @@ class EdgePublisher:
                 sensor_mode=sensor_mode or self.sensor_mode,
                 temp=temp, gas=gas, smoke=smoke, risk=risk, level=shown,
                 analysis=analysis or {}, alarm=alarm, ai=self.ai_state, provider=provider,
+                zones=Zones(local=self.zone, detection=self.detection_zone,
+                            fire=(fire_zone or "") if alarm else ""),
             )
             if self._publish(S.KIND_STATUS, payload, qos=0, retain=True):
                 self._last_key, self._last_status_at = key, now
@@ -274,7 +282,10 @@ class EdgePublisher:
 
     # ── 2. 사건 ──
     def publish_event(self, event_type: str, **fields: Any) -> None:
-        """alarm_start / guidance / alarm_end. 끊긴 동안에도 QoS1 로 쌓아 두었다가 보낸다."""
+        """alarm_start / guidance / warning / alarm_end. 끊긴 동안에도 QoS1 로 쌓아 두었다가 보낸다.
+
+        status 의 ai 는 Pi 가 반복 방송하는 내용(main.py _cached_evac_guidance)처럼
+        경보 시작 안내 → 구역 대피로 → 추가 대응 수칙을 이어 붙인다."""
         try:
             self.start()
             now = time.time()
@@ -284,7 +295,9 @@ class EdgePublisher:
                 if event_type == EVENT_ALARM_START:
                     self._ai = AIState(str(fields.get("text", "")), str(fields.get("provider", "fixed")), "", now)
                 elif event_type == EVENT_GUIDANCE and fields.get("emergency"):
-                    self._ai = AIState(str(fields.get("text", "")), str(fields.get("provider", "")),
+                    text = str(fields.get("text", ""))
+                    joined = "\n".join(filter(None, [self._ai.text, text]))
+                    self._ai = AIState(joined, str(fields.get("provider", "")),
                                        str(fields.get("fallback_reason", "")), now)
                 elif event_type == EVENT_ALARM_END:
                     self._ai = AIState()
@@ -327,6 +340,7 @@ class EdgePublisher:
                     info.wait_for_publish(timeout=_CLOSE_WAIT)
                 except Exception:
                     pass
+                self._connected = False   # 의도한 종료를 "연결 끊김" 경고로 남기지 않게 먼저 내림
                 client.disconnect()
                 client.loop_stop()
             else:
@@ -353,9 +367,10 @@ def get_publisher() -> EdgePublisher:
             try:
                 import config
                 zone, mode = config.ZONE_ID, config.SENSOR_MODE
+                detection = getattr(config, "DETECTION_ZONE_ID", zone)
             except Exception:
-                zone, mode = "A", "demo"
-            _default = EdgePublisher(zone, sensor_mode=mode)
+                zone, mode, detection = "A", "demo", "A"
+            _default = EdgePublisher(zone, sensor_mode=mode, detection_zone=detection)
         return _default
 
 
@@ -382,16 +397,23 @@ def publish_event(event_type: str, **kwargs: Any) -> None:
         LOG.debug("[edge] publish_event 실패", exc_info=True)
 
 
-def publish_guidance(result: Any, emergency: bool = False) -> None:
+def publish_guidance(result: Any, emergency: bool = False, text: Optional[str] = None, **fields: Any) -> None:
     """rag.provider.GuidanceResult 를 그대로 받는다. main.py 쪽에서 속성을 꺼내다
-    예외가 나면 이후 음성 안내까지 막히므로, 필드 읽기도 이 함수 안에서 한다."""
+    예외가 나면 이후 음성 안내까지 막히므로, 필드 읽기도 이 함수 안에서 한다.
+
+    text: 실제로 방송한 문장 (main.py 가 중복을 걸러 낸 결과). 주지 않으면 result.text.
+    비상 지침인데 방송할 문장이 비었으면 (AI 실패, 추가 수칙 없음) 보내지 않는다."""
     try:
+        spoken = str(getattr(result, "text", "") or "") if text is None else str(text or "")
+        if emergency and not spoken:
+            return
         publish_event(
             EVENT_GUIDANCE,
-            text=str(getattr(result, "text", "") or ""),
+            text=spoken,
             provider=str(getattr(result, "provider", "") or ""),
             fallback_reason=str(getattr(result, "fallback_reason", "") or ""),
             emergency=bool(emergency),
+            **fields,
         )
     except Exception:
         LOG.debug("[edge] publish_guidance 실패", exc_info=True)

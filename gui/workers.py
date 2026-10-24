@@ -60,14 +60,16 @@ class NativeQA:
 
     def __init__(self):
         from rag.native_retriever import rag_manager
-        from rag.loader import load_and_split
 
         self._rag = rag_manager
         self._rag.load_resources()
-        if not self._rag.index:
-            RUNTIME.add_log("📖 [RAG] 인덱스 없음 — 매뉴얼로 신규 구축")
-            chunks = load_and_split()
-            self._rag.build_index(chunks)
+        # main.py initialize() 와 같은 기준: 인덱스가 없거나 매뉴얼·구역 평면도가 바뀌었으면 다시 만든다.
+        # (예전에는 없을 때만 만들어, 팀원이 평면도를 고쳐도 관제사 답변에 반영되지 않았다)
+        if self._rag.index is None or getattr(self._rag, "index_needs_refresh", False):
+            from tools.rebuild_rag_index import main as rebuild_index
+            RUNTIME.add_log("📖 [RAG] 인덱스 없음 또는 매뉴얼·평면도 변경 — 검색 인덱스 다시 생성")
+            rebuild_index()
+            self._rag.load_resources()
         RUNTIME.add_log(f"✅ [RAG] Native 인덱스 준비 완료 ({len(self._rag.metadata)}개)")
 
     @staticmethod

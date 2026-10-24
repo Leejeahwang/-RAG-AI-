@@ -30,6 +30,7 @@ from gui.protocol import (
     EVENT_ALARM_END,
     EVENT_ALARM_START,
     EVENT_GUIDANCE,
+    EVENT_WARNING,
     EventMsg,
     OnlineMsg,
     Sensors,
@@ -252,7 +253,8 @@ class RuntimeState:
             z.events.append(msg)
             if msg.type == EVENT_ALARM_START:
                 z.alarm_since = z.alarm_since or rx
-                self._log(f"🚨 [{msg.zone}구역] 경보 시작 LV{msg.level} — {msg.details}")
+                where = (f" · 화재 {msg.fire_zone}구역 수신" if msg.fire_zone and msg.fire_zone != msg.zone else "")
+                self._log(f"🚨 [{msg.zone}구역] 경보 시작 LV{msg.level}{where} — {msg.details}")
             elif msg.type == EVENT_ALARM_END:
                 z.alarm_since = 0.0
                 self._log(f"✅ [{msg.zone}구역] 정상 복귀, 경보 종료")
@@ -260,6 +262,8 @@ class RuntimeState:
                 kind = "비상 지침" if msg.emergency else "현장 질의 답변"
                 reason = f" (전환 이유: {msg.fallback_reason})" if msg.fallback_reason else ""
                 self._log(f"🤖 [{msg.zone}구역] {kind} · {provider_label(msg.provider)}{reason}")
+            elif msg.type == EVENT_WARNING:
+                self._log(f"⚠️ [{msg.zone}구역] Level 2 비전 경고 방송 — {msg.text}")
             return True
 
     def apply_frame(self, zone: str, jpeg: bytes, rx: Optional[float] = None) -> None:

@@ -222,7 +222,7 @@ class LoopbackScenarioTests(unittest.TestCase):
 
     def test_full_scenario(self):
         rt = RuntimeState()
-        seen_levels, seen_ai, seen_offline = set(), [], []
+        seen_levels, seen_ai, seen_offline, seen_fire_zones, seen_texts = set(), [], [], set(), set()
 
         def sink(topic, payload):
             W.handle_message(topic, payload)
@@ -233,6 +233,9 @@ class LoopbackScenarioTests(unittest.TestCase):
                     seen_offline.append(v.status.risk.level)
                 if v.status.ai.text and (not seen_ai or seen_ai[-1] != v.status.ai.provider):
                     seen_ai.append(v.status.ai.provider)
+                if v.status.alarm:
+                    seen_fire_zones.add((v.status.zones.fire, v.status.zones.remote_fire))
+                    seen_texts.add(v.status.ai.text)
 
         client = FakeClient(sink=sink)
         with patch.object(W, "RUNTIME", rt), patch.object(fake_edge, "TICK", 0.01):
@@ -245,12 +248,26 @@ class LoopbackScenarioTests(unittest.TestCase):
                 edge.pub.close()
 
         v = rt.get_zone("A")
-        self.assertEqual([e.type for e in v.events], ["alarm_start", "guidance", "alarm_end"])
-        self.assertEqual(seen_levels, {0, 2, 5})
-        # 카메라 오프라인 단계(fusion LV4)도 경보 중이라 시작 단계 LV5 유지 (main.py 와 동일)
+        self.assertEqual([e.type for e in v.events], [
+            "warning",                                          # Level 2 비전 경고
+            "alarm_start", "guidance", "guidance", "alarm_end", # A구역 화재: 첫 안내 → 구역 대피로 → AI 수칙
+            "alarm_start", "guidance", "alarm_end",             # B구역 화재 수신: 첫 안내 → 구역 대피로
+        ])
+        self.assertEqual([e.provider for e in v.events if e.type == "guidance"], ["zone", "ollama", "zone"])
+        self.assertEqual([e.fire_zone for e in v.events if e.type == "alarm_start"], ["A", "B"])
+        # 0 정상, 2 조기 연기, 5 화재, 4 다른 구역 화재 수신 (이 구역은 정상이지만 경보 단계 유지)
+        self.assertEqual(seen_levels, {0, 2, 4, 5})
+        # 카메라 오프라인 단계도 경보 중이라 시작 단계 LV5 유지 (main.py 와 동일)
         self.assertTrue(seen_offline)
         self.assertEqual(set(seen_offline), {5})
-        self.assertEqual(seen_ai, ["fixed", "ollama"])
+        # 첫 안내와 구역 대피로는 연달아 오므로 status 의 출처는 마지막 것(zone)으로 보인다
+        self.assertEqual(seen_ai, ["zone", "ollama", "zone"])
+        # status 의 AI 지침은 Pi 의 반복 방송 내용처럼 첫 안내 + 구역 대피로 + AI 수칙을 이어 붙인다
+        full = max(seen_texts, key=len)
+        self.assertIn("A구역에서 화재 위험", full)
+        self.assertIn("A구역 대피로", full)
+        self.assertIn("자세를 낮추고", full)
+        self.assertEqual(seen_fire_zones, {("A", False), ("B", True)})
         self.assertEqual(v.status.risk.level, 0)
         self.assertFalse(v.status.alarm)
         self.assertEqual(v.alarm_since, 0)

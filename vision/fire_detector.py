@@ -1,295 +1,177 @@
-"""
-화재/연기 영상 판별 AI 모듈 (로컬 오프라인 YOLOv8 버전)
+"""Offline YOLO candidates confirmed by independent smoke/fire motion tracks.
 
-카메라로 촬영한 프레임에서 불꽃이나 연기를 감지합니다.
-Phase 3: 인터넷 연결 없이 라즈베리파이 로컬에서 ultralytics 모델 구동
+Contract v1: fire_detected/is_real_fire mean verified flame; is_real_smoke
+means verified rising smoke. Candidate, warming, blocked and error states never
+confirm a hazard. The explicit demo_bypass exception is demo-mode only.
 """
-
 import os
-import sys
-from contextlib import contextmanager
+import threading
+
+import config
+import cv2
+import numpy as np
+from vision.smoke_motion import SmokeMotionAnalyzer
+
 try:
     from ultralytics import YOLO
 except ImportError:
-    print("❌ [에러] ultralytics 라이브러리가 설치되지 않았습니다. 터미널에서 'pip install ultralytics' 를 실행하세요.")
+    YOLO = None
 
-# 로컬 모델 경로 설정 (vision/models 폴더)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-
-# 지원하는 모델 확장자 (tflite, onnx, ncnn 포맷으로 변환했을 경우 우선 사용)
-POSSIBLE_MODELS = [
-    os.path.join(MODEL_DIR, "fire_smoke.ncnn"),   # 가장 빠름 (라즈베리파이/NPU 최적화)
-    os.path.join(MODEL_DIR, "fire_smoke.tflite"), # 빠름
-    os.path.join(MODEL_DIR, "fire_smoke.onnx"),   # 🚀 1순위: YOLOv8n ONNX (PC/라즈베리파이 멀티플랫폼 초경량)
-    os.path.join(MODEL_DIR, "fire_smoke.pt"),      # 🚀 2순위: YOLOv8n 기본 가중치 (6.2MB 초경량)
-    os.path.join(MODEL_DIR, "best_nano_111.pt"),  # 🚀 3순위: YOLOv8n 서브 모델 (5.4MB 초경량)
-    os.path.join(MODEL_DIR, "fire_smoke_int8_openvino_model"),
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M_int8_openvino_model"),
-    os.path.join(MODEL_DIR, "YOLOv10-FireSmoke-M.pt"),
-]
-
+CONFIDENCE_THRESHOLD = 0.35
 model = None
-CONFIDENCE_THRESHOLD = 0.35  # 최소 35% 이상의 확신이 있을 때만 후보군으로 검토 (20% 미만 오탐 원천 차단)
-
-try:
-    from vision.smoke_motion import SmokeMotionAnalyzer
-except ImportError:
-    from smoke_motion import SmokeMotionAnalyzer
-
-# 모션 분석기 싱글톤 인스턴스 (연속 프레임 모션 추적용)
-_motion_analyzer = SmokeMotionAnalyzer(
-    min_motion_mag=0.4,
-    static_motion_ratio=0.04,
-    upward_ratio_threshold=0.50,
-    required_consecutive_frames=3
-)
-
-try:
-    # 가장 빠르고 가벼운 변환 포맷부터 파일이 존재하는지 찾아서 로드합니다.
-    loaded_model_path = None
-    for m_path in POSSIBLE_MODELS:
-        if os.path.exists(m_path):
-            loaded_model_path = m_path
-            break
-            
-    if loaded_model_path:
-        print(f"✅ [Vision AI] 오프라인 화재 모델 로드됨: {os.path.basename(loaded_model_path)}")
-        model = YOLO(loaded_model_path)
-    else:
-        print(f"⚠️ [경고] 모델 파일을 찾을 수 없습니다. {MODEL_DIR} 에 'fire_smoke.pt' 모델이 존재하는지 확인하세요.")
-except Exception as e:
-    print(f"❌ [에러] 모델 초기화 실패: {e}")
-
-@contextmanager
-def silence_fd():
-    """Redirects file descriptors 1 (stdout) and 2 (stderr) to /dev/null to silence C-level library logs."""
-    import platform
-    if platform.system() == "Windows":
-        try:
-            yield
-        except:
-            pass
-        return
-
+loaded_model_path = config.VISION_MODEL_PATH if os.path.exists(config.VISION_MODEL_PATH) else None
+if YOLO is not None and loaded_model_path:
     try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        old_stdout = os.dup(1)
-        old_stderr = os.dup(2)
-        os.dup2(devnull, 1)
-        os.dup2(devnull, 2)
-        try:
-            yield
-        finally:
-            os.dup2(old_stdout, 1)
-            os.dup2(old_stderr, 2)
-            os.close(devnull)
-            os.close(old_stdout)
-            os.close(old_stderr)
-    except:
-        yield
+        model = YOLO(loaded_model_path, task="detect")
+    except Exception as exc:
+        print(f"[Vision] 모델 초기화 실패: {exc}")
+elif loaded_model_path is None:
+    print(f"[Vision] 모델 없음: {config.VISION_MODEL_PATH}. tools/export_vision_ncnn.py로 변환하거나 모델 폴더를 배치하세요.")
+
+_lock = threading.RLock()
+_motion_analyzers = {
+    kind: SmokeMotionAnalyzer(static_motion_ratio=0.04)
+    for kind in ("fire", "smoke")
+}
+_previous_boxes = {}
+_last_shape = None
+
+
+def reset_motion():
+    """Discard temporal evidence after missing/stale frames or model errors."""
+    global _last_shape
+    with _lock:
+        for analyzer in _motion_analyzers.values():
+            analyzer.reset()
+        _previous_boxes.clear()
+        _last_shape = None
+
+
+def _result(status, description, **values):
+    result = dict(contract_version=1, fire_detected=False, is_real_fire=False,
+                  is_real_smoke=False, is_static_photo=False, demo_bypass=False,
+                  confidence=0.0, detected_classes=[], status=status,
+                  description=description, box=None, observations=[])
+    result.update(values)
+    return result
+
+
+def _overlap(a, b):
+    intersection = max(0, min(a[2], b[2])-max(a[0], b[0])) * max(0, min(a[3], b[3])-max(a[1], b[1]))
+    area_a = max(0, a[2]-a[0]) * max(0, a[3]-a[1])
+    area_b = max(0, b[2]-b[0]) * max(0, b[3]-b[1])
+    return intersection / max(1, area_a+area_b-intersection)
+
 
 def detect_fire(image_input):
-    """
-    이미지 파일 경로(str) 또는 메모리 상의 프레임(np.ndarray)에서 오프라인으로 화재(불꽃/연기)를 감지합니다.
-    (메모리 프레임 직접 전달 시 디스크 I/O 렉 제로 달성)
+    """Return a complete v1 result for a BGR ndarray or image file path.
 
-    Args:
-        image_input: 분석할 이미지 파일 경로(str) 또는 BGR 프레임(np.ndarray)
-
-    Returns:
-        dict: {
-            "fire_detected": bool,
-            "confidence": float (0.0~1.0),
-            "description": str (상황 설명),
-            "is_real_smoke": bool,
-            "is_static_photo": bool,
-            "detected_classes": list,
-            "status": str
-        }
+    Track the strongest candidate per class independently. A missing class or
+    disjoint replacement resets its track; this is not multi-object tracking.
     """
+    with _lock:
+        return _detect_fire(image_input)
+
+
+def _detect_fire(image_input):
+    global _last_shape
     if model is None:
-        return {
-            "fire_detected": False,
-            "confidence": 0.0,
-            "description": "모델 서버가 초기화되지 않았거나 로컬 모델 파일이 없습니다.",
-            "is_real_smoke": False,
-            "is_static_photo": False,
-            "detected_classes": [],
-            "status": "MODEL_NOT_INITIALIZED"
-        }
-
-    import numpy as np
-    import cv2
-
-    curr_img = None
-    predict_source = None
-
-    if isinstance(image_input, np.ndarray):
-        curr_img = image_input
-        predict_source = image_input
-    elif isinstance(image_input, str):
-        if not os.path.exists(image_input):
-            return {
-                "fire_detected": False,
-                "confidence": 0.0,
-                "description": "이미지 파일을 읽어올 수 없습니다.",
-                "is_real_smoke": False,
-                "is_static_photo": False,
-                "detected_classes": [],
-                "status": "FILE_NOT_FOUND"
-            }
-        curr_img = cv2.imread(image_input)
-        predict_source = image_input
+        reset_motion()
+        return _result("MODEL_NOT_INITIALIZED", "로컬 화재 모델을 사용할 수 없습니다.")
+    if isinstance(image_input, (str, os.PathLike)):
+        frame = cv2.imread(os.fspath(image_input))
+        if frame is None:
+            reset_motion()
+            return _result("FILE_NOT_FOUND", "이미지 파일을 읽어올 수 없습니다.")
+    elif isinstance(image_input, np.ndarray):
+        frame = image_input
     else:
-        return {
-            "fire_detected": False,
-            "confidence": 0.0,
-            "description": "유효하지 않은 이미지 입력입니다.",
-            "is_real_smoke": False,
-            "is_static_photo": False,
-            "detected_classes": [],
-            "status": "INVALID_INPUT"
-        }
-
+        frame = None
+    if (frame is None or frame.dtype != np.uint8 or frame.ndim != 3
+            or frame.shape[2] != 3 or min(frame.shape[:2]) < 10):
+        reset_motion()
+        return _result("INVALID_INPUT", "uint8 BGR 이미지가 필요합니다.")
+    if _last_shape != frame.shape:
+        reset_motion()
+        _last_shape = frame.shape
     try:
-        # 모델 예측 (오프라인, verbose=False로 콘솔 로그 방지 및 C-level 로그 억제)
-        with silence_fd():
-            results = model.predict(source=predict_source, conf=CONFIDENCE_THRESHOLD, save=False, verbose=False)
-        
-        if not results or len(results) == 0:
-            return {
-                "fire_detected": False,
-                "confidence": 0.0,
-                "description": "분석 결과가 반환되지 않았습니다.",
-                "is_real_smoke": False,
-                "is_static_photo": False,
-                "detected_classes": [],
-                "status": "NO_RESULT"
-            }
-            
+        results = model.predict(source=frame, conf=CONFIDENCE_THRESHOLD,
+                                imgsz=config.VISION_IMAGE_SIZE, rect=False,
+                                device="cpu", save=False, verbose=False)
+        if results is None or len(results) == 0:
+            reset_motion()
+            return _result("NO_RESULT", "분석 결과가 반환되지 않았습니다.")
         result = results[0]
-        boxes = result.boxes
-        
-        if len(boxes) == 0:
-            return {
-                "fire_detected": False,
-                "confidence": 0.0,
-                "description": "화재나 연기 객체가 감지되지 않았습니다. (안전 구역)",
-                "is_real_smoke": False,
-                "is_static_photo": False,
-                "detected_classes": [],
-                "status": "SAFE"
-            }
+        candidates = {}
+        h, w = frame.shape[:2]
+        for box in result.boxes:
+            confidence = float(box.conf[0])
+            name = result.names[int(box.cls[0])].lower()
+            kind = "smoke" if "smoke" in name else "fire" if "fire" in name or "flame" in name else None
+            if kind is None or not np.isfinite(confidence) or confidence < CONFIDENCE_THRESHOLD:
+                continue
+            raw_coords = box.xyxy[0]
+            if hasattr(raw_coords, "detach"):
+                raw_coords = raw_coords.detach().cpu().numpy()
+            coords = np.asarray(raw_coords, dtype=float)
+            if len(coords) != 4 or not np.all(np.isfinite(coords)):
+                raise ValueError("유효하지 않은 감지 좌표")
+            x1, y1, x2, y2 = coords.astype(int)
+            bbox = [max(0, min(w, x1)), max(0, min(h, y1)),
+                    max(0, min(w, x2)), max(0, min(h, y2))]
+            if kind not in candidates or confidence > candidates[kind][0]:
+                candidates[kind] = (confidence, bbox)
+    except Exception as exc:
+        reset_motion()
+        return _result("ANALYSIS_ERROR", f"로컬 모델 분석 오류: {exc}")
 
-        # 감지된 객체 분석
-        max_conf = 0.0
-        detected_classes = set()
-        smoke_box = None
-        
-        # 클래스 이름 딕셔너리 (예: {0: 'fire', 1: 'smoke'})
-        names = result.names 
+    for kind, analyzer in _motion_analyzers.items():
+        if kind not in candidates:
+            analyzer.reset()
+            _previous_boxes.pop(kind, None)
+    if not candidates:
+        return _result("SAFE", "화재나 연기 후보가 감지되지 않았습니다.")
 
-        for box in boxes:
-            conf = float(box.conf[0])
-            cls_id = int(box.cls[0])
-            cls_name = names[cls_id].upper()
-            
-            detected_classes.add(cls_name)
-            if conf > max_conf:
-                max_conf = conf
-            
-            if "SMOKE" in cls_name and smoke_box is None:
-                smoke_box = [int(v) for v in box.xyxy[0]]
+    observations = []
+    try:
+        for kind, (confidence, bbox) in candidates.items():
+            analyzer = _motion_analyzers[kind]
+            previous = _previous_boxes.get(kind)
+            if previous is not None and _overlap(previous, bbox) < 0.2:
+                analyzer.reset()
+            motion = analyzer.analyze(frame, bbox, class_name=kind)
+            _previous_boxes[kind] = bbox
+            observations.append(dict(kind=kind, confidence=round(confidence, 4),
+                box=bbox, status=motion.status, is_real_fire=motion.is_real_fire,
+                is_real_smoke=motion.is_real_smoke, is_static_photo=motion.is_static_photo,
+                consecutive_count=motion.consecutive_count,
+                upward_ratio=motion.upward_ratio, turbulence_score=motion.turbulence_score))
+    except Exception as exc:
+        reset_motion()
+        return _result("MOTION_ERROR", f"모션 검증 오류: {exc}")
 
-        # 모션 분석기(Optical Flow)를 통한 정지 사진 오탐 검증 및 훈소 연기 판정
-        is_real_smoke = False
-        is_static_photo = False
-        primary_box = [int(v) for v in boxes[0].xyxy[0]] if len(boxes) > 0 else None
+    fire = next((o for o in observations if o["is_real_fire"]), None)
+    smoke = next((o for o in observations if o["is_real_smoke"]), None)
+    chosen = fire or smoke or max(observations, key=lambda o: (not o["is_static_photo"], o["confidence"]))
+    shared = dict(confidence=chosen["confidence"], box=chosen["box"],
+                  detected_classes=sorted(kind.upper() for kind in candidates), observations=observations)
+    if fire:
+        return _result("REAL_FIRE_FLICKERING", "불꽃 난류의 연속 모션 검증 완료",
+                       fire_detected=True, is_real_fire=True, is_real_smoke=smoke is not None, **shared)
+    if smoke:
+        return _result("REAL_SMOKE_RISING", "상방 확산 연기 모션 검증 완료 (조기 감지)",
+                       is_real_smoke=True, **shared)
+    if config.SENSOR_MODE == "demo" and config.BYPASS_MOTION_FILTER:
+        return _result("DEMO_BYPASS", "시연용 모션 검증 우회 (실제 검증 결과 아님)",
+                       fire_detected=True, demo_bypass=True, **shared)
+    blocked = all(o["is_static_photo"] for o in observations)
+    return _result(chosen["status"], "사진/강체 움직임 차단" if blocked else "모션 검증 중",
+                   is_static_photo=blocked, **shared)
 
-        try:
-            if curr_img is not None:
-                target_box = smoke_box if smoke_box is not None else primary_box
-                motion_res = _motion_analyzer.analyze(curr_img, target_box, class_name="smoke" if smoke_box else "fire")
-                is_real_smoke = motion_res.is_real_smoke
-                is_static_photo = motion_res.is_static_photo
-                motion_status = motion_res.status
-        except Exception:
-            pass
-
-        # 시연/테스트 모드: config.BYPASS_MOTION_FILTER=True 시 스마트폰 화면도 화재로 감지 허용
-        try:
-            import config
-            if getattr(config, 'BYPASS_MOTION_FILTER', False):
-                is_static_photo = False
-        except:
-            pass
-
-        classes_str = ", ".join(detected_classes)
-
-        # 1. 정지 사진(모니터/스마트폰) 감지 시 오경보 차단!
-        if is_static_photo and not is_real_smoke:
-            return {
-                "fire_detected": False,
-                "confidence": round(max_conf, 2),
-                "description": f"🛡️ [사진 오탐 차단] 정지된 영상/사진 감지 (움직임 없음 - 오경보 차단)",
-                "is_real_smoke": False,
-                "is_static_photo": True,
-                "detected_classes": list(detected_classes),
-                "status": motion_status,
-                "box": primary_box
-            }
-
-        # 2. 미세 연기 상방 대류 감지 시 (초기 훈소 화재 조기 포착)
-        if is_real_smoke:
-            return {
-                "fire_detected": True,
-                "confidence": round(max_conf, 2),
-                "description": f"🚨 [조기 감지] 미세 연기 상방 확산 포착 (확신도: {max_conf*100:.1f}%)",
-                "is_real_smoke": True,
-                "is_static_photo": False,
-                "detected_classes": list(detected_classes),
-                "status": motion_status,
-                "box": primary_box
-            }
-
-        # 3. 확신도가 35% 미만인 미약한 감지인데 진짜 연기 상승도 아닌 경우 -> 오탐 차단 (안전 유지)
-        if max_conf < 0.35 and not is_real_smoke:
-            return {
-                "fire_detected": False,
-                "confidence": round(max_conf, 2),
-                "description": f"화재 위험성 낮음 (AI 확신도: {max_conf*100:.1f}%, 안전 기준치 35% 미만)",
-                "is_real_smoke": False,
-                "is_static_photo": False,
-                "detected_classes": list(detected_classes),
-                "status": motion_status,
-                "box": primary_box
-            }
-
-        return {
-            "fire_detected": True,
-            "confidence": round(max_conf, 2),
-            "description": f"🚨 [로컬 감지] 위험 요소: [{classes_str}] (AI 확신도: {max_conf*100:.1f}%)",
-            "is_real_smoke": is_real_smoke,
-            "is_static_photo": is_static_photo,
-            "detected_classes": list(detected_classes),
-            "status": motion_status,
-            "box": primary_box
-        }
-
-    except Exception as e:
-        return {
-            "fire_detected": False,
-            "confidence": 0.0,
-            "description": f"AI 분석 중 로컬 처리 오류 발생: {str(e)}",
-            "box": None
-        }
 
 def warmup():
-    """시스템 부팅 시 첫 추론 지연 및 ONNX Runtime 로그를 사전 처리하는 예열 함수"""
-    import numpy as np
-    dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+    """Warm the model without preserving synthetic motion history."""
     try:
-        detect_fire(dummy)
-    except:
-        pass
+        return detect_fire(np.zeros((480, 640, 3), dtype=np.uint8))
+    finally:
+        reset_motion()

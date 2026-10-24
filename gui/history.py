@@ -4,6 +4,7 @@ gui/history.py
 수신한 event 를 "경보 1건" 단위로 묶는다 (경보 이력 패널용).
 
     alarm_start ─ guidance(비상) ─ guidance ... ─ alarm_end   →  Incident 1건
+    warning (Level 2 비전 경고 방송)                           →  Incident 1건 (kind="warning")
 
 - 시각은 모두 Pi 가 보낸 ts 를 쓴다. 시작·종료가 같은 시계라 지속 시간이 정확하다.
 - 대시보드가 경보 도중에 켜져 alarm_start 를 못 받은 경우, status 의 alarm 플래그로
@@ -18,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, List, Optional
 
-from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE, EventMsg
+from gui.protocol import EVENT_ALARM_END, EVENT_ALARM_START, EVENT_GUIDANCE, EVENT_WARNING, EventMsg
 
 
 @dataclass
@@ -30,6 +31,8 @@ class Incident:
     guidances: List[EventMsg] = field(default_factory=list)
     end_unknown: bool = False          # 종료 event 를 놓쳤지만 status 는 이미 정상
     local_since: Optional[float] = None  # 진행 중일 때 관제 PC 시계 기준 시작 시각
+    kind: str = "alarm"                # alarm (Level 4·5 경보) | warning (Level 2 비전 경고)
+    fire_zone: str = ""                # 화재 구역 (다른 Pi 의 경보를 받은 경우 이 Pi 구역과 다름)
 
     @property
     def ongoing(self) -> bool:
@@ -69,7 +72,7 @@ def group_incidents(
             if current is not None and current.ongoing:
                 # 종료 없이 새 경보: 이전 경보는 새 경보 시작 시각에 끝난 것으로 본다
                 current.end_ts = ev.ts
-            current = Incident(start_ts=ev.ts, level=ev.level, details=ev.details)
+            current = Incident(start_ts=ev.ts, level=ev.level, details=ev.details, fire_zone=ev.fire_zone)
             if ev.text:
                 # 첫 고정 안내도 지침 목록 맨 앞에 보여 준다
                 current.guidances.append(ev)
@@ -84,6 +87,10 @@ def group_incidents(
                 current = Incident(start_ts=None)
                 incidents.append(current)
             current.end_ts = ev.ts
+        elif ev.type == EVENT_WARNING:
+            # 경보(current)와 별개인 한 번의 경고 방송. 진행 중 경보를 닫지 않는다.
+            incidents.append(Incident(start_ts=ev.ts, end_ts=ev.ts, level=ev.level, details=ev.details,
+                                      guidances=[ev], kind="warning", fire_zone=ev.fire_zone))
 
     if alarm_active:
         if current is None or not current.ongoing:
