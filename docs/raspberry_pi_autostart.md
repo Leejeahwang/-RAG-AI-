@@ -26,7 +26,7 @@ Pi에서 **일반 사용자로** 실행합니다. Python 명령 앞에 `sudo`를
 python tools/install_autostart.py --start
 ```
 
-설치 도구는 다음을 수행합니다.
+설치 도구는 다음을 수행합니다. 원격 데스크톱에서 실행하더라도 `/run/user/사용자UID/bus`를 사용해 부팅용 사용자 서비스 관리자에 연결합니다. 별도 원격 세션의 D-Bus 주소를 그대로 사용하지 않으며, 관리자가 없으면 linger 활성화 후 `sudo systemctl start user@사용자UID.service`로 시작합니다.
 
 1. 프로젝트의 `.venv-py311/bin/python` 또는 `.venv/bin/python`을 찾아 Python 3.11 가상환경인지 확인합니다. 다른 경로는 `--python /절대경로/bin/python`으로 지정합니다. 가상환경의 Python 심볼릭 링크를 시스템 Python 경로로 바꾸지 않습니다.
 2. 현재 사용자의 systemd 연결과 `audio`, `video`, `render` 그룹을 확인합니다. 부족하면 필요한 `sudo usermod -aG ... 사용자명` 명령을 표시하고 중단합니다. 그룹 변경 후 재부팅하고 설치 명령을 다시 실행합니다.
@@ -90,6 +90,13 @@ sudo systemctl enable --now ollama
 인터넷을 기다리느라 카메라 감시를 시작하지 못하게 하는 별도 네트워크 의존성은 추가하지 않았습니다. 다만 처음 모델을 내려받는 환경은 오프라인으로 준비될 수 없으므로 사전 다운로드가 필요합니다. 캐시 준비를 확인한 완전 오프라인 운영에서는 `.env`의 `HF_HUB_OFFLINE=1` 같은 기존 모델 캐시 설정을 별도로 검토할 수 있습니다.
 
 ## 5. 수동 실행·업데이트·해제
+
+원격 데스크톱 터미널에서 `systemctl --user`가 `Failed to get environment` 또는 `org.freedesktop.systemd1` 오류를 내면 다음 연결 변수를 해당 터미널에 먼저 설정합니다. 설치 도구는 이 경로를 자체적으로 사용하지만 부모 터미널 환경까지 변경하지 않습니다. 사용자 버스가 없어 계속 실패하면 `dbus-user-session` 패키지와 `systemctl status user@$(id -u).service`를 확인합니다.
+
+```bash
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+```
 
 수동 질문·데모를 확인하려면 자동 서비스를 먼저 중지합니다.
 

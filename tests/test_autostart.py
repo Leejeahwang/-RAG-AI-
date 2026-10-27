@@ -8,11 +8,35 @@ import unittest
 from unittest.mock import Mock, patch
 
 import main
-from tools.install_autostart import build_unit
+from tools.install_autostart import build_unit, connect_user_manager
 from tools.run_service import prepare_audio, select_sink
 
 
 class AutostartTests(unittest.TestCase):
+    def test_remote_private_bus_is_replaced_without_changing_parent_environment(self):
+        with patch.dict(os.environ, {'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/tmp/xrdp-private',
+                                     'XDG_RUNTIME_DIR': '/tmp/remote'}), \
+                patch('tools.install_autostart.subprocess.run', return_value=Mock(returncode=0)) as run:
+            env = connect_user_manager(1000)
+            self.assertEqual(env['DBUS_SESSION_BUS_ADDRESS'], 'unix:path=/run/user/1000/bus')
+            self.assertEqual(env['XDG_RUNTIME_DIR'], '/run/user/1000')
+            self.assertEqual(os.environ['XDG_RUNTIME_DIR'], '/tmp/remote')
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.kwargs['env'], env)
+
+    def test_missing_manager_is_started_then_rechecked(self):
+        with patch('tools.install_autostart.subprocess.run',
+                   side_effect=[Mock(returncode=1), Mock(returncode=0), Mock(returncode=0)]) as run:
+            connect_user_manager(1000)
+        self.assertEqual(run.call_args_list[1].args[0], ['sudo', 'systemctl', 'start', 'user@1000.service'])
+        self.assertEqual(run.call_args_list[2].kwargs['env']['XDG_RUNTIME_DIR'], '/run/user/1000')
+
+    def test_unavailable_user_bus_reports_actionable_error(self):
+        with patch('tools.install_autostart.subprocess.run',
+                   side_effect=[Mock(returncode=1), Mock(returncode=0), Mock(returncode=1)]):
+            with self.assertRaisesRegex(RuntimeError, 'dbus-user-session'):
+                connect_user_manager(1000)
+
     def test_service_run_survives_no_stdin_and_exits_when_stopped(self):
         app = main.EdgeSaver()
         initialized = threading.Event()

@@ -15,6 +15,25 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'edge-saver.service'
 
 
+def connect_user_manager(uid):
+    """xrdp may export a private session bus; use the boot user manager's bus."""
+    env = os.environ.copy()
+    env['XDG_RUNTIME_DIR'] = f'/run/user/{uid}'
+    env['DBUS_SESSION_BUS_ADDRESS'] = f'unix:path=/run/user/{uid}/bus'
+    probe = ['systemctl', '--user', 'show-environment']
+    def available():
+        return subprocess.run(probe, env=env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, text=True, timeout=15).returncode == 0
+    if not available():
+        print('[설치] 부팅용 사용자 서비스 관리자를 시작합니다.', flush=True)
+        subprocess.run(['sudo', 'systemctl', 'start', f'user@{uid}.service'], check=True)
+        if not available():
+            raise RuntimeError('사용자 systemd 연결 실패. dbus-user-session 설치 여부와 '
+                               f'systemctl status user@{uid}.service를 확인하세요. '
+                               '원격 데스크톱 재연결 또는 재부팅 후 다시 시도하세요.')
+    return env
+
+
 def _quote(value, command=False):
     value = str(value)
     if any(char in value for char in ('\n', '\r', '\x00')):
@@ -75,8 +94,6 @@ def main(argv=None):
         check=True, capture_output=True, text=True)
     if json.loads(info.stdout) != [[3, 11], True]:
         parser.error('--python에 Python 3.11 가상환경의 bin/python을 지정하세요.')
-    # Check the user's manager before writing a unit or asking sudo for linger.
-    subprocess.run(['systemctl', '--user', 'show-environment'], check=True, stdout=subprocess.DEVNULL)
     import pwd
     user = pwd.getpwuid(os.getuid()).pw_name
     import grp
@@ -90,20 +107,25 @@ def main(argv=None):
                             check=True, capture_output=True, text=True).stdout.strip()
     if linger != 'yes':
         subprocess.run(['sudo', 'loginctl', 'enable-linger', user], check=True)
+    manager_env = connect_user_manager(os.getuid())
     base = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home()/'.config')))/'systemd'/'user'
     base.mkdir(parents=True, exist_ok=True)
     target = base/SERVICE
     if target.exists() and target.read_text(encoding='utf-8') != unit:
         shutil.copy2(target, target.with_suffix('.service.bak'))
     target.write_text(unit, encoding='utf-8')
-    subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
-    subprocess.run(['systemctl', '--user', 'enable', SERVICE], check=True)
+    subprocess.run(['systemctl', '--user', 'daemon-reload'], env=manager_env, check=True)
+    subprocess.run(['systemctl', '--user', 'enable', SERVICE], env=manager_env, check=True)
     if args.start:
-        subprocess.run(['systemctl', '--user', 'restart', SERVICE], check=True)
+        subprocess.run(['systemctl', '--user', 'restart', SERVICE], env=manager_env, check=True)
     print(f'부팅 자동 실행 등록 완료: {target}')
     print('실행 준비 완료 여부: journalctl --user -u edge-saver.service -f')
     print('수동 실행 전 중지: systemctl --user stop edge-saver.service')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        print(f'자동 실행 등록 실패: {exc}', file=sys.stderr)
+        sys.exit(1)
