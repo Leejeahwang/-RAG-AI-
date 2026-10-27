@@ -1,5 +1,26 @@
 # Raspberry Pi 전원 켤 때 자동 실행
 
+## 터미널 창에서 기존 main.py 실행하기
+
+로그·질문 입력창을 보면서 기존 `/ai`, `/tts`, `test fire` 명령까지 쓰려면 이 방식을 사용합니다. Raspberry Pi 데스크톱 터미널의 프로젝트 폴더에서 실행하세요.
+
+```bash
+source .venv-py311/bin/activate
+python tools/install_terminal_autostart.py --start
+```
+
+등록돼 있던 `edge-saver.service`는 중지·해제하여 중복 실행을 막고, `~/.config/autostart/edge-saver-terminal.desktop`을 만듭니다. `--start`는 현재 데스크톱에도 LXTerminal을 열어 기존 가상환경 Python으로 `main.py`를 실행합니다. `--service`나 오디오 사전 대기 도구를 사용하지 않으며 기존 데스크톱 오디오 환경을 그대로 따릅니다. 수동으로 이미 실행한 앱은 먼저 `q`로 종료하세요.
+
+이후 **데스크톱 로그인 때** 터미널이 자동으로 열립니다. 전원을 켠 후 사용자 입력 없이 시작하려면 Pi의 부팅 대상을 데스크톱으로 설정하고 데스크톱 자동 로그인을 켜야 합니다. `sudo raspi-config` 또는 Raspberry Pi 설정의 Boot/Desktop Auto Login 항목을 사용하며, 메뉴 이름은 설치 버전에 따라 다릅니다. 이 설치 도구가 OS의 자동 로그인 설정을 임의로 바꾸지는 않습니다. [Raspberry Pi 공식 설정 안내](https://www.raspberrypi.com/documentation/computers/configuration.html)
+
+`q`나 창 닫기로 종료하면 다음 로그인 전까지 자동 재시작하지 않습니다. 다시 열려면 프로젝트 가상환경에서 `python tools/run_terminal.py`를 실행하세요. 등록 해제는 `~/.config/autostart/edge-saver-terminal.desktop` 파일을 제거하거나 `Hidden=true`로 바꾸면 됩니다. 기존 systemd 사용자 서비스는 이 방식으로 전환한 뒤 꺼진 상태를 유지합니다.
+
+원격 데스크톱이 별도 세션을 만들면 물리 화면의 터미널이 그 원격 화면에 그대로 나타나지는 않을 수 있습니다. 같은 프로젝트의 터미널 자동 실행은 잠금으로 한 번만 실행하며, 이미 다른 세션에 실행 중이면 중복 실행하지 않습니다. 원격 화면에서 새로 실행하려면 기존 세션의 앱을 먼저 종료하세요. 잠금은 이 도구로 실행한 터미널 간에 적용되므로 별도의 수동 `python main.py`는 중복 실행하지 않습니다.
+
+아래의 systemd 방식으로 되돌리려면 터미널 앱을 `q`로 종료하고 데스크톱 자동 실행 파일을 먼저 해제한 다음 `python tools/install_autostart.py --start`로 재등록합니다. 두 방식을 동시에 활성화하지 않습니다.
+
+## 화면 없는 백그라운드 서비스 방식
+
 `main.py --service`는 터미널 입력 없이 카메라·센서 감시, HTTP 경보 수신, 비상 음성 안내와 반복 방송을 실행합니다. 질문 입력·`/ai`·`/tts` 명령과 음성 질문을 항상 듣는 기능은 이 모드에 없습니다. 설정은 프로젝트의 `.env`를 사용합니다. 기존 `python main.py`와 `python main_test.py` 수동 실행도 유지합니다.
 
 설치 도구는 일반 사용자용 `edge-saver.service`를 등록하고 `linger`를 활성화합니다. 로그인·원격 데스크톱 연결 없이 사용자 서비스가 부팅 때 시작되게 하는 방식입니다. [systemd loginctl 설명](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20%5BUSER%E2%80%A6%5D)
