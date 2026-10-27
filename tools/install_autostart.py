@@ -107,7 +107,7 @@ def main(argv=None):
         return
     if sys.platform != 'linux' or os.geteuid() == 0:
         parser.error('라즈베리파이의 일반 사용자로 실행하세요. 이 스크립트 앞에 sudo를 붙이지 마세요.')
-    for tool in ('systemctl', 'loginctl', 'systemd-analyze') + (('pactl',) if args.audio == 'pulse' else ()):
+    for tool in ('systemctl', 'loginctl', 'systemd-analyze'):
         if not shutil.which(tool):
             parser.error(f'{tool}이 없습니다. 설치 환경과 오디오 방식을 확인하세요.')
     info = subprocess.run([str(python), '-c',
@@ -143,7 +143,7 @@ def main(argv=None):
     if args.start:
         subprocess.run(['systemctl', '--user', 'restart', SERVICE], env=manager_env, check=True)
     print(f'부팅 자동 실행 등록 완료: {target}')
-    print('실행 준비 완료 여부: journalctl --user -u edge-saver.service -f')
+    print('실행 준비 완료 여부: sudo journalctl _SYSTEMD_USER_UNIT=edge-saver.service _UID="$(id -u)" -b -f')
     print('수동 실행 전 중지: systemctl --user stop edge-saver.service')
 
 

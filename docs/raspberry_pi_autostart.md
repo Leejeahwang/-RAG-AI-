@@ -45,16 +45,16 @@ python tools/install_autostart.py --dry-run
 
 ## 3. 부팅 시 로컬 오디오
 
-기본 설정은 시험 환경인 Raspberry Pi OS의 PipeWire/PulseAudio 호환 출력을 사용합니다. `pipewire`, `pipewire-pulse`, `wireplumber` 사용자 서비스를 요청하고, `pactl`로 최대 45초간 출력 장치를 확인합니다. 준비되지 않으면 실패로 종료하고 systemd가 10초 뒤 재시도합니다. 앱이 오류로 종료돼도 자동 재시작하며, 관리자가 `systemctl stop`한 경우에는 다시 시작하지 않습니다. [systemd 서비스 재시작 정책](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=)
+기본 설정은 시험 환경인 Raspberry Pi OS의 PipeWire/PulseAudio 호환 출력을 사용합니다. `pipewire`, `pipewire-pulse`, `wireplumber` 사용자 서비스를 요청하고, `pactl`로 출력을 잠시 확인합니다. 오디오가 준비되지 않았거나 `pactl`이 없어도 경고를 남기고 `main.py --service`의 감시를 시작합니다. 오디오 대기 때문에 45초마다 종료·재시작하지 않습니다. 앱 자체가 오류로 종료되면 systemd가 10초 뒤 재시도하며, 관리자가 `systemctl stop`한 경우에는 다시 시작하지 않습니다. [systemd 서비스 재시작 정책](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=)
 
-기본 출력이 로컬 장치면 유지하고, 아니면 `alsa_output.*` 또는 `bluez_output.*` 중 로컬 장치를 선택합니다. `xrdp-sink`나 `auto_null`만 있으면 실행을 보류합니다. 프로그램 프로세스의 `PULSE_SINK`만 설정하며 시스템 전체 기본 장치를 바꾸지 않습니다. 여러 스피커가 연결돼 있으면 사용할 장치를 명시하는 것이 정확합니다.
+기존 수동 실행처럼 오디오 서버의 기본 출력을 사용하며 `xrdp-sink`도 허용합니다. 정상 기본 출력은 `PULSE_SINK`로 고정하지 않습니다. 기본 출력이 없거나 무음 출력(`auto_null`)이면 사용 가능한 다른 출력을 선택하며, 다른 출력도 없어도 감시는 시작합니다. `--pulse-sink`로 명시한 장치만 고정하고 시스템 전체 기본 장치는 바꾸지 않습니다. 여러 스피커가 연결돼 있으면 사용할 장치를 명시할 수 있습니다.
 
 ```bash
 pactl list short sinks
 python tools/install_autostart.py --pulse-sink alsa_output.실제_장치_이름 --start
 ```
 
-`pactl`이 없으면 기본 모드에 `pulseaudio-utils`가 필요합니다. 물리 스피커·HDMI·USB 사운드카드는 미리 연결하고 실제 재생으로 확인하세요. 원격 데스크톱의 PC 스피커와 현장 Pi의 스피커는 다른 출력입니다. Bluetooth는 부팅 시 재연결·프로필 설정도 별도로 확인해야 합니다.
+`pactl`은 출력 점검용 도구이며 없으면 점검만 생략합니다. 장치 목록 확인에는 `pulseaudio-utils`를 사용할 수 있습니다. 원격 데스크톱의 PC 스피커와 현장 Pi의 스피커는 다른 출력이며, 원격 연결이 없는 부팅 상황에서 현장에 소리를 내려면 실제 스피커를 연결해야 합니다. Bluetooth는 부팅 시 재연결·프로필 설정도 별도로 확인합니다. 감시 시작과 실제 음성 재생 성공은 구분하여 확인하세요.
 
 PipeWire가 없는 ALSA 전용 환경은 먼저 해당 사용자의 ALSA 기본 출력과 장치 접근 권한을 검증한 뒤 설치합니다.
 
@@ -62,7 +62,7 @@ PipeWire가 없는 ALSA 전용 환경은 먼저 해당 사용자의 ALSA 기본 
 python tools/install_autostart.py --audio alsa --start
 ```
 
-ALSA 모드는 접근 가능한 재생 장치가 생길 때까지 기다립니다. 장치 존재 확인만으로 배선·볼륨·기본 출력 설정까지 검증되는 것은 아닙니다.
+ALSA 모드도 접근 가능한 재생 장치를 잠시 확인한 뒤 감시를 시작합니다. 장치 존재 확인만으로 배선·볼륨·기본 출력 설정까지 검증되는 것은 아닙니다.
 
 ## 4. 실행·부팅 검증
 
@@ -71,6 +71,12 @@ systemctl --user is-enabled edge-saver.service
 loginctl show-user "$USER" -p Linger
 systemctl --user status edge-saver.service --no-pager
 journalctl --user -u edge-saver.service -f
+```
+
+위 명령이 `No journal files were found`라고 나오면 사용자 저널의 영구 저장 설정을 바꾸지 않고 시스템 저널에서 조회할 수 있습니다.
+
+```bash
+sudo journalctl _SYSTEMD_USER_UNIT=edge-saver.service _UID="$(id -u)" -b -f
 ```
 
 `enabled`, `Linger=yes`를 확인합니다. `active (running)`은 프로세스가 시작됐다는 뜻이며 모델·장치 준비 완료를 보장하지 않습니다. 로그의 `[서비스] 감지·경보·구역 안내 준비 완료`까지 확인하세요. 전원을 켠 순간부터 즉시 준비되는 것은 아니며 모델·인덱스 로딩 시간이 필요합니다.

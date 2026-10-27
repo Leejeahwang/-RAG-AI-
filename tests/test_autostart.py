@@ -111,28 +111,40 @@ class AutostartTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'WorkingDirectory path is not absolute'):
                 verify_unit(unit, {})
 
-    def test_boot_sink_selection_avoids_null_and_remote_output(self):
+    def test_sink_selection_uses_default_including_remote_output(self):
         sinks = [{'name': 'auto_null'}, {'name': 'xrdp-sink'}, {'name': 'alsa_output.usb-speaker'}]
-        self.assertEqual(select_sink(sinks, default='xrdp-sink'), 'alsa_output.usb-speaker')
-        self.assertIsNone(select_sink(sinks[:2]))
+        self.assertEqual(select_sink(sinks, default='xrdp-sink'), 'xrdp-sink')
+        self.assertEqual(select_sink(sinks[:2]), 'xrdp-sink')
+        self.assertIsNone(select_sink(sinks[:1]))
         self.assertEqual(select_sink(sinks, requested='xrdp-sink'), 'xrdp-sink')
         self.assertIsNone(select_sink(sinks, requested='missing-speaker'))
 
     def test_pulse_wait_sets_only_process_output_without_global_default_change(self):
         sink = 'alsa_output.usb-speaker'
-        outputs = [Mock(stdout=json.dumps([{'name': sink}])), Mock(stdout='xrdp-sink\n')]
+        outputs = [Mock(stdout=json.dumps([{'name': sink}])), Mock(stdout=sink+'\n')]
         with patch.dict(os.environ, {}, clear=True), patch('tools.run_service.shutil.which', return_value='/bin/pactl'), \
                 patch('tools.run_service.subprocess.run', side_effect=outputs) as command:
             prepare_audio('pulse', timeout=5)
             self.assertEqual(os.environ['SDL_AUDIODRIVER'], 'pulseaudio')
-            self.assertEqual(os.environ['PULSE_SINK'], sink)
+            self.assertNotIn('PULSE_SINK', os.environ)
             self.assertFalse(any('set-default-sink' in call.args[0] for call in command.call_args_list))
 
-    def test_audio_timeout_fails_for_systemd_to_retry(self):
-        with patch('tools.run_service.shutil.which', return_value='/bin/pactl'), \
-                patch('tools.run_service.time.monotonic', side_effect=[0, 46]):
-            with self.assertRaisesRegex(RuntimeError, '시간 초과'):
-                prepare_audio('pulse')
+    def test_audio_timeout_does_not_block_monitoring(self):
+        with patch.dict(os.environ), patch('tools.run_service.shutil.which', return_value='/bin/pactl'), \
+                patch('tools.run_service.time.monotonic', side_effect=[0, 6]):
+            self.assertFalse(prepare_audio('pulse'))
+
+    def test_missing_audio_probe_does_not_block_monitoring(self):
+        with patch.dict(os.environ), patch('tools.run_service.shutil.which', return_value=None):
+            self.assertFalse(prepare_audio('pulse'))
+
+    def test_launcher_runs_monitoring_even_if_no_audio_yet(self):
+        from tools.run_service import main as launch
+        with patch('tools.run_service.sys.platform', 'linux'), patch('tools.run_service.os.chdir'), \
+                patch('dotenv.load_dotenv'), patch('tools.run_service.prepare_audio', return_value=False), \
+                patch('tools.run_service.os.execv') as execute:
+            launch([])
+        self.assertEqual(execute.call_args.args[1][-1], '--service')
 
 
 if __name__ == '__main__':
