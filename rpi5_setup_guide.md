@@ -1,5 +1,7 @@
 # Raspberry Pi 5 설치·실행 가이드 — 현재 통합 버전
 
+**부팅 자동 실행:** 수동 실행과 현장 스피커를 먼저 확인한 뒤 [자동 실행 설치 안내](docs/raspberry_pi_autostart.md)에 따라 프로젝트 가상환경에서 `python tools/install_autostart.py --start`를 실행합니다. 각 Pi에 한 번 서비스 등록이 필요하며, 단순 `git pull`만으로 등록되지는 않습니다.
+
 2026-10-09 기준 안내입니다. Raspberry Pi의 Debian 13(trixie), aarch64, Python 3.11.17 환경에서 requirements 설치와 pip check, main_test.py의 RAG 검색·Gemini 답변·원격 PC TTS 재생을 확인했습니다. STT와 실제 카메라·센서·GPIO 동작은 미검증입니다. 세부 이전·MeCab 설치 절차는 [raspberry_pi_migration.md](raspberry_pi_migration.md)를 함께 사용합니다.
 
 ## 1. 코드와 실행 환경 준비

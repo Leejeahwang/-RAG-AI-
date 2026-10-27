@@ -12,6 +12,15 @@ def response(items):
 
 
 class ContextualTests(unittest.TestCase):
+    def test_multiple_fire_zones_are_sent_and_rendered_as_one_snapshot(self):
+        with patch.object(config, 'GEMINI_SEND_LAYOUT', True):
+            _, user, _, passages, facts = contextual_request('작업을 중단하십시오.', '화재',
+                {'fire_zone': 'C', 'fire_zones': ['C', 'A', 'A'], 'local_zone': 'B'}, True)
+        self.assertEqual(json.loads(user)['observed_zones']['fire_zones'], ['A', 'C'])
+        text = render_contextual(response([{'instruction_id': 1, 'guidance': passages[0]}]), passages, facts)
+        self.assertIn('화재 구역은 A·C구역', text)
+        self.assertIn('안내 구역은 B구역', text)
+
     def test_general_instruction_can_be_rephrased(self):
         text = render_contextual(response([{'instruction_id': 1, 'guidance': '즉시 작업을 멈추세요.'}]),
             ['즉시 작업을 중단하십시오.'], {'fire_zone': 'A', 'local_zone': 'B'})

@@ -17,6 +17,7 @@ from pathlib import Path
 import pygame
 import config
 from voice.ppaso_wrapper import PpasoEngine
+from voice.pronunciation import preserve_spoken_notation, local_pronunciation
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -195,6 +196,7 @@ class TTSHelper:
                     engine_type = self._engine_type
                     local_engine = self._ppaso_engine if engine_type == "PPASO" else self._melo_engine
                     use_gemini = self._prefer_gemini and provider in {"gemini", "emergency", "zone"}
+                source_text = text
                 text = self._sanitize_text(text, lang)
                 if not text:
                     continue
@@ -218,6 +220,10 @@ class TTSHelper:
                     if not self._valid(generation):
                         continue
                 print(f"[TTS] 재생 엔진: {engine_type}", flush=True)
+                if engine_type in {'PPASO', 'PYTTSX3'}:
+                    # Retain raw slashes/hyphens for reviewed terms such as
+                    # E/V and E-STOP; Gemini receives only common cleanup.
+                    text = self._sanitize_text(local_pronunciation(source_text, lang), lang)
                 if engine_type == "PYTTSX3" or (engine_type == "PPASO" and lang != "ko"):
                     if platform.system() == "Linux" or ((on_ready or cache_key) and platform.system() == "Windows"):
                         # eSpeak's direct playback uses aplay/ALSA, bypassing
@@ -293,6 +299,8 @@ class TTSHelper:
     def _sanitize_text(self, text, lang='ko'):
         """음성 출력을 위해 불필요한 특수문자 및 마크다운 기호 제거 및 발음 최적화"""
         if not text: return ""
+
+        text = preserve_spoken_notation(text, lang)
 
         # Emergency numbers are digit names, not a cardinal quantity. Preserve
         # quantities, decimal numbers, larger numbers and identifiers.

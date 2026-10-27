@@ -1,0 +1,98 @@
+"""No device/model loading or host service installation is performed here."""
+import json
+import os
+from pathlib import Path
+import signal
+import threading
+import unittest
+from unittest.mock import Mock, patch
+
+import main
+from tools.install_autostart import build_unit
+from tools.run_service import prepare_audio, select_sink
+
+
+class AutostartTests(unittest.TestCase):
+    def test_service_run_survives_no_stdin_and_exits_when_stopped(self):
+        app = main.EdgeSaver()
+        initialized = threading.Event()
+        with patch.object(app, 'initialize', side_effect=initialized.set), \
+                patch('main.PromptSession') as prompt, patch('builtins.input') as stdin:
+            thread = threading.Thread(target=app.run, kwargs={'service': True})
+            thread.start()
+            try:
+                self.assertTrue(initialized.wait(1))
+                self.assertTrue(thread.is_alive())
+                prompt.assert_not_called()
+                stdin.assert_not_called()
+            finally:
+                app._stop.set()
+                thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+
+    def test_sigterm_cleans_up_and_restores_handler(self):
+        app = Mock()
+        handlers = []
+        def register(sig, handler):
+            handlers.append(handler)
+            return signal.SIG_DFL
+        app.run.side_effect = lambda **kwargs: handlers[0](signal.SIGTERM, None)
+        with patch('main.EdgeSaver', return_value=app), patch('main.signal.signal', side_effect=register):
+            main.main(['--service'])
+        app.run.assert_called_once_with(service=True)
+        app.cleanup.assert_called_once()
+        self.assertEqual(handlers[-1], signal.SIG_DFL)
+
+    def test_init_failure_is_not_swallowed_and_still_cleans_up(self):
+        app = Mock()
+        app.run.side_effect = RuntimeError('initialization failed')
+        with patch('main.EdgeSaver', return_value=app), patch('main.signal.signal'):
+            with self.assertRaisesRegex(RuntimeError, 'initialization failed'):
+                main.main(['--service'])
+        app.cleanup.assert_called_once()
+
+    def test_user_unit_uses_venv_and_does_not_embed_secrets(self):
+        unit = build_unit('/home/raspi/My Project', '/home/raspi/My Project/.venv-py311/bin/python')
+        self.assertIn('WantedBy=default.target', unit)
+        self.assertIn('StandardInput=null', unit)
+        self.assertIn('Restart=on-failure', unit)
+        self.assertIn('"/home/raspi/My Project/.venv-py311/bin/python"', unit)
+        self.assertIn('run_service.py" --audio pulse', unit)
+        self.assertIn('UnsetEnvironment=PULSE_SINK', unit)
+        self.assertNotIn('GEMINI_API_KEY', unit)
+        self.assertNotIn('User=root', unit)
+        self.assertNotIn('EnvironmentFile=', unit)
+        with self.assertRaises(ValueError):
+            build_unit('/bad\npath', '/python')
+        escaped = build_unit('/home/50% $x', '/home/50% $x/bin/python')
+        self.assertIn('50%% $$x/bin/python', escaped)
+        self.assertIn('Environment="PULSE_SINK=alsa_output.test"',
+                      build_unit('/project', '/python', sink='alsa_output.test'))
+        self.assertNotIn('pipewire.service', build_unit('/project', '/python', audio='alsa'))
+
+    def test_boot_sink_selection_avoids_null_and_remote_output(self):
+        sinks = [{'name': 'auto_null'}, {'name': 'xrdp-sink'}, {'name': 'alsa_output.usb-speaker'}]
+        self.assertEqual(select_sink(sinks, default='xrdp-sink'), 'alsa_output.usb-speaker')
+        self.assertIsNone(select_sink(sinks[:2]))
+        self.assertEqual(select_sink(sinks, requested='xrdp-sink'), 'xrdp-sink')
+        self.assertIsNone(select_sink(sinks, requested='missing-speaker'))
+
+    def test_pulse_wait_sets_only_process_output_without_global_default_change(self):
+        sink = 'alsa_output.usb-speaker'
+        outputs = [Mock(stdout=json.dumps([{'name': sink}])), Mock(stdout='xrdp-sink\n')]
+        with patch.dict(os.environ, {}, clear=True), patch('tools.run_service.shutil.which', return_value='/bin/pactl'), \
+                patch('tools.run_service.subprocess.run', side_effect=outputs) as command:
+            prepare_audio('pulse', timeout=5)
+            self.assertEqual(os.environ['SDL_AUDIODRIVER'], 'pulseaudio')
+            self.assertEqual(os.environ['PULSE_SINK'], sink)
+            self.assertFalse(any('set-default-sink' in call.args[0] for call in command.call_args_list))
+
+    def test_audio_timeout_fails_for_systemd_to_retry(self):
+        with patch('tools.run_service.shutil.which', return_value='/bin/pactl'), \
+                patch('tools.run_service.time.monotonic', side_effect=[0, 46]):
+            with self.assertRaisesRegex(RuntimeError, '시간 초과'):
+                prepare_audio('pulse')
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -33,7 +33,7 @@ def layout_for_question(question: str) -> str:
     return layout_for_zone(question)
 
 
-def evacuation_for_zone(zone: str, fire_zone: str | None = None) -> str:
+def evacuation_for_zone(zone: str, fire_zone: str | None = None, fire_zones=None) -> str:
     """Copy routes, precautions and extinguisher locations from the listener's zone."""
     layout = layout_for_zone(zone)
     lines = []
@@ -64,7 +64,16 @@ def evacuation_for_zone(zone: str, fire_zone: str | None = None) -> str:
     # Keep evacuation first; announce existing equipment without inferring suitability.
     lines.extend(f"{zone_id}구역 소화기 위치: {location}" for location in extinguisher_locations)
     prefix = f"{zone_id}구역 대피 안내."
-    if fire_zone:
+    if fire_zones:
+        fires = sorted(set(fire_zones))
+        if any(fire not in ('A', 'B', 'C') for fire in fires):
+            raise ValueError("알 수 없는 화재 구역")
+        prefix = f"화재 감지 구역은 {'·'.join(fires)}구역입니다. 현재 안내 구역은 {zone_id}구역입니다."
+        others = [fire for fire in fires if fire != zone_id]
+        if others:
+            prefix += f" {'·'.join(others)}구역으로 접근하지 마십시오."
+        prefix += " 다음은 등록된 대피로이며, 현재 통로의 안전 여부가 확인된 것은 아닙니다."
+    elif fire_zone:
         fire_id = zone_from_text(fire_zone)
         if not fire_id:
             raise ValueError("알 수 없는 화재 구역")
