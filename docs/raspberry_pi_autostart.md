@@ -4,7 +4,7 @@
 
 설치 도구는 일반 사용자용 `edge-saver.service`를 등록하고 `linger`를 활성화합니다. 로그인·원격 데스크톱 연결 없이 사용자 서비스가 부팅 때 시작되게 하는 방식입니다. [systemd loginctl 설명](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20%5BUSER%E2%80%A6%5D)
 
-현재 구현은 Windows에서 서비스 모드·종료·서비스 내용·오디오 선택 로직을 테스트했습니다. 실제 Pi의 재부팅, 카메라·센서·스피커까지 포함한 검증은 아래 절차로 진행해야 합니다.
+현재 구현은 Windows에서 서비스 모드·종료·오디오 선택 로직을 테스트하고, WSL Ubuntu의 실제 systemd 255 검사기에서 서비스 구문을 확인했습니다. 이전 WorkingDirectory 따옴표 오류의 재현과 수정 후 검사 통과를 확인했으며 설치 시에도 대상 Pi에서 검사합니다. 실제 Pi의 재부팅, 카메라·센서·스피커까지 포함한 검증은 아래 절차로 진행해야 합니다.
 
 ## 1. 기존 환경 확인
 
@@ -32,6 +32,8 @@ python tools/install_autostart.py --start
 2. 현재 사용자의 systemd 연결과 `audio`, `video`, `render` 그룹을 확인합니다. 부족하면 필요한 `sudo usermod -aG ... 사용자명` 명령을 표시하고 중단합니다. 그룹 변경 후 재부팅하고 설치 명령을 다시 실행합니다.
 3. 로그인 없이 부팅 때 시작하도록 필요한 경우 `sudo loginctl enable-linger 사용자명`을 실행합니다. 이 단계에서 비밀번호를 물을 수 있습니다.
 4. `~/.config/systemd/user/edge-saver.service`를 기록하고 활성화합니다. 변경된 기존 파일은 `.service.bak`으로 보관합니다. `--start`가 있으면 현재 서비스도 시작/재시작합니다.
+
+서비스 파일은 기록 전에 `systemd-analyze --user verify`로 검사합니다. `WorkingDirectory`는 명령줄 인자와 달리 경로 전체를 따옴표로 감싸지 않습니다. 이전 설치에서 `bad unit file setting`으로 실패했다면 최신 설치 도구를 다시 실행해 파일을 교체합니다. 성공 시 기존 실패 상태도 초기화합니다.
 
 서비스 파일에 API 키를 복사하지 않으며 프로그램은 기존 프로젝트의 `.env`를 직접 읽습니다. **업데이트만으로 각 Pi에 서비스가 등록되지는 않으므로 이 설치는 Pi마다 한 번 필요합니다.**
 

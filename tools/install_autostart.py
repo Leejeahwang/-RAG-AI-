@@ -6,10 +6,11 @@ The installer never writes .env or runs the application as root.
 import argparse
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'edge-saver.service'
@@ -44,6 +45,26 @@ def _quote(value, command=False):
     return '"' + value + '"'
 
 
+def _working_directory(value):
+    # Unlike ExecStart, WorkingDirectory's parser does not remove quotes.
+    # Spaces are part of this single path value, not shell argument separators.
+    value = str(value)
+    if not value.startswith('/') or any(char in value for char in ('\n', '\r', '\x00', '\\')):
+        raise ValueError('WorkingDirectory에는 Linux 절대 경로를 사용하세요.')
+    return value.replace('%', '%%')
+
+
+def verify_unit(unit, manager_env):
+    """Let the target OS parse the complete unit before replacing its file."""
+    with tempfile.TemporaryDirectory(prefix='edge-saver-unit-') as folder:
+        candidate = Path(folder)/SERVICE
+        candidate.write_text(unit, encoding='utf-8')
+        result = subprocess.run(['systemd-analyze', '--user', 'verify', str(candidate)],
+                                env=manager_env, capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise RuntimeError('서비스 파일 검증 실패:\n' + (result.stderr or result.stdout).strip())
+
+
 def build_unit(project, python, audio='pulse', sink=None):
     if audio not in ('pulse', 'alsa'):
         raise ValueError('unsupported audio driver')
@@ -52,9 +73,9 @@ def build_unit(project, python, audio='pulse', sink=None):
     if audio == 'pulse':
         lines += ['Wants=pipewire.service pipewire-pulse.service wireplumber.service',
                   'After=pipewire.service pipewire-pulse.service wireplumber.service']
-    lines += ['', '[Service]', 'Type=exec', 'WorkingDirectory=' + _quote(project),
+    lines += ['', '[Service]', 'Type=exec', 'WorkingDirectory=' + _working_directory(project),
               'ExecStart=' + _quote(python, True) + ' -u ' +
-              _quote(Path(project)/'tools'/'run_service.py', True) + ' --audio ' + audio,
+              _quote(PurePosixPath(project)/'tools'/'run_service.py', True) + ' --audio ' + audio,
               'Environment=PYTHONUNBUFFERED=1', 'Environment=XDG_RUNTIME_DIR=%t',
               'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus']
     if audio == 'pulse':
@@ -86,7 +107,7 @@ def main(argv=None):
         return
     if sys.platform != 'linux' or os.geteuid() == 0:
         parser.error('라즈베리파이의 일반 사용자로 실행하세요. 이 스크립트 앞에 sudo를 붙이지 마세요.')
-    for tool in ('systemctl', 'loginctl') + (('pactl',) if args.audio == 'pulse' else ()):
+    for tool in ('systemctl', 'loginctl', 'systemd-analyze') + (('pactl',) if args.audio == 'pulse' else ()):
         if not shutil.which(tool):
             parser.error(f'{tool}이 없습니다. 설치 환경과 오디오 방식을 확인하세요.')
     info = subprocess.run([str(python), '-c',
@@ -108,6 +129,7 @@ def main(argv=None):
     if linger != 'yes':
         subprocess.run(['sudo', 'loginctl', 'enable-linger', user], check=True)
     manager_env = connect_user_manager(os.getuid())
+    verify_unit(unit, manager_env)
     base = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home()/'.config')))/'systemd'/'user'
     base.mkdir(parents=True, exist_ok=True)
     target = base/SERVICE
@@ -115,6 +137,8 @@ def main(argv=None):
         shutil.copy2(target, target.with_suffix('.service.bak'))
     target.write_text(unit, encoding='utf-8')
     subprocess.run(['systemctl', '--user', 'daemon-reload'], env=manager_env, check=True)
+    subprocess.run(['systemctl', '--user', 'reset-failed', SERVICE], env=manager_env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     subprocess.run(['systemctl', '--user', 'enable', SERVICE], env=manager_env, check=True)
     if args.start:
         subprocess.run(['systemctl', '--user', 'restart', SERVICE], env=manager_env, check=True)

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import main
-from tools.install_autostart import build_unit, connect_user_manager
+from tools.install_autostart import build_unit, connect_user_manager, verify_unit
 from tools.run_service import prepare_audio, select_sink
 
 
@@ -81,6 +81,8 @@ class AutostartTests(unittest.TestCase):
         self.assertIn('StandardInput=null', unit)
         self.assertIn('Restart=on-failure', unit)
         self.assertIn('"/home/raspi/My Project/.venv-py311/bin/python"', unit)
+        self.assertIn('\nWorkingDirectory=/home/raspi/My Project\n', unit)
+        self.assertNotIn('WorkingDirectory="', unit)
         self.assertIn('run_service.py" --audio pulse', unit)
         self.assertIn('UnsetEnvironment=PULSE_SINK', unit)
         self.assertNotIn('GEMINI_API_KEY', unit)
@@ -90,9 +92,24 @@ class AutostartTests(unittest.TestCase):
             build_unit('/bad\npath', '/python')
         escaped = build_unit('/home/50% $x', '/home/50% $x/bin/python')
         self.assertIn('50%% $$x/bin/python', escaped)
+        self.assertIn('WorkingDirectory=/home/50%% $x\n', escaped)
         self.assertIn('Environment="PULSE_SINK=alsa_output.test"',
                       build_unit('/project', '/python', sink='alsa_output.test'))
         self.assertNotIn('pipewire.service', build_unit('/project', '/python', audio='alsa'))
+
+    def test_verify_checks_temporary_unit_before_install_and_preserves_diagnostics(self):
+        unit = build_unit('/project', '/usr/bin/python3', audio='alsa')
+        def check(command, **kwargs):
+            self.assertEqual(command[:3], ['systemd-analyze', '--user', 'verify'])
+            self.assertEqual(Path(command[3]).read_text(encoding='utf-8'), unit)
+            self.assertEqual(kwargs['env'], {'XDG_RUNTIME_DIR': '/run/user/1000'})
+            return Mock(returncode=0)
+        with patch('tools.install_autostart.subprocess.run', side_effect=check):
+            verify_unit(unit, {'XDG_RUNTIME_DIR': '/run/user/1000'})
+        with patch('tools.install_autostart.subprocess.run',
+                   return_value=Mock(returncode=1, stderr='WorkingDirectory path is not absolute')):
+            with self.assertRaisesRegex(RuntimeError, 'WorkingDirectory path is not absolute'):
+                verify_unit(unit, {})
 
     def test_boot_sink_selection_avoids_null_and_remote_output(self):
         sinks = [{'name': 'auto_null'}, {'name': 'xrdp-sink'}, {'name': 'alsa_output.usb-speaker'}]
