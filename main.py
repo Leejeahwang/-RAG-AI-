@@ -137,7 +137,7 @@ class EdgeSaver:
         return tuple(sorted(zones))
 
     def _refresh_fire_state(self, prompt, details, zone, level):
-        """Coalesce changed zone sets without interrupting queued or playing speech."""
+        """Coalesce zone changes and replace stale guidance at a speech gap."""
         zones = self._active_fire_zones()
         if not self._alarm_active:
             self._fire_update = None
@@ -149,12 +149,17 @@ class EdgeSaver:
             self._fire_update = (zones, prompt, details, zone, level)
         else:
             self._fire_update = None
+            self.tts.cancel_boundary()
 
     def _sync_active_fires(self):
         """Called with the state lock; a one-second quiet window batches new alarms."""
-        if (not self._fire_update or not self._alarm_active or self.tts.is_speaking()
+        if (not self._fire_update or not self._alarm_active
                 or time.monotonic() - self._fire_changed_at < 1.0):
             return
+        if self.tts.is_speaking():
+            self.tts.request_boundary()
+            if not self.tts.boundary_ready():
+                return
         zones, prompt, details, zone, level = self._fire_update
         self._fire_update = None
         if zones and zones == self._active_fire_zones() and zones != self._event_zones:
@@ -307,6 +312,7 @@ class EdgeSaver:
                 return
             self._alarm_active = False
             self._fire_update = None
+            self.tts.cancel_boundary()
             self._request_id += 1
             if self._pending_evac_event is None:
                 self._cached_evac_guidance = ""

@@ -268,10 +268,10 @@ class GeminiRoutingTests(unittest.TestCase):
         generation = self.tts._generation
         ready = Mock()
         with patch('voice.tts.pygame.mixer') as mixer:
-            mixer.music.get_busy.return_value = False
+            mixer.music.get_busy.side_effect = [True, False]
             def audio_ready():
                 mixer.music.load.assert_called_once()
-                mixer.music.play.assert_not_called()
+                mixer.music.play.assert_called_once()
                 ready()
             TTSHelper._play_file(self.tts, 'prepared.wav', generation, on_ready=audio_ready)
             ready.assert_called_once()

@@ -18,6 +18,7 @@ class FireEventsTests(unittest.TestCase):
         self.app.detection_zone = 'B'
         self.app._tts = Mock()
         self.app._tts.is_speaking.return_value = False
+        self.app._tts.boundary_ready.return_value = False
         for name in ('trigger_alarm', 'stop_siren', 'send_alert'):
             patch('main.'+name).start()
         self.addCleanup(patch.stopall)
@@ -99,7 +100,7 @@ class FireEventsTests(unittest.TestCase):
         with self.app._state_lock, patch('main.time.monotonic', return_value=self.app._fire_changed_at + 2):
             self.app._sync_active_fires()
 
-    def test_multiple_fires_wait_for_speech_then_announce_together(self):
+    def test_multiple_fires_yield_at_speech_gap_then_announce_together(self):
         self.app.handle_fire_event(self.event)
         old_job = self.app._jobs.queue[0][2]
         self.app.tts.stop.reset_mock()
@@ -108,9 +109,10 @@ class FireEventsTests(unittest.TestCase):
         self.app.handle_fire_event(other)
         self.flush_changes()
         self.app.tts.stop.assert_not_called()
+        self.app.tts.request_boundary.assert_called_once()
         self.assertEqual(self.app._active_fire_zones(), ('A', 'C'))
         self.assertFalse(self.app._job_valid(old_job))
-        self.app.tts.is_speaking.return_value = False
+        self.app.tts.boundary_ready.return_value = True
         self.flush_changes()
         self.assertEqual(self.app._event_zones, ('A', 'C'))
         speech = [call.args[0] for call in self.app.tts.speak_async.call_args_list]
@@ -134,6 +136,7 @@ class FireEventsTests(unittest.TestCase):
         self.flush_changes()
         self.assertEqual(self.app.tts.speak_async.call_count, count)
         self.assertIsNone(self.app._fire_update)
+        self.app.tts.cancel_boundary.assert_called()
 
     def test_duplicate_sources_in_one_zone_require_all_sources_to_clear(self):
         self.app.handle_fire_event(self.event)

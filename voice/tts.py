@@ -12,6 +12,8 @@ import threading
 import time
 import uuid
 import shutil
+import wave
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 import pygame
@@ -40,6 +42,8 @@ class TTSHelper:
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
         self._generation = 0
+        self._yield_requested = threading.Event()
+        self._yield_ready = threading.Event()
         self._is_speaking = False
         self._active_process = None
         self._ppaso_engine = self._melo_engine = None
@@ -48,6 +52,10 @@ class TTSHelper:
         self._temp_dir.mkdir(exist_ok=True)
         self._audio_cache_dir = tempfile.TemporaryDirectory(prefix='event_audio_', dir=self._temp_dir)
         self._audio_cache = {}
+        self._audio_callbacks = {}
+        self._cache_sources = {}
+        self._cache_upgrades = {}
+        self._cache_retry_after = 0.0
         self._audio_group = None
         if self._engine_type == "PPASO":
             self._ppaso_engine = PpasoEngine()
@@ -62,6 +70,9 @@ class TTSHelper:
             raise ValueError(f"Unknown TTS_ENGINE: {self._engine_type}")
         self._worker_thread = threading.Thread(target=self._worker, name="tts", daemon=True)
         self._worker_thread.start()
+        self._cache_retry_thread = threading.Thread(target=self._retry_cached_audio,
+                                                     name='tts-cache-retry', daemon=True)
+        self._cache_retry_thread.start()
         print(f"[TTS] 로컬 엔진: {self._engine_type} | Gemini TTS 우선: {'켜짐' if self._prefer_gemini else '꺼짐'}")
 
     def _valid(self, generation):
@@ -125,24 +136,134 @@ class TTSHelper:
             return f"[TTS] 전환 실패: {exc} (현재 엔진: {self.engine_type})"
 
     def _play_file(self, path, generation, on_ready=None):
+        # Only inspect local PCM data; never infer word boundaries by cutting
+        # at an arbitrary playback duration. Unsupported files yield at EOF.
+        pauses = None
+        self._wait_for_update(generation)
         with self._lock:
             if not self._valid(generation):
-                return
+                return False
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
             pygame.mixer.music.load(str(path))
             pygame.mixer.music.set_volume(self._volume)
+            pygame.mixer.music.play()
+            if not pygame.mixer.music.get_busy():
+                raise RuntimeError('Audio playback did not start')
             if on_ready:
                 on_ready()
-            pygame.mixer.music.play()
         while True:
             with self._lock:
                 if not self._valid(generation) or not pygame.mixer.music.get_busy():
                     break
+                position = pygame.mixer.music.get_pos() / 1000
+            if self._yield_requested.is_set():
+                if pauses is None:
+                    pauses = self._speech_pauses(path)
+                # Scanning can take time on a Pi. Re-read the position and
+                # only pause while still inside a quiet interval, never after
+                # a previously selected pause has already passed.
+                with self._lock:
+                    position = pygame.mixer.music.get_pos() / 1000
+                if any(start <= position < end for start, end in pauses):
+                    with self._lock:
+                        if self._valid(generation):
+                            pygame.mixer.music.pause()
+                    self._wait_for_update(generation)
+                    with self._lock:
+                        if self._valid(generation):
+                            pygame.mixer.music.unpause()
             time.sleep(0.03)
         with self._lock:
             pygame.mixer.music.stop()
             pygame.mixer.music.unload()
+        self._wait_for_update(generation)
+        return self._valid(generation)
+
+    @staticmethod
+    def _speech_pauses(path):
+        """Return interiors of >=200 ms quiet gaps of signed 16-bit PCM."""
+        points = []
+        try:
+            with wave.open(str(path), 'rb') as audio:
+                if audio.getsampwidth() != 2 or audio.getcomptype() != 'NONE':
+                    return points
+                rate, channels = audio.getframerate(), audio.getnchannels()
+                window = max(1, int(rate * .04))
+                frames = 0
+                quiet_start = None
+                voiced = False
+                while data := audio.readframes(window):
+                    samples = array('h', data)
+                    if sys.byteorder != 'little':
+                        samples.byteswap()
+                    count = len(samples) // channels
+                    if max(map(abs, samples), default=0) <= 160:
+                        if quiet_start is None:
+                            quiet_start = frames
+                    else:
+                        if voiced and quiet_start is not None and frames - quiet_start >= rate * .2:
+                            points.append((quiet_start / rate + .04, frames / rate - .04))
+                        quiet_start = None
+                        voiced = True
+                    frames += count
+                if voiced and quiet_start is not None and frames - quiet_start >= rate * .2:
+                    points.append((quiet_start / rate + .04, frames / rate - .04))
+        except (OSError, EOFError, wave.Error):
+            pass
+        return points
+
+    def request_boundary(self):
+        """Pause at the next speech gap, or before the next prepared clip."""
+        self._yield_requested.set()
+
+    def boundary_ready(self):
+        return self._yield_ready.is_set() or not self.is_speaking()
+
+    def cancel_boundary(self):
+        self._yield_requested.clear()
+        self._yield_ready.clear()
+
+    def _wait_for_update(self, generation):
+        while self._yield_requested.is_set() and self._valid(generation):
+            self._yield_ready.set()
+            self._stop_event.wait(.02)
+
+    def _play_with_retry(self, path, generation, on_ready=None):
+        notified = False
+        def started():
+            nonlocal notified
+            if not notified and on_ready:
+                on_ready()
+            notified = True
+        for attempt in range(2):
+            if not self._valid(generation):
+                return False
+            try:
+                result = self._play_prepared(path, generation, started if on_ready else None)
+                if result is False or not self._valid(generation):
+                    return False
+                self.last_error = ''
+                return True
+            except Exception as exc:
+                if not self._valid(generation):
+                    return False
+                self.last_error = type(exc).__name__
+                if attempt:
+                    print('[TTS] 재생 실패: 출력 장치를 확인하십시오. 해당 안내를 재생하지 못했습니다.', flush=True)
+                    raise
+                _LOGGER.warning('TTS 재생 실패 (%s); 음성 스트림을 다시 열어 한 번 재시도합니다', type(exc).__name__)
+                with self._lock:
+                    if self._valid(generation):
+                        # Siren channels share the mixer. A global quit would
+                        # silence the warning before speech has recovered.
+                        try:
+                            pygame.mixer.music.stop()
+                            pygame.mixer.music.unload()
+                        except pygame.error:
+                            pass
+                if self._stop_event.wait(.15):
+                    return False
 
     def _system_speech(self, text, lang, speed, generation, output_path=None):
         rate = int(self._rate * speed)
@@ -179,13 +300,15 @@ class TTSHelper:
                             continue
                         self._is_speaking = True
                         self.last_error = ''
+                        self._apply_cache_upgrades()
                         clips = [self._audio_cache[key] for key in ('first', 'zone', 'rules')
                                  if key in self._audio_cache]
                     for cached_path, engine in clips:
                         if not self._valid(item.generation):
                             break
                         print(f'[TTS] 저장 음성 재생: {engine}', flush=True)
-                        self._play_file(cached_path, item.generation)
+                        callback = self._audio_callbacks.get(str(cached_path))
+                        self._play_with_retry(cached_path, item.generation, callback)
                     continue
                 text, lang, speed, generation, provider, on_ready, cache_key = item
                 with self._lock:
@@ -198,6 +321,7 @@ class TTSHelper:
                     use_gemini = self._prefer_gemini and provider in {"gemini", "emergency", "zone"}
                 source_text = text
                 text = self._sanitize_text(text, lang)
+                retry_text = text if use_gemini else None
                 if not text:
                     continue
                 if use_gemini and config.GEMINI_API_KEY and time.monotonic() >= self._gemini_failure_until:
@@ -230,7 +354,7 @@ class TTSHelper:
                         # the SDL driver selected for remote desktop audio.
                         path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
                         self._system_speech(text, lang, speed, generation, output_path=path)
-                        self._play_and_cache(path, generation, on_ready, cache_key, engine_type)
+                        self._play_and_cache(path, generation, on_ready, cache_key, engine_type, retry_text)
                     else:
                         with self._lock:
                             if not self._valid(generation):
@@ -242,7 +366,7 @@ class TTSHelper:
                     path = self._temp_dir / f"speech_{uuid.uuid4().hex}.wav"
                     if not local_engine.speak_to_file(text, str(path), lang=lang, speed=speed):
                         raise RuntimeError("Local speech synthesis failed")
-                    self._play_and_cache(path, generation, on_ready, cache_key, engine_type)
+                    self._play_and_cache(path, generation, on_ready, cache_key, engine_type, retry_text)
             except Exception as exc:
                 self.last_error = str(exc)
                 _LOGGER.exception("TTS failed")
@@ -254,13 +378,13 @@ class TTSHelper:
 
     def _play_prepared(self, path, generation, on_ready):
         if on_ready is None:
-            self._play_file(path, generation)
+            return self._play_file(path, generation)
         else:
-            self._play_file(path, generation, on_ready=on_ready)
+            return self._play_file(path, generation, on_ready=on_ready)
 
-    def _play_and_cache(self, path, generation, on_ready, cache_key, engine):
-        self._play_prepared(path, generation, on_ready)
+    def _play_and_cache(self, path, generation, on_ready, cache_key, engine, retry_text=None):
         if cache_key is None:
+            self._play_with_retry(path, generation, on_ready)
             return
         group, part = cache_key
         with self._lock:
@@ -270,8 +394,93 @@ class TTSHelper:
             shutil.copyfile(path, target)
             previous = self._audio_cache.get(part)
             self._audio_cache[part] = (target, engine)
+            self._cache_sources.pop(part, None)
+            if retry_text and engine != 'GEMINI':
+                self._cache_sources[part] = (retry_text, target)
+            if on_ready:
+                self._audio_callbacks[str(target)] = on_ready
             if previous:
+                self._audio_callbacks.pop(str(previous[0]), None)
                 previous[0].unlink(missing_ok=True)
+        # Keep successfully synthesized speech even when the output device is
+        # temporarily unavailable, so the regular repeat can retry it later.
+        self._play_with_retry(path, generation, on_ready)
+
+    def _retry_cached_audio(self):
+        """Prepare one replacement per cooldown without blocking playback."""
+        while not self._stop_event.wait(.2):
+            self._retry_cached_audio_once()
+
+    def _retry_cached_audio_once(self):
+        with self._lock:
+            now = time.monotonic()
+            if (self._stop_event.is_set() or not self._prefer_gemini
+                    or config.AI_PROVIDER == 'local'
+                    or not config.GEMINI_API_KEY or self._audio_group is None
+                    or now < max(self._gemini_failure_until, self._cache_retry_after)):
+                return False
+            pending = next(((part, self._cache_sources[part])
+                            for part in ('first', 'zone', 'rules')
+                            if part in self._cache_sources and part not in self._cache_upgrades), None)
+            if pending is None:
+                return False
+            part, (text, original) = pending
+            group, generation = self._audio_group, self._generation
+            # Rate-limit successful upgrades too, instead of sending all
+            # fallback clips immediately after a quota failure.
+            self._cache_retry_after = now + max(1.0, config.GEMINI_TTS_RETRY_COOLDOWN)
+        path = self._temp_dir / f'upgrade_{uuid.uuid4().hex}.wav'
+        try:
+            from voice.gemini_tts import synthesize_to_file
+            synthesize_to_file(text, path)
+            with self._lock:
+                if (not self._valid(generation) or not self._prefer_gemini
+                        or config.AI_PROVIDER == 'local'
+                        or group != self._audio_group
+                        or self._cache_sources.get(part) != (text, original)
+                        or self._audio_cache.get(part, (None,))[0] != original):
+                    return False
+                self._cache_upgrades[part] = (path, original, generation)
+                self._gemini_last_error = ''
+                print(f'[TTS] Gemini 저장 음성 준비 완료: {part} (다음 반복부터 적용)', flush=True)
+                path = None
+                return True
+        except Exception as exc:
+            with self._lock:
+                if self._valid(generation) and group == self._audio_group:
+                    self._gemini_failure_until = time.monotonic() + max(1.0, config.GEMINI_TTS_RETRY_COOLDOWN)
+                    reason = str(exc) if isinstance(exc, RuntimeError) and str(exc).startswith('Gemini TTS HTTP ') else type(exc).__name__
+                    self._gemini_last_error = reason
+                    _LOGGER.warning('Gemini 저장 음성 재시도 실패 (%s); 기존 음성을 유지합니다', reason)
+            return False
+        finally:
+            if path is not None:
+                path.unlink(missing_ok=True)
+
+    def _apply_cache_upgrades(self):
+        """Called by the playback worker, before taking its replay snapshot."""
+        for part, (prepared, original, generation) in list(self._cache_upgrades.items()):
+            if (self._valid(generation) and self._prefer_gemini
+                    and config.AI_PROVIDER != 'local'
+                    and self._audio_cache.get(part, (None,))[0] == original):
+                target = Path(self._audio_cache_dir.name) / f'{uuid.uuid4().hex}.wav'
+                try:
+                    shutil.copyfile(prepared, target)
+                except OSError:
+                    target.unlink(missing_ok=True)
+                    prepared.unlink(missing_ok=True)
+                    del self._cache_upgrades[part]
+                    _LOGGER.warning('Gemini 저장 음성 교체 실패; 기존 음성을 유지합니다')
+                    continue
+                self._audio_cache[part] = (target, 'GEMINI')
+                callback = self._audio_callbacks.pop(str(original), None)
+                if callback:
+                    self._audio_callbacks[str(target)] = callback
+                self._cache_sources.pop(part, None)
+                original.unlink(missing_ok=True)
+                print(f'[TTS] 저장 음성 교체: {part} → GEMINI', flush=True)
+            prepared.unlink(missing_ok=True)
+            del self._cache_upgrades[part]
 
     def begin_event_audio(self, group):
         """Called after stop(); keep only this incident's completed speech files."""
@@ -286,10 +495,15 @@ class TTSHelper:
             for path, _ in self._audio_cache.values():
                 path.unlink(missing_ok=True)
             self._audio_cache.clear()
+            self._audio_callbacks.clear()
+            self._cache_sources.clear()
+            for prepared, _, _ in self._cache_upgrades.values():
+                prepared.unlink(missing_ok=True)
+            self._cache_upgrades.clear()
             self._audio_group = None
 
     def replay_event_audio(self, group):
-        """Replay existing files only; never call cloud or local synthesis."""
+        """Replay prepared files; background upgrades never block this queue."""
         with self._lock:
             if self._stop_event.is_set() or group != self._audio_group or not self._audio_cache:
                 return False
@@ -382,6 +596,7 @@ class TTSHelper:
     def stop(self):
         with self._lock:
             self._generation += 1
+            self.cancel_boundary()
             while True:
                 try:
                     self._queue.get_nowait()
@@ -398,6 +613,7 @@ class TTSHelper:
         self._stop_event.set()
         self.stop()
         self._worker_thread.join(timeout=2)
+        self._cache_retry_thread.join(timeout=2)
         with self._lock:
             self.clear_event_audio(self._audio_group)
             self._audio_cache_dir.cleanup()
