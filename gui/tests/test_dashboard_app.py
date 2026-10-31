@@ -9,6 +9,11 @@ from unittest.mock import patch
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+class _SilentTTS:
+    def speak(self, *a, **k): pass
+    def stop(self): pass
+
+
 class _FakeQA:
     def invoke(self, prompt, layout_text="", emergency=False):
         return {"result": f"답변: {prompt}", "provider": "ollama", "fallback_reason": ""}
@@ -21,10 +26,14 @@ class DashboardAppTests(unittest.TestCase):
         from gui import workers as W
         from gui.state import RUNTIME
         self.W, self.RUNTIME = W, RUNTIME
+        import config
         os.environ["MQTT_BROKER_PORT"] = "1"       # 브로커 없이
-        os.environ["STT_ENABLED"] = "false"
-        p = patch.object(W, "NativeQA", _FakeQA)
-        p.start(); self.addCleanup(p.stop)
+        # config 는 다른 테스트가 먼저 불러와 환경 변수가 늦을 수 있다. 실제 Whisper·마이크·TTS 를
+        # 열면 기동이 60초를 넘어 시간 초과가 나므로 음성 엔진은 대신한다 (전송 로직만 검증).
+        for target in (patch.object(W, "NativeQA", _FakeQA),
+                       patch.object(config, "STT_ENABLED", False),
+                       patch("voice.tts.TTSHelper", _SilentTTS)):
+            target.start(); self.addCleanup(target.stop)
         q = patch.object(W, "enqueue_query")       # 실제 LLM 큐 대신 호출만 기록
         self.enqueue = q.start(); self.addCleanup(q.stop)
         self.at = AppTest.from_file(os.path.join(ROOT, "gui", "dashboard.py"), default_timeout=60)

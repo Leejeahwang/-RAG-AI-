@@ -179,15 +179,21 @@ class Zones:
     """구역 구분 (main.py: local_zone=ZONE_ID, detection_zone=DETECTION_ZONE_ID).
 
     local: 이 Pi 가 방송하는 곳 (스피커 위치), detection: 이 Pi 의 카메라·센서가 보는 곳,
-    fire: 지금 경보 중인 화재 구역 (경보가 아니면 빈 문자열). 다른 Pi 의 HTTP 경보를 받으면
-    fire 가 local 과 달라진다."""
+    fire: 지금 경보 중인 화재 구역 (경보가 아니면 빈 문자열). 여러 구역이 동시에 경보 중이면
+    "A·B" 처럼 가운뎃점으로 잇는다 (main.py 11/1: 다중 구역 경보). 다른 Pi 의 HTTP 경보를 받으면
+    fire 에 local 이 없을 수 있다."""
     local: str = ""
     detection: str = ""
     fire: str = ""
 
     @property
+    def fire_list(self) -> tuple:
+        return tuple(z for z in self.fire.replace(",", "·").split("·") if z)
+
+    @property
     def remote_fire(self) -> bool:
-        return bool(self.fire and self.local and self.fire != self.local)
+        """화재가 이 Pi 의 안내 구역 밖에서만 났는가 (다른 Pi 의 경보를 받아 방송 중)."""
+        return bool(self.fire_list and self.local and self.local not in self.fire_list)
 
 
 @dataclass(frozen=True)

@@ -559,11 +559,14 @@ def _vision_message(vision) -> str:
 def _alarm_where(v: ZoneView) -> str:
     """경보 중 화재 구역 표시. 다른 Pi 의 경보를 받아 방송 중이면 '화재 B구역 → A구역 안내'."""
     z = v.status.zones if v.status else None
-    if z is None or not z.fire:
+    if z is None or not z.fire_list:
         return ""
+    fires = "·".join(z.fire_list)
     if z.remote_fire:
-        return f"화재 {z.fire}구역 → {z.local}구역 안내 중"
-    return f"화재 {z.fire}구역"
+        return f"화재 {fires}구역 → {z.local}구역 안내 중"
+    if len(z.fire_list) > 1:
+        return f"화재 {fires}구역 ({z.local}구역 포함)"
+    return f"화재 {fires}구역"
 
 
 def _last_alarm_details(v: ZoneView) -> str:
@@ -1011,7 +1014,9 @@ def _zone_card(v: ZoneView) -> str:
         if s.vision.fire_detected:
             badges += _badge("🔥 화재 감지", "danger")
         if s.zones.remote_fire:
-            badges += _badge(f"📍 {s.zones.fire}구역 화재 수신", "danger")
+            badges += _badge(f"📍 {'·'.join(s.zones.fire_list)}구역 화재 수신", "danger")
+        elif len(s.zones.fire_list) > 1:
+            badges += _badge(f"📍 {'·'.join(s.zones.fire_list)}구역 동시 화재", "danger")
         if v.early.waiting:
             badges += _badge(f"⏱ 센서 대기 {_duration_text(time.time() - v.early.since_rx)}", "warn")
         elif s.risk.early:

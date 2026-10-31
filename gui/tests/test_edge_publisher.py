@@ -250,11 +250,14 @@ class LoopbackScenarioTests(unittest.TestCase):
         v = rt.get_zone("A")
         self.assertEqual([e.type for e in v.events], [
             "warning",                                          # Level 2 비전 경고
-            "alarm_start", "guidance", "guidance", "alarm_end", # A구역 화재: 첫 안내 → 구역 대피로 → AI 수칙
+            "alarm_start", "guidance", "guidance",              # A구역 화재: 첫 안내 → 구역 대피로 → AI 수칙
+            "alarm_start", "guidance", "alarm_end",             # B구역도 화재 → "A·B" 새 경보 → 정상 복귀
             "alarm_start", "guidance", "alarm_end",             # B구역 화재 수신: 첫 안내 → 구역 대피로
         ])
-        self.assertEqual([e.provider for e in v.events if e.type == "guidance"], ["zone", "ollama", "zone"])
-        self.assertEqual([e.fire_zone for e in v.events if e.type == "alarm_start"], ["A", "B"])
+        self.assertEqual([e.provider for e in v.events if e.type == "guidance"], ["zone", "ollama", "zone", "zone"])
+        self.assertEqual([e.fire_zone for e in v.events if e.type == "alarm_start"], ["A", "A·B", "B"])
+        added = [e.text for e in v.events if e.type == "alarm_start"][1]
+        self.assertIn("B구역에서도 화재 위험이 추가 감지", added)
         # 0 정상, 2 조기 연기, 5 화재, 4 다른 구역 화재 수신 (이 구역은 정상이지만 경보 단계 유지)
         self.assertEqual(seen_levels, {0, 2, 4, 5})
         # 카메라 오프라인 단계도 경보 중이라 시작 단계 LV5 유지 (main.py 와 동일)
@@ -267,7 +270,7 @@ class LoopbackScenarioTests(unittest.TestCase):
         self.assertIn("A구역에서 화재 위험", full)
         self.assertIn("A구역 대피로", full)
         self.assertIn("자세를 낮추고", full)
-        self.assertEqual(seen_fire_zones, {("A", False), ("B", True)})
+        self.assertEqual(seen_fire_zones, {("A", False), ("A·B", False), ("B", True)})
         self.assertEqual(v.status.risk.level, 0)
         self.assertFalse(v.status.alarm)
         self.assertEqual(v.alarm_since, 0)

@@ -358,6 +358,8 @@ SDL_AUDIODRIVER=pulseaudio STT_ENABLED=false python main_test.py
 
 설치 구역은 각 Pi의 `.env`에서 `ZONE_ID=A` 또는 `B`, `C`로 설정합니다. 직접 감지 구역은 `DETECTION_ZONE_ID`로 별도 설정하며 생략하면 `ZONE_ID`를 사용합니다. 안내 B / 감지 A라면 `ZONE_ID=B`, `DETECTION_ZONE_ID=A`로 설정합니다. 화재 발생 구역은 HTTP 이벤트의 별도 `fire_zone`으로 전달됩니다. A 화재를 B에서 수신하면 B의 대피로와 A 화재 발생지를 안내합니다. B 센서가 정상이어도 A 장치의 정상 복귀 이벤트 전에는 원격 경보를 해제하지 않습니다.
 
+여러 구역에서 발생하면 화재 위치를 A·C처럼 합쳐 안내하고 현재 안내 구역의 등록된 대피로를 사용합니다. 변경 수신은 1초 동안 모아 진행 중인 음성 종료 후 안내하며 기존 음성을 중간에 끊지 않습니다. 같은 구역의 여러 감지 장치가 있으면 모두 해제해야 해당 구역의 경보가 해제됩니다. 일부 구역 해제 시 남은 화재 경보를 유지하고, 이전 상황의 늦은 AI 답변은 재생하지 않습니다. 등록 경로의 통과 구역·차단 자료가 없으므로 다중 화재를 피해 경로를 재계산하는 기능은 포함하지 않습니다. 추가 `.env` 설정은 필요하지 않으며 프로그램을 재시작해야 적용됩니다. 다중 장치와 실제 스피커 동시 검증은 별도로 진행하세요.
+
 연결할 각 Pi에 `ALERT_HTTP_ENABLED=true`, `ALERT_HTTP_HOST=0.0.0.0`, `ALERT_HTTP_PORT=8765`, 같은 `ALERT_HTTP_TOKEN`, 서로 다른 `ALERT_NODE_ID`를 설정합니다. `ALERT_HTTP_PEERS`는 상대의 `http://IP:8765` 주소이며 여러 주소는 쉼표로 구분합니다. README의 A/B 설정 예제를 참고하고 프로그램을 재시작하세요. 의존성 추가는 없습니다. 내부망의 TCP 8765 접근이 필요하며 토큰은 커밋하지 않습니다.
 
 데모 모드에서 A 장치의 `test fire`를 실행해 B 수신을 확인합니다. B에서 `test fire A`를 입력하면 네트워크 없이 수신 처리만 시험할 수 있으며 `test clear A`로 해제합니다. 실제 두 Pi 사이 연결과 스피커 재생은 해당 장치에서 별도 검증해야 합니다. 통신 단절·프로그램 종료만으로 화재 해제하지 않습니다. 화재 중 발생 장치 재시작 시 기존 수신 경보가 남을 수 있습니다.
@@ -375,3 +377,6 @@ SDL_AUDIODRIVER=pulseaudio STT_ENABLED=false python main_test.py
 - [Gemini TTS API](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)
 - [Gemini API 가격·무료 티어](https://ai.google.dev/gemini-api/docs/pricing)
 - [Raspberry Pi 카메라 소프트웨어](https://www.raspberrypi.com/documentation/computers/camera_software.html)
+# 부팅 자동 실행 추가 안내
+
+터미널 입력 없는 실행 모드와 사용자 systemd 서비스 설치 도구를 추가했습니다. 기존 Python 3.11 가상환경과 `.env`를 사용하며, 프로젝트 폴더에서 `python tools/install_autostart.py --start`로 등록합니다. 물리 스피커 준비·로그인 없는 시작·수동 실행 전 서비스 중지 절차는 [부팅 자동 실행 안내](docs/raspberry_pi_autostart.md)를 확인하세요. 실제 재부팅·센서·음성 검증은 각 Pi에서 진행해야 합니다.

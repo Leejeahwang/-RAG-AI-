@@ -118,10 +118,11 @@ class FakeEdgeScenarioTests(unittest.TestCase):
         rt = RuntimeState()
         reasons = []
         client = FakeClient(sink=lambda t, p: W.handle_message(t, p))
-        with patch.object(W, "RUNTIME", rt), patch.object(fake_edge, "TICK", 0.01):
+        # 시나리오 한 바퀴(약 63초)가 기본 대기 60초보다 길어져, 2회차가 대기 안에 들도록 대기를 늘린다
+        with patch.object(W, "RUNTIME", rt), patch.object(fake_edge, "TICK", 0.01),                 patch.object(fake_edge, "GEMINI_COOLDOWN", 120.0):
             edge = fake_edge.FakeEdge("A", "127.0.0.1", 1883)
             edge.pub = make_pub(client, status_interval=0.05, frame_fps=0)
-            for _ in range(2):                                   # 시나리오 2회 (45초 × 2, 대기 60초)
+            for _ in range(2):                                   # 시나리오 2회 (약 63초 × 2, 대기 120초)
                 for phase in fake_edge.scenario("A"):
                     edge.run_phase(phase, speed=40)
             edge.pub.close()

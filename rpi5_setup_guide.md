@@ -1,5 +1,7 @@
 # Raspberry Pi 5 설치·실행 가이드 — 현재 통합 버전
 
+**부팅 자동 실행:** 수동 실행과 현장 스피커를 먼저 확인한 뒤 [자동 실행 설치 안내](docs/raspberry_pi_autostart.md)에 따라 프로젝트 가상환경에서 `python tools/install_autostart.py --start`를 실행합니다. 각 Pi에 한 번 서비스 등록이 필요하며, 단순 `git pull`만으로 등록되지는 않습니다.
+
 ### 2026-10-18 Vision 변경: NCNN 640×640
 
 현재 `codex/vision-rag-voice` 브랜치는 NCNN FP32를 기본으로 사용합니다.

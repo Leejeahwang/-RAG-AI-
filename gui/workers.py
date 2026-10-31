@@ -164,7 +164,8 @@ def mqtt_worker(stop_event: threading.Event) -> None:
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
     client.on_message = on_message
-    client.reconnect_delay_set(min_delay=1, max_delay=10)
+    # 네트워크가 오래 끊겼다 돌아와도 몇 초 안에 다시 붙어 현재 경보 상태를 보여 주도록
+    client.reconnect_delay_set(min_delay=1, max_delay=3)
     try:
         client.connect_async(S.BROKER_HOST, S.BROKER_PORT, keepalive=S.KEEPALIVE)
         client.loop_start()

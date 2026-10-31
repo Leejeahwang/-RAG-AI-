@@ -183,7 +183,9 @@ class EdgePublisher:
             client.will_set(S.topic(self.zone, S.KIND_ONLINE), build_online(self.zone, False), qos=1, retain=True)
             client.on_connect = self._on_connect
             client.on_disconnect = self._on_disconnect
-            client.reconnect_delay_set(min_delay=1, max_delay=30)
+            # 브로커는 보통 같은 Pi 에 있어 연결 시도가 바로 실패하고 비용이 거의 없다. 재시도 간격이
+            # 길게 늘어나면 오래 끊긴 뒤 복구가 늦어지므로 (35초 중단 후 10초 걸림, 11/1 측정) 상한을 3초로 둔다
+            client.reconnect_delay_set(min_delay=1, max_delay=3)
             if hasattr(client, "max_queued_messages_set"):
                 client.max_queued_messages_set(_MAX_QUEUED)
             client.connect_async(self.host, self.port, keepalive=S.KEEPALIVE)

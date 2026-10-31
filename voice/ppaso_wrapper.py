@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import logging
+from voice.pronunciation import local_pronunciation
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class PpasoEngine:
             return False
 
         try:
-            wav = self.tts.synthesize(text.strip(), chunked=True)
+            wav = self.tts.synthesize(local_pronunciation(text.strip(), lang), chunked=True)
             if wav is None or len(wav) == 0:
                 return False
 

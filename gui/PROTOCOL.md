@@ -61,7 +61,7 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 | `ai` | Pi 의 비상 방송 내용 | `alarm_start`의 첫 안내에 비상 `guidance`(구역 대피로, AI 수칙)를 줄바꿈으로 이어 붙입니다 (`main.py _cached_evac_guidance`와 같은 순서). `provider`는 마지막 지침의 출처. `alarm_end`에서 비워지고, 현장 일반 질문 답변은 들어가지 않습니다 |
 | `zones.local` | `config.ZONE_ID` | 이 Pi 가 방송하는 구역 (스피커 위치) |
 | `zones.detection` | `config.DETECTION_ZONE_ID` | 이 Pi 의 카메라·센서가 보는 구역 |
-| `zones.fire` | `self._event_zone` | 경보 중인 화재 구역. 경보가 아니면 빈 문자열. 다른 Pi 의 HTTP 경보를 받으면 `local`과 달라지고, 대시보드는 "화재 B구역 → A구역 안내 중"으로 표시합니다 |
+| `zones.fire` | `self._event_zones` | 경보 중인 화재 구역. 경보가 아니면 빈 문자열. 여러 구역이 동시에 경보 중이면 `"A·B"`처럼 가운뎃점으로 잇습니다 (11/1 다중 구역 경보). 대시보드 표시: 다른 구역만 → "화재 B구역 → A구역 안내 중", 이 구역 포함 여러 곳 → "화재 A·B구역 (A구역 포함)", 이 구역만 → "화재 A구역" |
 | `provider.mode` | `rag.provider.get_ai_mode()` | `auto`(Gemini 우선, 실패 시 로컬) · `gemini` · `local`. Pi에서 `/ai` 명령으로 바꾸면 바로 반영됩니다 |
 | `provider.gemini_key` | `config.GEMINI_API_KEY` | 키가 없으면 항상 로컬 Qwen을 씁니다 |
 | `provider.retry_in` | `rag.provider._failure_until` | auto 모드에서 Gemini가 실패하면 이 초 동안 Gemini를 부르지 않고 로컬만 씁니다. 대시보드는 받은 뒤 지난 시간을 빼서 카운트다운합니다 |
@@ -94,7 +94,7 @@ Pi(`main.py` + `gui/edge_publisher.py`) → 브로커(Pi의 mosquitto) → 관�
 
 | type | 호출 위치 | 필드 |
 |---|---|---|
-| `alarm_start` | `_trigger_rag_alert` (새 경보만) | `level`, `details`, `text`(첫 고정 안내 "B구역에서 화재 위험이…"), `provider`=`fixed`, `fire_zone`, `local_zone` |
+| `alarm_start` | `_trigger_rag_alert` (새 경보, 화재 구역이 바뀐 경우 포함) | `level`, `details`, `text`(첫 고정 안내 "B구역에서 화재 위험이…" 또는 "B구역에서도 화재 위험이 추가 감지…"), `provider`=`fixed`, `fire_zone`(여러 곳이면 `A·B`), `local_zone` |
 | `guidance` | `_trigger_rag_alert` (구역 대피로) | `text`, `provider`=`zone`, `emergency`=true, `fire_zone`, `local_zone` |
 | `guidance` | `_guidance_worker` (AI 지침) | `text`(실제 방송한 문장, 중복 제거 후), `provider`(`gemini`/`ollama`), `fallback_reason`, `emergency`, `fire_zone`, `local_zone`. 비상 지침인데 방송할 문장이 없으면 보내지 않음 |
 | `warning` | `_handle_vision_warning` | Level 2 비전 경고 고정 음성 1회: `level`=2, `details`, `text`, `provider`=`fixed`, `fire_zone`(감지 구역), `local_zone` |

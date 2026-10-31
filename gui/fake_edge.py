@@ -5,7 +5,8 @@ PC 테스트용 가짜 Pi. 실제 Pi 와 같은 EdgePublisher 로 같은 형식�
 
 시나리오:
     정상 → 사진 오탐 차단 → 조기 연기(LV2, Level 2 경고 방송) → 화재(LV5, 첫 고정 안내·구역 대피로)
-    → Gemini 실패로 로컬 Qwen 지침 (이후 60초 Gemini 재시도 대기) → 카메라 오프라인 → 정상 복귀
+    → Gemini 실패로 로컬 Qwen 지침 (이후 60초 Gemini 재시도 대기) → 다른 구역 동시 화재(A·B)
+    → 카메라 오프라인 → 정상 복귀
     → 다른 구역(B) 화재 경보 수신 (이 구역은 정상이지만 경보·방송) → 정상
     --loop 로 반복하면 2회차 화재는 재시도 대기 중이라 "Gemini 재시도 대기 중" 으로 로컬 지침
 
@@ -102,13 +103,24 @@ class FakeEdge:
 
     # ── 이벤트 (main.py 의 연결 지점과 같은 순서) ──
     def alarm_start(self, level: int, details: str, fire_zone: Optional[str] = None) -> None:
-        """main.py _trigger_rag_alert: 첫 고정 안내("B구역에서 …") → 구역 대피로 안내."""
+        """main.py _trigger_rag_alert: 첫 고정 안내("B구역에서 …") → 구역 대피로 안내.
+
+        fire_zone 이 "A·B" 처럼 여러 구역이면 main.py(11/1)의 다중 구역 경보처럼
+        "B구역에서도 화재 위험이 추가 감지되었습니다 …" 로 새 경보를 시작한다."""
         fire_zone = fire_zone or self.zone
-        self.alarm, self.alarm_level, self.fire_zone = True, level, fire_zone
-        self.pub.publish_event(EVENT_ALARM_START, level=level, details=details,
-                               text=f"{fire_zone}구역에서 {FIRST_GUIDANCE}", provider="fixed",
-                               fire_zone=fire_zone, local_zone=self.zone)
-        exit_name = "동쪽" if fire_zone != self.zone else "서쪽"
+        previous = set(self.fire_zone.split("·")) if self.alarm and self.fire_zone else set()
+        zones = fire_zone.split("·")
+        if len(zones) > 1:
+            added = "·".join(sorted(set(zones) - previous))
+            text = ((f"{added}구역에서도 화재 위험이 추가 감지되었습니다. " if previous and added else "")
+                    + f"현재 화재 감지 구역은 {fire_zone}구역입니다. 현재 안내 구역은 {self.zone}구역입니다. "
+                    + FIRST_GUIDANCE)
+        else:
+            text = f"{fire_zone}구역에서 {FIRST_GUIDANCE}"
+        self.alarm, self.alarm_level, self.fire_zone = True, max(level, self.alarm_level), fire_zone
+        self.pub.publish_event(EVENT_ALARM_START, level=self.alarm_level, details=details,
+                               text=text, provider="fixed", fire_zone=fire_zone, local_zone=self.zone)
+        exit_name = "서쪽" if fire_zone == self.zone else "동쪽"
         self.pub.publish_event(EVENT_GUIDANCE, text=ZONE_ROUTE.format(local=self.zone, exit=exit_name),
                                provider="zone", emergency=True, fire_zone=fire_zone, local_zone=self.zone)
         print(f"  ▶ alarm_start LV{level} (화재 {fire_zone}구역)")
@@ -209,6 +221,13 @@ def scenario(zone: str) -> list[Phase]:
               frame="fire",
               on_enter=lambda e: e.alarm_start(5, "검증된 불꽃 | 센서 교차 검증: 연기센서(천장), 가스센서, 고온감지"),
               at=(4, lambda e: e.gemini_fallback(LOCAL_GUIDANCE))),
+        # 다른 구역에서도 화재 (main.py 11/1 다중 구역 경보): 화재 구역이 "A·B" 로 바뀌며 새 경보
+        Phase(f"{other}구역 동시 화재", 5, 550, 600, 75.0,
+              _vision("REAL_FIRE_FLICKERING", fire=True, conf=0.84, box=box),
+              5, "검증된 불꽃 | 센서 교차 검증: 연기센서(천장), 가스센서, 고온감지",
+              frame="fire",
+              on_enter=lambda e: e.alarm_start(5, f"검증된 불꽃 | 센서 교차 검증: 고온감지 ({other}구역 노드)",
+                                                fire_zone="·".join(sorted({zone, other})))),
         Phase("카메라 오프라인", 5, 520, 580, 70.0,
               {"status": "CAMERA_OFFLINE", "fire_detected": False},
               3, "센서 복합 반응: 연기센서(천장), 가스센서, 고온감지", frame="none"),

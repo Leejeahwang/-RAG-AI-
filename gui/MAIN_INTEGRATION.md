@@ -3,10 +3,10 @@
 Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main.py`에 아래 코드(import 1줄, 연결·종료 각 1곳, 발행 6곳)를 넣습니다.
 발행 코드는 모두 `gui/edge_publisher.py`에 있고, `main.py`는 호출만 합니다.
 
-> **기준 코드 (2026-10-24 갱신)**: `integration/vision-rag-voice`(10/18, Gemini 음성·비상 음성 캐시)와
-> `codex/vision-rag-voice`(10/18, NCNN 비전·Level 2 경고)를 합친 `main.py`입니다. 두 브랜치는 충돌 없이 합쳐지며,
-> `feature/gui-remote-dashboard`의 `main.py`에는 아래 코드가 이미 들어 있습니다.
-> 화재 구역(`zone_id`)·안내 구역(`self.local_zone`)·감지 구역(`self.detection_zone`)이 나뉜 구조에 맞췄습니다.
+> **기준 코드 (2026-11-01 갱신)**: `integration/vision-rag-voice`(11/1, 다중 구역 동시 경보·Pi 자동 실행·발음 보정)와
+> `codex/vision-rag-voice`(10/18, NCNN 비전·Level 2 경고)를 합친 `main.py`입니다. `main.py`는 자동으로 합쳐지고
+> (`rpi5_setup_guide.md`만 두 사람이 같은 자리에 절을 추가해 둘 다 남김), 로컬 작업본의 `main.py`에는 아래 코드가 들어 있습니다.
+> 화재 구역이 여러 곳일 수 있어(`zones`, `self._event_zones`) 화재 구역 값은 `"A·B"`처럼 가운뎃점으로 이어 보냅니다.
 
 ## 원칙
 
@@ -30,13 +30,15 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
 +        edge.start()
 ```
 
-**② _trigger_rag_alert() — 경보 시작.** 새 경보일 때만(같은 구역 재감지 분기는 제외) 보냅니다.
-첫 안내 문장(`first_guidance`, 예: "B구역에서 화재 위험이…")과 화재·안내 구역을 함께 보냅니다.
+**② _trigger_rag_alert() — 경보 시작.** 새 경보일 때만(같은 화재 구역 재감지 분기는 제외) 보냅니다.
+화재 구역이 바뀌면(예: A → A·B) `main.py`가 새 경보를 시작하므로 그때도 보냅니다.
+첫 안내 문장(`first_guidance`, 예: "B구역에서도 화재 위험이 추가 감지되었습니다…")과 전체 화재 구역을 함께 보냅니다.
 
 ```diff
-             send_alert(zone=zone_id, local_zone=self.local_zone, risk_level=level, sensor_details=sensor_info)
-+            edge.publish_event("alarm_start", level=level, details=sensor_info, text=first_guidance,
-+                               provider="fixed", fire_zone=zone_id, local_zone=self.local_zone)
+             send_alert(zone='·'.join(zones), local_zone=self.local_zone,
+                        risk_level=self.current_level, sensor_details=sensor_info)
++            edge.publish_event("alarm_start", level=self.current_level, details=sensor_info, text=first_guidance,
++                               provider="fixed", fire_zone='·'.join(zones), local_zone=self.local_zone)
              print(f"\n[첫 비상 안내] {first_guidance}")
 ```
 
@@ -45,7 +47,7 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
 ```diff
                  self._cached_evac_guidance += "\n" + zone_guidance
 +                edge.publish_event("guidance", text=zone_guidance, provider="zone", emergency=True,
-+                                   fire_zone=zone_id, local_zone=self.local_zone)
++                                   fire_zone='·'.join(zones), local_zone=self.local_zone)
 ```
 
 **④ _clear_alarm() — 정상 복귀.** 다른 구역 경보가 남아 있으면 이 줄까지 오지 않고 그 경보로 다시 시작합니다.
@@ -63,7 +65,8 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
 ```diff
                      print(f"[시간] 검색 {searched-started:.2f}s / 답변 {time.perf_counter()-searched:.2f}s")
 +                    edge.publish_guidance(result, emergency=job["emergency"], text=text,
-+                                          fire_zone=job.get("fire_zone"), local_zone=job.get("local_zone"))
++                                          fire_zone='·'.join(job.get("fire_zones", ())) or job.get("fire_zone"),
++                                          local_zone=job.get("local_zone"))
 ```
 
 **⑥ _monitor_once() — 매 감시 주기 상태.** `with self._state_lock:` 블록 마지막, `current_risk_stats` 바로 아래에 둡니다.
@@ -73,7 +76,8 @@ Pi의 `main.py`가 판단한 결과를 관제 대시보드로 보내려면 `main
                                         f"CAM:{analysis.get('status', 'UNKNOWN')} | {label}")
 +            edge.publish_monitor(temp=temp, gas=gas, smoke=smoke, risk=risk, analysis=analysis,
 +                                 level=self.current_level, alarm=self._alarm_active,
-+                                 frame=frame if fresh else None, fire_zone=self._event_zone)
++                                 frame=frame if fresh else None,
++                                 fire_zone='·'.join(self._event_zones) or self._event_zone)
 ```
 
 - 0.15초마다 호출되지만 실제 status 발행은 1초에 한 번입니다. 위험도·경보·조기 감지·AI 모드가 바뀌면 즉시 보냅니다.
@@ -156,6 +160,12 @@ mosquitto_sub -h 127.0.0.1 -t 'edge/#' -v | grep -v /frame
 관제 PC에서는 `MQTT_BROKER_HOST=<Pi IP>`로 대시보드를 실행합니다 (`gui/README.md`).
 
 ## 검증 기록
+
+### 2026-11-01 (통합 11/1 + codex 10/18 기준, Windows PC)
+
+- 위 코드를 넣은 `main.py`로 프로젝트 테스트 190개(팀원 추가분 포함)를 실행해 모두 통과했습니다. 다중 구역 경보(`A·C` 등)의 화재 구역 값도 맞게 발행됩니다.
+- 이 PC를 Pi 대신 써서 `PI_TEST_GUIDE.md` 테스트 A~E를 재현했습니다 (31/31 통과, 결과는 그 문서의 "참고: PC 대역 테스트 결과").
+- 오래 끊긴 뒤 복구가 늦던 문제를 고쳤습니다: 재시도 간격이 최대 30초(Pi)·10초(대시보드)까지 늘어나 35초 끊김 뒤 경보 상태 복구에 11.1초가 걸렸습니다. 상한을 3초로 줄여 1.8초가 되었습니다.
 
 ### 2026-10-24 (통합 10/18 + codex 10/18 기준, Windows PC)
 

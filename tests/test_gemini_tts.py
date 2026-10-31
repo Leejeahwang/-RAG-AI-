@@ -108,6 +108,26 @@ class GeminiRoutingTests(unittest.TestCase):
             self.assertEqual(self.engine.speak_to_file.call_count, 3)
             self.assertEqual(len(self.played), 5)
 
+    def test_pronunciation_changes_only_local_path_including_cloud_failure(self):
+        source = 'CO2 소화기, 15m, E-STOP'
+        def cloud(text, path):
+            Path(path).write_bytes(wav_bytes())
+        with patch('voice.gemini_tts.synthesize_to_file', side_effect=cloud) as synth:
+            self.tts.speak(source, provider='gemini')
+            self.assertTrue(self.tts.wait_until_idle(timeout=2))
+            cloud_text = synth.call_args.args[0]
+            self.assertIn('CO2 소화기', cloud_text)
+            self.assertIn('15 미터', cloud_text)
+            self.assertNotIn('이산화탄소', cloud_text)
+            self.engine.speak_to_file.assert_not_called()
+        with patch('voice.gemini_tts.synthesize_to_file', side_effect=RuntimeError('Gemini TTS HTTP 429')):
+            self.tts.speak(source, provider='gemini')
+            self.assertTrue(self.tts.wait_until_idle(timeout=2))
+            local_text = self.engine.speak_to_file.call_args.args[0]
+            self.assertIn('이산화탄소 소화기', local_text)
+            self.assertIn('15 미터', local_text)
+            self.assertIn('이 스톱', local_text)
+
     def test_event_replay_reuses_all_three_files_without_synthesis(self):
         def cloud(text, path):
             Path(path).write_bytes(wav_bytes())
@@ -248,10 +268,10 @@ class GeminiRoutingTests(unittest.TestCase):
         generation = self.tts._generation
         ready = Mock()
         with patch('voice.tts.pygame.mixer') as mixer:
-            mixer.music.get_busy.return_value = False
+            mixer.music.get_busy.side_effect = [True, False]
             def audio_ready():
                 mixer.music.load.assert_called_once()
-                mixer.music.play.assert_not_called()
+                mixer.music.play.assert_called_once()
                 ready()
             TTSHelper._play_file(self.tts, 'prepared.wav', generation, on_ready=audio_ready)
             ready.assert_called_once()

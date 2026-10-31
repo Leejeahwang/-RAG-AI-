@@ -29,6 +29,15 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(Zones("A", "A", "A").remote_fire)
         self.assertFalse(Zones("A", "A", "").remote_fire)
 
+    def test_multi_zone_fire(self):
+        # main.py 11/1: 여러 구역 동시 경보는 "A·B" 로 보낸다
+        both = Zones("A", "A", "A·B")
+        self.assertEqual(both.fire_list, ("A", "B"))
+        self.assertFalse(both.remote_fire)                     # 이 구역(A)도 화재
+        other = Zones("A", "A", "B·C")
+        self.assertTrue(other.remote_fire)                     # 다른 구역에서만 화재
+        self.assertEqual(Zones("A", "A", "").fire_list, ())
+
     def test_old_pi_without_zones(self):
         raw = status(None)
         self.assertNotIn("zones", json.loads(raw))
@@ -103,6 +112,10 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(C._alarm_where(self.rt.get_zone("A")), "화재 A구역")
         W.handle_message("edge/A/status", status(Zones("A", "A", ""), alarm=False))
         self.assertEqual(C._alarm_where(self.rt.get_zone("A")), "")
+        W.handle_message("edge/A/status", status(Zones("A", "A", "A·B")))
+        self.assertEqual(C._alarm_where(self.rt.get_zone("A")), "화재 A·B구역 (A구역 포함)")
+        W.handle_message("edge/A/status", status(Zones("A", "A", "B·C")))
+        self.assertEqual(C._alarm_where(self.rt.get_zone("A")), "화재 B·C구역 → A구역 안내 중")
 
     def test_vision_message_without_description(self):
         from gui import components as C

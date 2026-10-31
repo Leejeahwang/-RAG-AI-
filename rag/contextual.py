@@ -15,8 +15,12 @@ def situation_facts(situation):
     """Only caller-supplied structured zone facts become asserted observations."""
     if not situation:
         return {}
-    return {key: situation[key] for key in ('fire_zone', 'local_zone')
-            if situation.get(key) in ('A', 'B', 'C')}
+    facts = {key: situation[key] for key in ('fire_zone', 'local_zone')
+             if situation.get(key) in ('A', 'B', 'C')}
+    zones = situation.get('fire_zones')
+    if isinstance(zones, (list, tuple)) and zones and all(zone in ('A', 'B', 'C') for zone in zones):
+        facts['fire_zones'] = sorted(set(zones))
+    return facts
 
 
 def contextual_request(context, question, situation, emergency):
@@ -27,7 +31,8 @@ def contextual_request(context, question, situation, emergency):
     origin_reference = ''
     if config.GEMINI_SEND_LAYOUT and 'fire_zone' in facts:
         # Inventory is a reference, not evidence of the actual ignition cause.
-        origin_reference = '\n'.join(line for line in layout_for_zone(facts['fire_zone']).splitlines()
+        origin_reference = '\n'.join(line for zone in facts.get('fire_zones', [facts['fire_zone']])
+            for line in layout_for_zone(zone).splitlines()
             if line.startswith('## ') or re.match(r'-\s*특이사항\s*:', line))
     schema = {'type': 'object', 'properties': {'items': {
         'type': 'array', 'minItems': 1, 'maxItems': 12,
@@ -45,6 +50,7 @@ def contextual_request(context, question, situation, emergency):
         '위치·방향·거리·출구·소화기 종류와 위치·숫자·적용 조건·금지 사항이 있는 수칙은 '
         '그 조건과 내용을 원문 그대로 안내하십시오. 그 밖의 일반 수칙은 의미를 유지하며 재표현할 수 있습니다. '
         '감지된 화재 구역과 현재 안내 구역을 혼동하지 마십시오. '
+        'fire_zones가 있으면 전체 목록이 현재 화재 구역이며, fire_zone 하나만 화재라고 가정하지 마십시오. '
         '센서 위험도와 AI 확신도만으로 전기·배터리 등 화재 원인을 확정하지 마십시오. '
         'origin_zone_reference는 구역 용도와 보관물 참고 정보이며 실제 발화 원인을 확정하는 관측이 아닙니다. '
         '원인이 확인되지 않았으면 전기 화재 수칙 등은 반드시 조건부로 표현하십시오. '
@@ -112,7 +118,9 @@ def render_contextual(answer, passages, facts):
             selected.append(guidance.strip())
             seen.add(index)
     prefix = []
-    if 'fire_zone' in facts:
+    if 'fire_zones' in facts:
+        prefix.append(f"감지된 화재 구역은 {'·'.join(facts['fire_zones'])}구역입니다.")
+    elif 'fire_zone' in facts:
         prefix.append(f"감지된 화재 구역은 {facts['fire_zone']}구역입니다.")
     if 'local_zone' in facts:
         prefix.append(f"현재 안내 구역은 {facts['local_zone']}구역입니다.")
