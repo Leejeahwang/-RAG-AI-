@@ -1,44 +1,20 @@
-# ==========================================
-# 라즈베리파이 5 (Raspberry Pi 5) 전용 의존성
-# ==========================================
-# ⚠️ 주의: pip 설치 전, 터미널에서 아래의 시스템 패키지를 먼저 설치하세요!
-# sudo apt update && sudo apt install -y python3-opencv libportaudio2 libopenblas-dev espeak
-# ==========================================
+# -*- coding: utf-8 -*-
+# 64-bit Raspberry Pi OS. 프로젝트 루트의 가상환경에서 설치:
+# python -m pip install -r requirements_rpi.txt
+# 새 환경은 먼저 python -m pip install -r requirements_torch_cpu.txt
+# PyTorch 공식 CPU 인덱스를 사용해 불필요한 CUDA 의존성을 방지합니다.
+# 시스템 패키지/MeCab/음성/카메라 안내: raspberry_pi_migration.md
+# 빠른 설치 안내: rpi5_setup_guide.md
+# python-mecab-ko 설치만으로 libmecab.so.2가 준비되지 않을 수 있습니다.
+# 가이드의 MeCab 네이티브 설치와 형태소 분석 확인을 완료하세요.
+# lgpio 소스 빌드 전에 sudo apt install -y liblgpio-dev swig
+# ultralytics와 동일한 OpenCV 배포판 사용. headless를 동시에 설치하지 마세요.
+-r requirements.txt
 
-# --- Core AI & Framework ---
-# 라즈베리파이 환경에서는 별도의 CUDA 인덱스 없이 기본 torch를 사용합니다.
-torch
-torchaudio
-torchvision
-numpy
-pillow
-python-dotenv
-prompt-toolkit
-colorama
-
-# --- Vision & Sensors ---
-ultralytics
-# 라즈베리파이 GUI 의존성 충돌을 막기 위해 일반 opencv 대신 headless 버전 사용 권장
-opencv-python-headless
-psutil
-
-# --- RAG & Data Engine ---
-langchain
-langchain-community
-sentence-transformers
-pypdf
-python-docx
-python-pptx
-beautifulsoup4
-requests
-
-# [FAISS 주의사항]
-# pip로 설치가 안 되거나 빌드 에러가 나면 아래 항목을 지우고, 
-# 터미널에서 'sudo apt install libfaiss-dev' 명령어로 시스템에 직접 설치하세요.
-faiss-cpu
-
-# --- Voice Processing (STT & TTS) ---
-faster-whisper
-pygame
-pyaudio                 # (위의 시스템 패키지 libportaudio2 가 반드시 필요함)
-pyttsx3                 # (위의 시스템 패키지 espeak 에 의존하여 동작함)
+# MCP3008 연기/가스 센서
+gpiozero
+lgpio
+# 온도 센서는 현재 코드에서 Adafruit_DHT.DHT11을 사용합니다.
+# 구형 Adafruit-DHT의 Pi 5 지원이 검증되지 않아 자동 설치 목록에서 제외합니다.
+# SENSOR_MODE=hardware 활성화 전 담당자가 드라이버/실센서 검증을 완료해야 합니다.
+# main_test.py는 이 설정과 관계없이 가상 센서를 사용합니다.

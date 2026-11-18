@@ -2,6 +2,9 @@ import sys
 import os
 import platform
 
+# Project runtime/cache settings must precede transformer imports.
+import config
+
 # Windows에서 심볼릭 링크 권한 에러(WinError 1314) 방지 (HuggingFace 관련)
 if platform.system() == "Windows":
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
@@ -13,6 +16,7 @@ if platform.system() == "Windows":
 
 
 import threading
+import queue
 import time
 import re
 import cv2
@@ -44,7 +48,8 @@ from voice.tts import TTSHelper
 from rag.native_retriever import rag_manager
 
 import config
-from vision import cctv_service, fire_detector
+from rag.provider import ai_mode_label, mode_command_response
+from vision_bridge import cctv_service, fire_detector
 from sensors import fusion
 from sensors.temperature import read_temperature, is_temperature_abnormal
 from sensors.smoke import read_smoke_level, is_smoke_detected
@@ -74,6 +79,11 @@ class EdgeSaverTest:
         self._initialized = False
         self._monitor_running = False
         self._monitor_thread = None
+        self._query_queue = queue.Queue(maxsize=1)
+        self._query_stop = threading.Event()
+        self._query_lock = threading.RLock()
+        self._query_id = 0
+        self._query_thread = None
         
         # 음성 자원 (지연 로드용)
         self._tts = None
@@ -135,19 +145,20 @@ class EdgeSaverTest:
     def initialize(self):
         """시스템 초기화: 밸런스 BGE-Base Reranker 엔진 + 비전 AI + 음성 엔진 로드"""
         print("=" * 65)
-        print("🔥 엣지 세이버 (Edge Saver) Reranker 검증용 테스트 가동 🔥")
+        print("🔥 엣지 세이버 (Edge Saver) 평시 RAG·LLM 문답 테스트 가동 🔥")
         print("=" * 65 + "\n")
 
         try:
             # ── 0단계: 지식베이스 준비 ──
-            print("[시스템] BGE-Base 통합 RAG 지식베이스 검색 엔진 로드 중...")
+            print("[시스템] RAG 지식베이스 검색 엔진 로드 중...")
 
             # ── 1단계: Native RAG 데이터 로드 ──
             from rag.native_retriever import rag_manager
             from rag.loader import load_and_split
             
+            print(f"[시스템] BGE reranker: {'ON' if config.USE_RERANKER else 'OFF'}")
             rag_manager.load_resources()
-            if not rag_manager.index:
+            if rag_manager.index is None or rag_manager.index_needs_refresh:
                 chunks = load_and_split()
                 rag_manager.build_index(chunks)
             
@@ -157,8 +168,7 @@ class EdgeSaverTest:
 
             # TTS 엔진 로드
             print("[시스템] 🔊 음성 출력(TTS) 엔진 준비 중...", end=" ", flush=True)
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                _ = self.tts
+            _ = self.tts
             print("완료")
 
             # STT 엔진 로드
@@ -176,8 +186,7 @@ class EdgeSaverTest:
                 print("[시스템] 🎤 음성 인식(STT) 기능이 비활성화되었습니다. (텍스트 모드)")
 
             print("[시스템] 🔊 음성 출력(TTS) 모델 예열 중...", end=" ", flush=True)
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.tts.warmup()
+            self.tts.warmup()
             print("완료")
 
             # 백그라운드 카메라 서비스 가동
@@ -186,7 +195,7 @@ class EdgeSaverTest:
             threading.Thread(target=cctv_service.camera_worker_thread, daemon=True).start()
 
             self._initialized = True
-            print("\n🚀 Reranker 통합 시스템 모듈 초기화 완료!\n")
+            print("\n🚀 평시 문답 테스트 모듈 초기화 완료!\n")
 
         except Exception:
             import traceback
@@ -199,13 +208,13 @@ class EdgeSaverTest:
         if self.current_level >= 4:
             return HTML(
                 f'<style bg="ansired" fg="white">'
-                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | '
+                f' [🚨 EDGE SAVER TEST - LLM BYPASS ACTIVE] | AI: {ai_mode_label()} | '
                 f'{self.current_risk_stats}'
                 f'</style>'
             )
         return HTML(
             f'<style bg="ansiblue" fg="white">'
-            f' [EDGE SAVER TEST - RERANKER ACTIVE] | '
+            f' [EDGE SAVER TEST] | AI: {ai_mode_label()} | '
             f'{self.current_risk_stats}'
             f'</style>'
         )
@@ -215,7 +224,7 @@ class EdgeSaverTest:
         alarm_handled = False
         while self._monitor_running:
             try:
-                # 만약 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이라면 
+                # 일반 상황(Level 4 미만)에서 LLM이 답변을 생성 중이면
                 # 음성 겹침과 오버헤드를 막기 위해 센서 체크를 잠시 양보합니다.
                 if getattr(self, '_is_generating', False) and self.current_level < 4:
                     time.sleep(1.0)
@@ -229,20 +238,10 @@ class EdgeSaverTest:
                 fire_detected = False
                 fire_desc = ""
                 if frame is not None and not getattr(cctv_service, 'camera_offline', False):
-                    import uuid
-                    tmp_path = f"live_temp_monitor_{uuid.uuid4().hex[:8]}.jpg"
-                    try:
-                        cv2.imwrite(tmp_path, frame)
-                        if os.path.exists(tmp_path):
-                            analysis = fire_detector.detect_fire(tmp_path)
-                            fire_detected = analysis.get('fire_detected', False)
-                            fire_desc = analysis.get('description', '')
-                    finally:
-                        if os.path.exists(tmp_path):
-                            try:
-                                os.remove(tmp_path)
-                            except:
-                                pass
+                    # Preserve the current vision module's in-memory input path.
+                    analysis = fire_detector.detect_fire(frame)
+                    fire_detected = analysis.get('fire_detected', False)
+                    fire_desc = analysis.get('description', '')
 
                 # 시뮬레이터 보정
                 if fire_detected:
@@ -285,93 +284,143 @@ class EdgeSaverTest:
             time.sleep(3)
 
     def _process_query(self, query, lang):
+        """Queue the latest question and return immediately to the prompt."""
+        with self._query_lock:
+            if self._query_stop.is_set():
+                return
+            self._query_id += 1
+            self.tts.stop()
+            while True:
+                try:
+                    self._query_queue.get_nowait()
+                    self._query_queue.task_done()
+                except queue.Empty:
+                    break
+            self._query_queue.put_nowait((query, lang, self._query_id))
+            if self._query_thread is None:
+                self._query_thread = threading.Thread(target=self._query_worker, daemon=True, name="test-qa")
+                self._query_thread.start()
+        print("[분석] 질문 접수. 답변 중에도 다음 질문을 입력할 수 있습니다.")
+
+    def _query_valid(self, request_id):
+        return not self._query_stop.is_set() and request_id == self._query_id
+
+    def _cancel_pending_query(self):
+        """Prevent delayed answers from speaking during microphone capture."""
+        with self._query_lock:
+            self._query_id += 1
+            while True:
+                try:
+                    self._query_queue.get_nowait()
+                    self._query_queue.task_done()
+                except queue.Empty:
+                    break
+            self.tts.stop()
+
+    def _query_worker(self):
+        while not self._query_stop.is_set():
+            try:
+                query, lang, request_id = self._query_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                if self._query_valid(request_id):
+                    self._answer_query(query, lang, request_id)
+            except Exception as exc:
+                if self._query_valid(request_id):
+                    print(f"\n⚠️ [문답 작업 오류] {type(exc).__name__}: {exc}")
+                self._is_generating = False
+            finally:
+                self._query_queue.task_done()
+
+    def _stop_query_worker(self):
+        with self._query_lock:
+            self._query_stop.set()
+            self._query_id += 1
+            while True:
+                try:
+                    self._query_queue.get_nowait()
+                    self._query_queue.task_done()
+                except queue.Empty:
+                    break
+            if self._tts:
+                self._tts.stop()
+        if self._query_thread:
+            self._query_thread.join(timeout=1)
+
+    def _answer_query(self, query, lang, request_id):
         print("\n[분석] 대응 지침 생성 중...")
         start_t = time.time()
+        self.last_query_timings = {"rag_s": 0.0, "llm_s": 0.0, "tts_s": 0.0}
+        rag_started = time.perf_counter()
+        tts_started = None
+        llm_started = None
         
         from rag.native_retriever import rag_manager
-        from rag.chain import rewrite_query_ollama
-        
+        # 검색은 로컬 인덱스에서 수행하되, 온라인 Gemini 사용 시
+        # Ollama 키워드 추출을 기다리지 않도록 원본 질문을 그대로 검색한다.
         search_query = query
-        keywords = rewrite_query_ollama(query)
-        if keywords:
-            search_query = f"{query} {keywords}"
-            print(f"🔍 [RAG 쿼리 보강] 추출된 검색 키워드 주입: '{keywords}'")
             
-        # BGE-Base Reranker가 내부적으로 자동 작동하여 상위 4개 엄선
+        # 검색 정책에 따라 BGE를 적용하거나 명확한 의료 근거에서는 생략한다.
         source_docs = rag_manager.search(search_query)
+        if not self._query_valid(request_id):
+            return
+        self.last_query_timings["rag_s"] = time.perf_counter() - rag_started
         
-        cleaned_chunks = []
-        seen_sources = set()  
-        for doc in source_docs:
-            src = doc.get('source', '')
-            if src:
-                if src in seen_sources:
-                    continue
-                seen_sources.add(src)
-                
-            lines = doc.get('page_content', '').split('\n')
-            clean_lines = [l for l in lines if '[위치:' not in l and '[출처:' not in l and not l.strip().startswith(('###', '---'))]
-            cleaned_content = "\n".join(clean_lines).strip()
-            if cleaned_content:
-                cleaned_chunks.append(cleaned_content)
-        context_text = "\n\n".join(cleaned_chunks)
+        from rag.context import build_manual_context
+        manual_context = build_manual_context(source_docs)
+        from rag.layout import layout_for_question
+        layout_text = layout_for_question(query)
+        context_text = layout_text + manual_context
         
-        from rag.chain import SYSTEM_PROMPT
-        formatted_prompt = SYSTEM_PROMPT.format(context=context_text, question=query)
-        
+        # 위험 단계에 따른 발화 속도 계산 (비활성화 시 1.0x 표준 속도 유지)
         speed = 1.0
-        if self.current_level >= 5: speed = 1.3
-        elif self.current_level >= 4: speed = 1.2
+        if getattr(config, 'TTS_SPEED_SCALING', False):
+            if self.current_level >= 5: speed = 1.3
+            elif self.current_level >= 4: speed = 1.2
         
         print("-" * 55)
-        sentence_buffer = ""
         self._is_generating = True 
         self._interrupt_generation = False 
         
         try:
-            from rag.chain import call_ollama_native
-            completed_sentences = []  # 0.5b 앵무새 무한 루프 차단용 중복 문장 필터
+            from rag.provider import generate_guidance
             
-            for token in call_ollama_native(prompt=context_text, question=query):
-                if getattr(self, '_interrupt_generation', False):
-                    print("\n\n⚠️ [경고] 재난 상황 발생으로 일반 지침 생성을 즉시 중단합니다!")
-                    break
-                print(token, end="", flush=True)
-                sentence_buffer += token
-                
-                is_split_point = any(p in token for p in ".!?\n")
-                if is_split_point and "." in token:
-                    if sentence_buffer.strip() and sentence_buffer.strip()[-1].isdigit():
-                        is_split_point = False
-                
-                if not is_split_point:
-                    if "," in token and len(sentence_buffer) > 15:
-                        is_split_point = True
-                    elif len(sentence_buffer) > 25 and " " in token:
-                        is_split_point = True
-                
-                if is_split_point:
-                    clean_sent = sentence_buffer.strip()
-                    # [Safeguard] 동일한 문장(6자 이상)이 이전 답변에 이미 존재할 경우 즉시 루프 폭파 및 TTS 소거
-                    if len(clean_sent) > 6 and clean_sent in completed_sentences:
-                        sentence_buffer = ""
-                        break
-                    
-                    if len(clean_sent) > 6:
-                        completed_sentences.append(clean_sent)
-                        
-                    self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-                    sentence_buffer = ""
+            cloud_context = context_text if config.GEMINI_SEND_LAYOUT else manual_context
+            llm_started = time.perf_counter()
+            result = generate_guidance(context_text, query, cloud_context=cloud_context)
+            self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
+            with self._query_lock:
+                if not self._query_valid(request_id):
+                    return
+                print(f"[AI: {result.provider} · {time.strftime('%H:%M:%S')}] {result.text}", flush=True)
+                tts_started = time.perf_counter()
+                self.tts.speak_async(result.text, lang=lang, speed=speed, provider=result.provider)
+        except Exception as e:
+            if not self._query_valid(request_id):
+                return
+            print(f"\n⚠️ [답변 생성 오류] {type(e).__name__}: {e}")
+            if llm_started is not None and not self.last_query_timings["llm_s"]:
+                self.last_query_timings["llm_s"] = time.perf_counter() - llm_started
         finally:
             self._is_generating = False 
         
-        if sentence_buffer.strip() and not getattr(self, '_interrupt_generation', False):
-            self.tts.speak_async(sentence_buffer, lang=lang, speed=speed)
-        
+        deadline = time.monotonic() + 600
+        while self._query_valid(request_id):
+            if self.tts.wait_until_idle(timeout=0.2):
+                break
+            if time.monotonic() >= deadline:
+                print("\n⚠️ [TTS] 제한 시간 내 발화가 끝나지 않았습니다.")
+                break
+        if not self._query_valid(request_id):
+            return
+        if tts_started is not None:
+            self.last_query_timings["tts_s"] = time.perf_counter() - tts_started
         print(f"\n\n✅ 완료 ({time.time() - start_t:.1f}초)")
+        print(f"[시간] 검색 {self.last_query_timings['rag_s']:.3f}초 / 답변 {self.last_query_timings['llm_s']:.3f}초 / 음성 {self.last_query_timings['tts_s']:.3f}초")
         if source_docs:
             sources = set(d.get('source', 'unknown_manual') for d in source_docs)
-            print(f"[참고 문헌 (BGE-Base Reranker 정렬 적용)] {sources}")
+            print(f"[참고 문헌] {sources}")
         print("-" * 55)
 
     def run(self):
@@ -383,11 +432,13 @@ class EdgeSaverTest:
                 while msvcrt.kbhit(): msvcrt.getch()
             except: pass
 
-        print("[대기] 🚑 엣지 세이버 Reranker 검증용 테스트 쉘이 실행되었습니다.")
+        print("[대기] 🚑 엣지 세이버 평시 문답 테스트 쉘이 실행되었습니다.")
         if self.use_simple_ui:
             print("       - 안전 모드(SIMPLE_UI)가 적용되었습니다. (실시간 상태가 줄 단위로 출력됨)")
         else:
             print("       - 화면 꼬임 방지를 위한 '하단 고정 툴바 UI'가 적용되었습니다.")
+        print("       - /ai auto, /ai api, /ai local 명령으로 답변 엔진을 즉시 전환합니다.")
+        print("       - /tts로 음성 정책 확인, /tts gemini, /tts auto, /tts ppaso, /tts pyttsx3로 전환합니다.")
         print("       - 'q' 입력 시 종료됩니다.\n")
 
         self._monitor_running = True
@@ -411,9 +462,18 @@ class EdgeSaverTest:
                     print(f"\n📢 [실시간 상태] {self.current_risk_stats}")
                     query = input("❓ 질문: ").strip()
                     
-                    if self.tts: self.tts.stop()
+                    tts_response = self.tts.mode_command_response(query)
+                    if tts_response is not None:
+                        print(tts_response)
+                        continue
+                    mode_response = mode_command_response(query)
+                    if mode_response is not None:
+                        print(mode_response)
+                        continue
+
                     
                     if query == "" or query.lower() in ['v', 'voice']:
+                        self._cancel_pending_query()
                         if not getattr(config, 'STT_ENABLED', True) or self.stt_stream is None:
                             print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
                             continue
@@ -441,7 +501,8 @@ class EdgeSaverTest:
                             try:
                                 query = self.session.prompt(
                                     "❓ 질문: ", 
-                                    bottom_toolbar=self._get_bottom_toolbar
+                                    bottom_toolbar=self._get_bottom_toolbar,
+                                    refresh_interval=0.5
                                 ).strip()
                                 
                                 # 툴바 문자열이 터미널 버퍼 레이스 컨디션으로 오염 유입된 경우 정제
@@ -451,9 +512,18 @@ class EdgeSaverTest:
                                     query = re.sub(r'❓\s*질문:\s*', '', query)
                                     query = query.strip()
                                     
-                                if self.tts: self.tts.stop()
+                                tts_response = self.tts.mode_command_response(query)
+                                if tts_response is not None:
+                                    print(tts_response)
+                                    continue
+                                mode_response = mode_command_response(query)
+                                if mode_response is not None:
+                                    print(mode_response)
+                                    continue
+
                                 
                                 if query == "" or query.lower() in ['v', 'voice']:
+                                    self._cancel_pending_query()
                                     if not getattr(config, 'STT_ENABLED', True) or self.stt_stream is None:
                                         print("\n⚠️ 현재 음성 인식 기능을 사용할 수 없습니다. 텍스트로 질문해 주세요.")
                                         continue
@@ -485,6 +555,7 @@ class EdgeSaverTest:
                     time.sleep(0.5)
 
     def cleanup(self):
+        self._stop_query_worker()
         self._monitor_running = False
         print("\n[시스템] 자원을 해제 중...")
         try:
@@ -498,7 +569,7 @@ class EdgeSaverTest:
             if self._pa:
                 self._pa.terminate()
             if self._tts:
-                self._tts.stop()
+                self._tts.close()
             print("✅ 모든 자원이 안전하게 해제되었습니다.")
         except Exception as e:
             print(f"⚠️ 자원 해제 중 일부 오류 발생 (무시 가능): {e}")

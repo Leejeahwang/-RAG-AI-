@@ -1,0 +1,4 @@
+# -*- coding: utf-8 -*-
+# Optional historical Chroma comparison in tools/benchmark_rag.py.
+# Install only when running its Chroma comparison case, after requirements.txt.
+chromadb

@@ -4,7 +4,11 @@ LangChain 없이 직접 Ollama와 통신하여 속도를 극대화합니다.
 """
 import requests
 import json
+import logging
+import time
 import config
+
+_LOGGER = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an emergency response expert 'Edge Saver'.
 Your ONLY task is to copy and paste the relevant guidelines from the [참고 매뉴얼] exactly as they are written.
@@ -22,7 +26,8 @@ Your ONLY task is to copy and paste the relevant guidelines from the [참고 매
 
 답변:"""
 
-def call_ollama_native(prompt, system_prompt="", context="", question=""):
+def call_ollama_native(prompt, system_prompt="", context="", question="", timeout=None,
+                       response_format=None, num_predict=400):
     """requests를 사용하여 Ollama에 직접 스트리밍 요청을 보냅니다. (Chat API 사용)"""
     url = f"{config.OLLAMA_BASE_URL}/api/chat"
     
@@ -44,7 +49,7 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
     )
 
     messages = [
-        {"role": "system", "content": system_content},
+        {"role": "system", "content": system_prompt or system_content},
         {"role": "user", "content": user_content}
     ]
 
@@ -57,39 +62,58 @@ def call_ollama_native(prompt, system_prompt="", context="", question=""):
             "temperature": 0.1,       # 특정 루프 차단을 위한 약간의 유연성 부여
             "top_p": 0.85,            # 무작위 이상한 단어 생성을 억제하기 위한 누적 확률 제한
             "repeat_penalty": 1.15,   # 단어 반복 루프(1.05)와 억지 단어 비틀기(1.35) 사이의 최적의 밸런스 지점
-            "num_predict": 400,       # 0.5b 가속을 위해 불필요하게 늘어나는 토큰 한도를 400자로 제한
+            "num_predict": num_predict,
             "num_ctx": 2048,
             "num_thread": 4,
-            "use_mlock": True,
             "stop": ["질문:", "답변:", "수칙:", "매뉴얼:", "\n\n\n", "edgesaver", "edge saver"] # 앵무새 무한 루프 원천 차단 시퀀스 지정
         }
     }
+    if response_format is not None:
+        payload["format"] = response_format
+    started = time.monotonic()
+    _LOGGER.info("[Ollama] 요청 시작: 모델=%s, 최대 생성=%d토큰", config.LLM_MODEL, num_predict)
     
     try:
         # 라즈베리파이 환경을 고려하여 타임아웃을 300초(5분)로 연장
-        with requests.post(url, json=payload, stream=True, timeout=300) as response:
+        with requests.post(url, json=payload, stream=True, timeout=timeout or 300) as response:
             if response.status_code != 200:
-                yield f"[시스템 에러] Ollama 서버 응답 실패 ({response.status_code})"
-                return
+                raise RuntimeError(f"Ollama 서버 응답 실패 ({response.status_code})")
                 
-            for line in response.iter_lines():
+            stream_done = False
+            token_count = 0
+            for line in response.iter_lines(chunk_size=1):
                 if line:
                     chunk = json.loads(line.decode("utf-8"))
+                    if chunk.get("error"):
+                        raise RuntimeError("Ollama 스트림 오류 응답")
                     # Chat API는 response 대신 message.content 안에 토큰이 들어있습니다.
                     # [호환성 패치] Qwen 추론 모델(DeepSeek-R1 Distill 등)의 경우 "thinking" 필드로 출력될 수 있습니다.
                     msg = chunk.get("message", {})
                     token = msg.get("content", "")
                     thinking_token = msg.get("thinking", "")
                     
-                    if thinking_token:
-                        yield thinking_token
-                    elif token:
+                    # thinking과 content가 같은 청크에 함께 오면 content를 우선한다.
+                    # 기존 if/elif는 thinking이 존재할 때 실제 답변 content를 버릴 수 있었다.
+                    if token:
+                        if token_count == 0:
+                            _LOGGER.info("[Ollama] 첫 응답 수신: %.2fs", time.monotonic()-started)
+                        token_count += 1
                         yield token
+                    elif thinking_token:
+                        # content가 아직 없는 reasoning 청크는 사용자 답변/TTS에 내보내지 않는다.
+                        pass
                         
                     if chunk.get("done", False):
+                        if chunk.get("done_reason") == "length":
+                            raise RuntimeError("Ollama 생성 토큰 한도 초과")
+                        stream_done = True
                         break
+            if not stream_done:
+                raise RuntimeError("Ollama 스트림이 완료되지 않았습니다")
+            _LOGGER.info("[Ollama] 응답 완료: %.2fs", time.monotonic()-started)
     except Exception as e:
-        yield f"[시스템 에러] 통신 실패: {e}"
+        _LOGGER.exception("[Ollama] 스트리밍 요청/파싱 실패")
+        raise RuntimeError(f"Ollama 스트리밍 실패: {e}") from e
 
 def load_llm():
     """호환성을 위해 남겨둔 함수 (실제로는 call_ollama_native 사용)"""

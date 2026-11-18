@@ -19,8 +19,16 @@ chroma_db_speed/
 
 models/
 chroma_db/
-live_temp_main.jpg
 
 # 임시 카메라 이미지
 live_temp_*.jpg
 temp_capture.jpg
+
+# 로컬 빌드 RAG DB
+faiss_db/
+scratch/
+models/
+.runtime/
+
+# OS metadata
+.DS_Store

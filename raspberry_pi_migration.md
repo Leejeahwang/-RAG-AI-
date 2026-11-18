@@ -1,96 +1,382 @@
-# 🍓 라즈베리파이(Raspberry Pi) 이식 가이드
+# 라즈베리파이 설치·이전 가이드 — 현재 통합 버전
 
-지금까지 구축하신 '엣지 세이버(Edge Saver)'는 라즈베리파이 같은 엣지 디바이스에서 작동하도록 설계되었습니다. 현재 맥(Mac)에서 작동하는 이 프로젝트를 라즈베리파이로 완벽하게 이식하기 위한 단계별 가이드입니다.
+2026-10-09 설치 문서 대조 반영. 통합 버전은 아래의 integration/vision-rag-voice 브랜치로 가져옵니다. 모델 캐시와 개인 설정은 별도로 준비해야 합니다. 상세 차이는 INTEGRATION_RESULT.md를 참고하세요.
 
-## 1. 필수 시스템 환경 (OS)
-> [!IMPORTANT]
-> **반드시 64-bit OS를 설치해야 합니다.** 
-> Ollama 자체와 음성 인식 모델(faster-whisper) 등 최신 AI 패키지는 32-bit를 지원하지 않습니다. 
-> * 추천 OS: **Raspberry Pi OS (64-bit)** (Bookworm 버전 권장) 또는 **Ubuntu 24.04 (64-bit)**
+프로젝트 루트에서 실행합니다. 64비트 Raspberry Pi OS와 충분한 저장 공간을 준비하세요. Python 의존성, 모델 파일, 시스템 라이브러리는 각각 필요합니다. 아래 명령은 Pi 터미널용입니다.
 
-## 2. 코드 다운로드 (Git Clone)
-라즈베리파이 터미널을 열고 지금 깃허브에 올리신(Push) 최신 코드를 다운로드합니다.
+## 1. 프로젝트 가져오기
+
+USB로 최신 프로젝트를 옮겼다면 해당 폴더에서 시작합니다.
+
 ```bash
-cd ~
-git clone https://github.com/Leejeahwang/-RAG-AI-.git
-cd ./-RAG-AI-
+cd /home/raspi/Desktop/SW2026-2
 ```
 
-## 3. 시스템 의존성 및 패키지 설치
-라즈베리파이는 macOS나 Windows와 달리 특정 하드웨어(오디오, GPIO) 접근을 위한 시스템 패키지를 OS 단에서 먼저 설치해 주어야 합니다.
+Git을 사용할 때는 작업 브랜치를 지정합니다. 아직 Git에 올리지 않은 PC 수정 사항은 USB로 옮겨야 합니다.
 
-### A. 오디오 및 필수 라이브러리 설치
-음성 인식(STT/마이크)과 음성 출력(TTS/스피커)을 원활하게 쓰기 위해 설치합니다.
+```bash
+cd ~/Desktop
+git clone --branch integration/vision-rag-voice https://github.com/Leejeahwang/-RAG-AI-.git SW2026-2
+cd SW2026-2
+```
+
+이미 같은 이름의 폴더가 있으면 clone 대신 기존 폴더를 사용하세요.
+
+USB 복사 후 필수 코드가 빠지지 않았는지 확인합니다.
+
+```bash
+test -f rag/__init__.py && test -f rag/native_retriever.py && echo 'rag files ok'
+```
+
+`rag files ok`가 나오지 않으면 최신 프로젝트의 `rag/` 폴더를 복원하세요. `No module named 'rag'`는 코드 누락 문제이며 패키지 설치나 모델 다운로드로 해결되지 않습니다.
+
+### USB에 함께 넣을 파일
+
+- 프로젝트 코드, requirements 파일, `config.py`
+- `data/` 전체, `faiss_db/` 전체(매뉴얼과 인덱스가 같은 버전이어야 함)
+- `models/ppaso/` 전체: ONNX 가중치뿐 아니라 `example/`, `runtime/`, 사전, `config.json`도 필요
+- `vision/models/`의 화재·연기 전용 모델. 기본 YOLO 모델로 대체하면 안 됨
+- Gemini를 사용할 경우 직접 관리하는 `.env`(API 키 포함, Git에 올리지 않음)
+
+Windows의 `venv`, `.venv`, `__pycache__`는 옮겨서 사용하지 않습니다. Pi에서 이미 동작하는 기존 가상환경은 원래 위치에 두고 활성화해 새 프로젝트를 실행할 수 있지만 추가 의존성은 설치해야 합니다.
+
+완전한 오프라인 실행에는 SBERT/BGE의 Hugging Face 캐시와 Ollama 모델도 필요합니다. 기본 HF 위치는 `~/.cache/huggingface/hub`이며 설정에 따라 달라집니다. 캐시를 옮길 때 실제 가중치와 링크 대상까지 포함하세요. Ollama 모델은 서비스 계정·`OLLAMA_MODELS` 설정에 따라 저장 위치가 다르므로 기존 Pi 모델을 유지하거나 온라인에서 아래 모델을 먼저 받으세요. Windows의 Python 패키지와 Ollama 실행 바이너리는 Pi용으로 다시 설치해야 합니다.
+
+## 2. 시스템 패키지
+
 ```bash
 sudo apt update
-sudo apt install -y python3-pyaudio portaudio19-dev python3-rpi.gpio flac espeak ffmpeg libespeak1 swig python3-dev
+sudo apt install -y python3-venv python3-dev build-essential git curl \
+  portaudio19-dev libsndfile1 ffmpeg alsa-utils libopenblas-dev libgl1 libglib2.0-0 swig liblgpio-dev
 ```
 
-### B. 파이썬 가상환경 및 패키지 설치
-라즈베리파이 OS (Bookworm 이상)에서는 가상환경 사용이 강제됩니다.
+PyAudio 빌드에는 `portaudio19-dev`가 필요합니다. 실행용 `libportaudio2`만 설치하면 개발 헤더가 부족할 수 있습니다.
+
+GPIO용 Python `lgpio`를 소스 빌드할 때는 `liblgpio-dev`가 필요합니다. `/usr/bin/ld: cannot find -llgpio`는 용량 부족이 아니라 링크할 native 라이브러리가 없다는 뜻입니다. `sudo apt install -y liblgpio-dev`가 성공한 뒤 활성화된 가상환경에서 `python -m pip install -r requirements_rpi.txt`를 다시 실행합니다.
+
+pyttsx3 비교 시험을 할 경우 추가 설치합니다(PPASO 합성에는 eSpeak가 필요하지 않음).
+
 ```bash
-# 가상환경 생성 및 접속
-python3 -m venv venv
-source venv/bin/activate
-
-# 깃허브에서 가져온 requirement.txt 설치
-pip install -r requirements.txt
-
-# (선택) 라즈베리파이용 하드웨어 제어 라이브러리 추가 설치
-pip install RPi.GPIO
+sudo apt install -y espeak-ng libespeak-ng1 espeak-ng-data libespeak1
 ```
-> [!TIP]
-> 현재 맥에서 `⚠️ [경고] RPi.GPIO 라이브러리가 없습니다. (시뮬레이션 모드로 작동합니다)` 라는 메시지가 뜨지만, 라즈베리파이에서는 이 라이브러리가 정상적으로 깔리면서 **진짜 센서 모드**로 작동하게 됩니다!
 
-## 4. 로컬 AI 모델 (Ollama) 설치 및 구동
-라즈베리파이의 ARM 아키텍처에 맞게 Ollama를 설치하고 1.5B 모델을 올립니다.
-*(주의: 라즈베리파이 5 8GB 모델을 적극 권장합니다. 메모리가 작으면 매우 느릴 수 있습니다.)*
+## 3. 가상환경과 Python 패키지
+
+**Python 3.11을 사용합니다.** 이번 Raspberry Pi 시험에서는 Debian 13(trixie)의 Python 3.13.5에서 프로젝트의 `numpy>=1.26,<2` 조건과 `ml_dtypes`의 Python 3.13용 NumPy 조건이 충돌했습니다. requirements 파일은 수정하지 않고 Python 3.11.17 가상환경에서 설치·pip check 및 RAG·Gemini·TTS 실행을 확인했습니다. STT와 실제 카메라·센서 동작은 검증하지 않았습니다.
+
+먼저 `python3.11 --version`으로 인터프리터가 있는지 확인하세요. 이번 Pi에서는 `/home/raspi/.local/bin/python3.11`을 사용했습니다. 명령을 찾지 못하면 Python 3.11과 해당 venv 지원을 별도로 준비해야 합니다. `python3-venv`는 OS 기본 Python용이므로 다른 버전의 venv 지원을 보장하지 않습니다. 시스템 기본 Python을 교체하거나 requirements의 NumPy 제한을 임의로 풀지 마세요.
+
+새 환경을 만드는 경우:
 
 ```bash
-# Ollama 설치
+python3.11 -m venv .venv-py311
+source .venv-py311/bin/activate
+python --version
+python -c "import sys; assert sys.prefix != sys.base_prefix, '가상환경이 활성화되지 않았습니다'; print(sys.executable)"
+python -m pip install --upgrade pip wheel
+python -m pip install -r requirements_torch_cpu.txt
+python -m pip install -r requirements_rpi.txt
+python -m pip check
+```
+
+기존 Pi 환경은 Python 3.11인지 확인한 뒤에만 재사용합니다. 모델 파일이 있다고 가상환경의 Python 버전도 호환되는 것은 아닙니다. 재사용할 때는 첫 두 명령 대신 그 환경의 `bin/activate`를 지정합니다. 예:
+
+```bash
+source /home/raspi/Desktop/RAG/-RAG-AI-/.venv/bin/activate
+cd /home/raspi/Desktop/SW2026-2
+python -m pip install -r requirements_rpi.txt
+```
+
+명령은 순서대로 실행하고, 오류가 나면 다음 단계로 넘어가지 않습니다. `No space left on device`가 뜨면 `df -h .`로 공간을 확인하고 먼저 확보하세요. 가상환경 생성이 실패하면 `bin/activate`도 없을 수 있습니다. 이 상태에서 pip를 실행하면 시스템 Python의 `externally-managed-environment` 오류가 이어질 수 있으므로 가상환경 생성·활성화부터 다시 확인합니다.
+
+`requirements_rpi.txt`는 공통 `requirements.txt`와 GPIO 패키지를 함께 설치합니다. 새 환경에서는 반드시 앞 단계의 CPU PyTorch 설치가 성공한 뒤 진행하세요. `requirements_torch_cpu.txt`는 [PyTorch 공식 CPU 인덱스](https://pytorch.org/get-started/locally/)를 지정합니다. 호환 wheel이 없으면 Python 버전과 `uname -m` 출력(aarch64)을 확인하고, 일반 PyPI GPU 빌드로 우회하지 마세요. 기존 CUDA 빌드를 CPU 빌드로 교체하는 작업은 새 환경 설치와 별개입니다.
+
+OpenCV는 일반 `opencv-python`만 사용합니다. Roboflow SDK는 현재 앱에서 사용하지 않고 headless OpenCV를 추가 설치하므로 기본 목록에서 제외했습니다. 데이터셋 작업에 필요하면 별도 작업 환경에 설치하세요. 설치가 실패하면 마지막 오류를 해결한 뒤 다시 설치합니다. FAISS의 Python 모듈은 `faiss-cpu`입니다. `libfaiss-dev`만 설치하는 것으로 Python `import faiss`를 대체할 수 없습니다.
+
+Python 3.13에서 ARM64 wheel이 없는 패키지는 소스 빌드로 넘어갈 수 있습니다. 해당 오류가 발생하면 패키지 지원 버전을 확인하고 별도 Python 3.11 환경을 고려하세요. OS에 따라 `apt install python3.11`은 제공되지 않을 수 있습니다. 현재 동작하는 환경을 지우지는 마세요. 이 목록은 버전 잠금 파일이 아니므로 새 설치의 모든 조합을 보장하지 않습니다.
+
+원본 PDF/OCR 문서를 다시 가공할 때만 추가 설치:
+
+```bash
+python -m pip install -r requirements_documents.txt
+```
+
+MeloTTS는 기본 앱의 필수 패키지가 아닙니다. 선택해서 사용할 경우 [공식 설치 안내](https://github.com/myshell-ai/MeloTTS/blob/main/docs/install.md)에 따라 별도 환경을 준비하세요.
+
+## 4. PPASO·검색 모델 준비
+
+USB로 모델을 옮겼으면 먼저 파일을 확인합니다(다운로드 없음).
+
+```bash
+python download_models.py --target ppaso --check
+```
+
+PPASO 파일이 없을 때만 인터넷에 연결해 받습니다. 기존 런타임을 수정한 경우에는 다운로드로 덮어쓰지 말고 해당 수정본을 옮기세요.
+
+```bash
+python download_models.py --target ppaso
+python download_models.py --target rag
+```
+
+다운로드 파일은 `config.PPASO_MODEL_DIR`(기본 `models/ppaso`)에, 검색 모델은 Hugging Face 캐시에 저장됩니다. SBERT와 `USE_RERANKER=True`일 때 BGE를 준비합니다. Ollama와 화재 영상 모델은 이 스크립트가 받지 않습니다. STT는 별도 `python download_models.py --target stt`로 준비합니다. 기본 모델은 small이며, `--target all`에는 STT 다운로드가 포함되지 않습니다. 실행 중 STT 자동 다운로드는 기본 비활성화입니다.
+
+현재 BGE 재정렬은 Pi 검색 지연 비교를 위해 기본 비활성화(`USE_RERANKER=False`)입니다. FAISS·BM25 검색은 계속 사용합니다. 품질 비교를 위해 BGE를 켜려면 `config.py`를 변경하고 `python download_models.py --target rag`로 모델을 준비한 뒤 앱을 재시작하세요.
+
+### MeCab 확인 및 새 환경의 네이티브 설치
+
+```bash
+python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하십시오'))"
+```
+
+단어 목록이 나오면 이 설치 단계는 건너뜁니다. `requirements` 설치 성공이나 `Requirement already satisfied`만으로 MeCab 동작을 판단하지 않습니다. Python 패키지가 있어도 네이티브 라이브러리가 없을 수 있습니다. 기존 가상환경을 삭제하고 새로 만들었다면 이전 환경 내부의 라이브러리도 다시 설치해야 합니다.
+
+다음 오류는 **한국어 mecab-ko** 네이티브 설치가 필요한 경우입니다.
+
+- `mecab-config not found`: 소스 빌드에 필요한 도구를 찾지 못함
+- `ImportError: libmecab.so.2 ... No such file or directory`: 라이브러리가 없거나 로딩 경로가 맞지 않음
+
+두 번째 오류라면 활성화된 가상환경에서 먼저 위치를 확인합니다.
+
+```bash
+find "$VIRTUAL_ENV" /usr/local/lib /usr/lib -name 'libmecab.so*' 2>/dev/null
+```
+
+경로가 나오면 해당 설치의 라이브러리 경로를 확인합니다. 아무 경로도 나오지 않으면 아래 절차로 현재 가상환경에 설치합니다. 일본어용 `mecab-python3`는 PPASO 의존성을 대체하지 않습니다. 아래는 [공식 설치 스크립트](https://raw.githubusercontent.com/jonghwanhyeon/python-mecab-ko/main/scripts/install_mecab_ko.py)의 `--prefix` 옵션을 사용합니다.
+
+```bash
+sudo apt install -y build-essential python3-dev curl
+curl -fL https://raw.githubusercontent.com/jonghwanhyeon/python-mecab-ko/main/scripts/install_mecab_ko.py -o /tmp/install_mecab_ko.py
+```
+
+기존 GNU Savannah HTTP 주소에 연결하지 못했던 경우를 위해 `config.guess`와 `config.sub` 다운로드 주소를 GCC 저장소의 HTTPS 주소로 변경합니다.
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+p = Path("/tmp/install_mecab_ko.py")
+s = p.read_text()
+for name in ("guess", "sub"):
+    old = f"http://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.{name};hb=HEAD"
+    new = f"https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.{name}"
+    s = s.replace(old, new)
+p.write_text(s)
+PY
+
+python /tmp/install_mecab_ko.py --prefix "$VIRTUAL_ENV"
+```
+
+설치 명령이 오류 없이 끝난 뒤 경로를 설정하고 Python 바인딩을 새 환경 기준으로 다시 빌드합니다. 이전 환경에서 빌드한 캐시 wheel을 재사용하지 않도록 합니다.
+
+```bash
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+python -m pip install --force-reinstall --no-cache-dir --no-binary=python-mecab-ko python-mecab-ko
+python -c "from mecab import MeCab; print(MeCab().morphs('안전하게 대피하십시오'))"
+```
+
+단어 목록이 나와야 다음 단계로 진행합니다. 설치 스크립트 다운로드 중 `Network is unreachable`이 뜨면 해당 호스트 연결 실패이며 설치 성공으로 볼 수 없습니다. `make`의 '할 일이 없습니다'는 그 자체로 오류가 아닙니다.
+
+**새 터미널을 열 때도** 환경을 활성화한 뒤 다음 두 경로 설정을 적용하고 앱을 실행합니다. `export` 설정은 현재 셸에만 적용되며, 가상환경을 활성화하는 것만으로 자동 복원되지 않습니다.
+
+```bash
+source .venv-py311/bin/activate
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+## 5. Ollama·Gemini 설정
+
+Ollama가 없다면 [공식 설치 안내](https://ollama.com/download/linux)에 따라 설치합니다.
+
+```bash
 curl -fsSL https://ollama.com/install.sh | sh
-
-# Ollama 백그라운드 서버 실행 (이미 실행 중일 수 있음)
-# 모델 다운로드 및 실행
-ollama run qwen2.5:1.5b
+ollama pull qwen2.5:0.5b
+ollama list
 ```
-다운로드가 끝나고 프롬프트가 뜨면 `/bye`를 입력해 빠져나오세요. 이제 백그라운드에 1.5B 모델이 항시 대기 중 상태가 됩니다!
 
-## 5. 하드웨어 설정 변경 (config.py)
-이제 파일 코드를 라즈베리파이 실제 선 연결(핀 번호)에 맞게 살짝 수정해야 합니다.
+현재 답변 모델은 `qwen2.5:0.5b`입니다. 검색어 재작성이나 AI 문서 정제를 사용할 때만 `qwen2.5:1.5b`도 받으세요. Ollama 서비스가 실행되어 있어야 로컬 답변을 생성할 수 있습니다.
 
-* **GPIO 세팅:** `config.py`를 열고, 부저(Buzzer)나 LED가 연결된 실제 PIN 번동이 맞는지 확인합니다.
-  ```python
-  ALERT_BUZZER_PIN = 18
-  ALERT_LED_PIN = 23
-  ```
-* **마이크 및 스피커:** USB 마이크나 3.5mm 스피커를 꽂은 뒤 음성 인식이 잘 안 된다고 느껴지면 터미널에서 `alsamixer`를 쳐서 마이크 볼륨이 꺼져있지 않은지 확인합니다.
+기존 `.env`가 없을 때만 예시를 복사하고 편집합니다.
 
----
+```bash
+test -f .env || cp .env.example .env
+nano .env
+```
 
-## 🚀 6. 최종 실행
-모든 준비가 끝났습니다! 가상환경(`(venv)`)이 켜진 상태에서 메인 파이프라인을 기동합니다.
+`GEMINI_API_KEY`와 사용 가능한 `GEMINI_MODEL`, `AI_PROVIDER=auto` 또는 `local`을 설정합니다. API 키가 없어도 로컬 모드를 사용할 수 있습니다.
+
+## 6. 실행 전 확인
+
+```bash
+python -c "import cv2, faiss, onnxruntime, soundfile, scipy, pygame, gpiozero; print('imports ok')"
+python download_models.py --target rag --check
+python tools/benchmark_tts.py --engines ppaso --repeats 1
+python tools/check_rag_quality.py
+python main_test.py
+```
+
+PPASO 파일 확인 성공은 음성 합성 성공을 뜻하지 않습니다. 벤치마크의 `ppaso: ok`와 생성 WAV까지 확인하세요. 실패 원인은 출력된 결과 폴더의 `ppaso/worker.log`에서 확인합니다. 스피커 재생은 `main_test.py`에서 별도로 확인합니다.
+
+문서 변경 경고가 나오면 앱을 종료하고 인덱스를 갱신합니다.
+
+```bash
+python tools/rebuild_rag_index.py
+```
+
+확인 후 통합 실행:
 
 ```bash
 python main.py
 ```
-이제 라즈베리파이가 센서 값을 읽어오고 열을 감지하며, 엣지 상에서 AI가 비상 상황을 판단해 안내방송을 송출하게 될 것입니다!
 
----
+평시 문답만 확인할 때는 `python main_test.py`를 사용합니다. 카메라는 실행하지만 센서는 시뮬레이션하며 비상 경보·대피 방송 개입을 끕니다. 두 앱을 동시에 실행하지 않습니다. GUI는 현재 구현 예정인 별도 모듈이므로 실행 안내와 streamlit/pandas 설치를 제외했습니다. Linux에서 STT는 기본 비활성화됩니다.
 
-## 🛠️ 7. 흔하게 발생하는 에러 해결 (Troubleshooting)
+## 7. 실제 센서와 영상 점검
 
-### Q1. `RuntimeError: Cannot determine SOC peripheral base address` 에러가 뜹니다.
-라즈베리파이 5(또는 최신 Bookworm OS)에서 구형 `RPi.GPIO` 라이브러리가 새 칩셋을 인식하지 못해 발생합니다. 코드를 수정할 필요 없이, 최신 호환 패키지인 `rpi-lgpio`로 교체해 주면 깔끔하게 해결됩니다.
-```bash
-# 가상환경이 켜진 상태에서 터미널에 입력
-pip uninstall -y RPi.GPIO
-pip install rpi-lgpio
+- 연기·가스 센서는 `gpiozero.MCP3008`을 사용합니다. SPI 활성화, ADC 배선·채널, GPIO 접근 권한을 확인하세요. Pi 설정에서 SPI를 활성화하고 재부팅합니다.
+- 온도 센서 코드(`sensors/temperature.py`)는 현재 `Adafruit_DHT.DHT11`과 GPIO 4를 사용합니다. DHT22로 설명한 옛 가이드는 맞지 않습니다. 이 구형 드라이버의 Pi 5 지원은 별도 검증·수정이 필요합니다. 패키지 설치만으로 실제 센서 동작을 보장하지 않습니다.
+- 현재 main.py는 기본 SENSOR_MODE=demo이며 가상 값을 사용합니다. hardware 모드에서는 센서 읽기 실패를 RuntimeError로 처리하고 오류를 표시하며 가상 정상값으로 대체하지 않습니다. main_test.py는 SENSOR_MODE와 무관하게 센서를 시뮬레이션합니다.
+- 현재 사이렌은 pygame 오디오 출력입니다. 옛 가이드의 `ALERT_BUZZER_PIN`, `ALERT_LED_PIN`은 현재 설정 항목이 아닙니다.
+- 복원된 `vision/fire_detector.py`의 모델 선택 순서는 OpenVINO → TFLite → ONNX → PT입니다. 기본 requirements에는 ONNXRuntime과 PyTorch만 준비합니다. 다른 형식은 각 실행 라이브러리가 별도로 필요합니다. Pi에서는 담당자와 합의한 모델 형식과 배포 파일을 사용하고, 모델 선택 로직이나 가중치를 임의로 수정하지 마세요.
+
+폰트가 깨지면 `sudo apt install fonts-nanum`을 사용합니다. 모델·센서·스피커 확인은 실제 Pi에서 수행해야 합니다.
+
+## 8. 음성 출력과 설정 확인
+
+Gemini 답변은 **기본적으로 Gemini TTS 우선**으로 읽습니다. 실행 중 `/tts gemini`로 다시 활성화할 수도 있습니다. 첫 비상 고정 안내도 온라인 AI 모드에서는 Gemini TTS를 우선 사용합니다. `/ai local` 또는 로컬 TTS 고정에서는 첫 안내도 로컬 음성을 사용합니다. 등록 구역 안내(대피로·소화기 위치)도 Gemini TTS 우선으로 읽고 실패하면 로컬로 전환합니다. Ollama 답변은 로컬 TTS로 읽으며, 반복 비상 방송은 처음 재생한 음성 파일을 재사용합니다. main.py와 main_test.py 모두 같은 정책을 적용합니다.
+
+실행 중 질문 프롬프트에서 `/tts`로 현재 정책을 확인하고 `/tts auto`로 설정된 기본 정책으로 돌아갑니다. Gemini TTS를 비활성화한 상태에서는 이 명령도 로컬 음성을 유지합니다. `/tts pyttsx3`와 `/tts ppaso`는 해당 로컬 엔진으로 고정하므로 이후 Gemini 답변도 로컬로 읽습니다. 정책 전환은 현재 발화와 대기 중 음성을 취소하고 이후 발화에 적용하며, 처리 중인 LLM 답변은 취소하지 않습니다. `.env`는 변경하지 않습니다. PPASO 초기화가 실패하면 기존 정책을 유지합니다.
+
+Gemini TTS는 기존 `GEMINI_API_KEY`로 별도 음성 생성 요청을 보냅니다. 답변 텍스트만 전송하며 생성된 WAV는 기존 pygame 경로로 재생합니다. 기본 모델은 `gemini-3.8-flash-lite-tts`, 목소리는 `Kore`입니다. 추가 Python 패키지 설치는 필요하지 않습니다. 키의 해당 모델 접근 권한과 사용 한도는 계정에 따라 확인해야 합니다. 2026-10-17 Windows에서 실제 API 합성에 성공했습니다(짧은 한국어 문장 약 2.9초, WAV 3.88초/24kHz). 실제 스피커 청취와 Pi에서의 Gemini TTS 재생은 별도 검증해야 합니다.
+
+`.env`에서 다음을 선택적으로 설정합니다. 기존 `.env`를 `.env.example`로 덮어쓰지 마세요.
+
+```dotenv
+GEMINI_TTS_ENABLED=true
+GEMINI_TTS_MODEL=gemini-3.8-flash-lite-tts
+GEMINI_TTS_VOICE=Kore
+GEMINI_TTS_READ_TIMEOUT=30
+GEMINI_TTS_RETRY_COOLDOWN=60
 ```
 
-### Q2. 한글 글씨가 네모 박스(□□□)나 이상한 특수문자로 다 깨져서 나옵니다.
-라즈베리파이 OS는 기본적으로 영문 환경이라 한글 폰트가 빠져있어서 생기는 시각적인 현상입니다. 한글 폰트를 시스템에 설치하고 껐다 켜주시면 바로 예쁜 한글이 나옵니다.
+설정을 생략해도 위 기본값이 적용됩니다. `/tts gemini`는 환경 설정이 false여도 해당 실행 동안 Gemini TTS를 켭니다. 기존 `.env`에 `GEMINI_TTS_ENABLED=false`가 있으면 `true`로 바꾸고 재시작하세요. 로컬 음성을 계속 사용하려면 `false`를 유지합니다. `/tts ppaso`로 로컬 고정, `/tts auto`로 환경 설정의 기본 정책에 돌아갑니다. HTTP 오류·타임아웃·빈 음성 등의 실패 시 현재 로컬 엔진으로 전환하고 기본 60초간 TTS API 재시도를 쉽니다. `/tts`에서 최근 실패 이유를 확인하거나 `/tts gemini`로 재시도 대기를 초기화할 수 있습니다. `[TTS] 재생 엔진: GEMINI` 또는 로컬 엔진 로그로 실제 경로를 확인하세요. 이미 전송한 HTTP 요청은 발화 중단 시 즉시 취소되지 않을 수 있으며, 해당 요청이 끝나기 전 다음 합성이 지연될 수 있지만 취소된 음성은 재생하지 않습니다. Gemini TTS 성공 시 위험 단계별 로컬 배속 설정은 적용하지 않습니다.
+
+Pi 가상환경에서 앱을 실행하기 전 API만 확인하려면 다음 명령을 사용합니다. 파일이 이미 있으면 다른 출력 경로를 지정하세요. 이 명령은 자동 재생하지 않습니다.
+
+```bash
+python tools/diagnose_gemini_tts.py --output gemini_tts_test.wav
+```
+
+PYTTSX3는 Linux의 eSpeak 계열 라이브러리와 한국어 목소리가 필요합니다. 아래 패키지를 준비하고 `/tts pyttsx3` 전환 후 새 질문으로 실제 소리를 확인하세요. Linux에서는 PYTTSX3가 WAV를 합성하고 PPASO와 같은 pygame 경로로 재생하므로 원격 오디오 설정도 함께 사용합니다. 이전 직접 재생 방식에서는 eSpeak의 `aplay`가 ALSA 오류 524를 내면서도 성공으로 종료하는 현상을 확인했습니다. 이를 우회하도록 WAV 합성·재생을 분리했으며, 수정 후 실제 Pi 재생은 추가 확인이 필요합니다.
+
+```bash
+sudo apt install espeak-ng libespeak-ng1 espeak-ng-data libespeak1
+```
+
+기본 TTS는 PPASO 합성 후 pygame 재생입니다. 터미널 espeak 성공만으로 이 경로를 검증할 수 없습니다. 현재 통합 TTS는 PPASO 초기화 실패 시 PYTTSX3로 전환하고 실제 엔진을 표시합니다. Linux 시스템 음성은 pyttsx3이며 SAPI5는 Windows 전용입니다. 한국어 시스템 목소리가 없으면 오류를 표시합니다.
+
+```bash
+python tools/diagnose_pi_tts.py --stage inspect
+python tools/diagnose_pi_tts.py --stage synth
+aplay scratch/pi_tts_probe.wav
+python tools/diagnose_pi_tts.py --stage play
+python tools/diagnose_pi_tts.py --stage project
+```
+
+각 명령은 따로 실행합니다. synth 실패는 PPASO 모델/의존성부터, aplay 성공 후 play 실패는 SDL/pygame 출력 경로부터 확인합니다. 무음 진단 때 프로젝트를 먼저 종료하고 동일 사용자와 가상환경을 사용합니다.
+
+.env 예시는 demo 센서 모드, PPASO, Whisper small, 구역 A입니다. 현장의 ZONE_ID와 평면도를 검토하세요. Gemini 키와 모델은 본인 계정에서 사용 가능한 값으로 설정합니다. HTTPError가 있으면 API 응답의 상태 코드와 오류를 확인해야 하며, 기존에 확인한 무효 키 오류는 키 교체와 프로그램 재시작이 필요합니다. 로컬 확인은 /ai local을 사용합니다.
+
+main.py는 공통 고정 비상 안내 뒤에 구역 파일의 대피로·주의사항을 바로 예약하고, AI가 화재 대응 매뉴얼에서 선택한 추가 수칙을 이어서 출력·재생합니다. 구역 안내는 AI 실패나 지연 때문에 생략되지 않습니다. 정상 복귀 후에도 예약된 안내를 마치지만, 다른 구역의 새 비상이나 종료는 이전 안내를 취소합니다. main_test.py의 일반 문답에서도 Gemini의 과도한 요약을 줄였습니다. 기존 .env에 GEMINI_SEND_LAYOUT=false가 있다면 true로 바꿔야 Gemini와 Ollama에 같은 구역 자료가 전달됩니다. 환경 변경 후 프로그램을 다시 시작하세요.
+
+## 9. 원격 데스크톱에서 Windows PC로 음성 듣기
+
+Pi에 스피커가 없고 Windows 원격 데스크톱으로 접속한다면 xrdp의 오디오 전달 기능을 사용합니다. 이번 Debian 13(trixie), PipeWire 1.4.2 환경에서 아래 절차로 main_test.py의 TTS를 Windows PC에서 들을 수 있었습니다. 물리 스피커 출력이나 STT 마이크 입력은 별도 검증 대상입니다.
+
+### Windows 접속 설정
+
+Windows에서 `Win + R` → `mstsc` → **옵션 표시 → 로컬 리소스 → 원격 오디오 → 설정 → 이 컴퓨터에서 재생**을 선택합니다. 설정 변경 후 다시 연결하세요. 현재 접속 화면 안이 아니라 접속 전 Windows 설정 창에서 변경합니다.
+
+### Pi의 원격 오디오 모듈 설치
+
+아래는 이번에 확인한 PipeWire 환경용입니다. 다른 OS나 PulseAudio 환경에서는 패키지와 설정이 다를 수 있습니다.
+
 ```bash
 sudo apt update
-sudo apt install -y fonts-nanum fonts-unfonts-core
+sudo apt install pipewire-module-xrdp pulseaudio-utils
 ```
+
+설치가 정상 완료되면 `sudo reboot`으로 재부팅하고 원격 데스크톱으로 다시 연결합니다. `pulseaudio-utils`는 확인 도구인 `pactl`을 제공하며, 별도의 PulseAudio 서버로 교체하는 명령이 아닙니다.
+
+### 원격 터미널의 오디오 연결 경로 확인
+
+이번 원격 세션에서는 PipeWire가 이미 실행 중인데도 `XDG_RUNTIME_DIR`가 비어 있고 D-Bus 주소가 `/tmp/dbus-…`를 가리켰습니다. 이때 `pactl`은 `Connection refused`, `systemctl --user`는 `Process org.freedesktop.systemd1 exited with status 1` 오류를 냈습니다. 먼저 사용자 서비스와 버스 파일을 확인합니다.
+
+```bash
+echo "$XDG_RUNTIME_DIR"
+echo "$DBUS_SESSION_BUS_ADDRESS"
+ls -l "/run/user/$(id -u)/bus"
+systemctl status "user@$(id -u).service" --no-pager -l
+```
+
+버스 파일이 존재하고 사용자 서비스가 `active (running)`이면 **sudo 없이 같은 터미널에서** 아래를 실행합니다. 파일이 없거나 사용자 서비스가 실패 상태라면 먼저 사용자 세션 문제를 해결해야 합니다.
+
+```bash
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+systemctl --user start pipewire pipewire-pulse wireplumber
+/usr/libexec/pipewire-module-xrdp/load_pw_modules.sh
+pactl info
+pactl list short sinks
+```
+
+이번에는 `Default Sink: xrdp-sink`와 출력 목록의 `xrdp-sink`를 확인했습니다. 출력이 존재하지만 기본 장치가 다르면 `pactl set-default-sink xrdp-sink`로 선택한 뒤 앱을 다시 실행하세요. 재생 전 `SUSPENDED` 상태만으로 오류라고 판단하지 않습니다.
+
+**설정한 같은 터미널에서 프로젝트 루트로 이동한 뒤** 실행합니다.
+
+```bash
+source .venv-py311/bin/activate
+SDL_AUDIODRIVER=pulseaudio STT_ENABLED=false python main_test.py
+```
+
+이 시험은 STT를 끄고 키보드 질문·RAG·Gemini·TTS만 확인합니다. `ALSA: Couldn't open audio device: Unknown error 524` 또는 `Could not setup connection to PulseAudio`가 나오면 오디오 서버·연결 경로·출력 장치를 확인하세요. 합성 모델을 다시 다운로드하는 것으로 해결되는 오류는 아닙니다.
+
+위 `export`는 현재 터미널에만 적용됩니다. 새 터미널이나 재접속 후에는 확인·설정 절차를 다시 적용해야 할 수 있습니다. 원격 세션 시작 설정에 대한 영구 수정은 이번 시험에서 수행하지 않았습니다.
+
+## 10. 첫 문답의 검색 지연
+
+이번 Pi 시험에서 첫 질문의 검색은 **39.499초**, 이후 서로 다른 질문의 검색은 **0.248초·0.214초**였습니다. BGE reranker는 OFF였으며, 반복 검색 자체는 빠르게 동작했습니다. 현재 검색 경로에는 질문을 벡터로 변환하는 SBERT의 `model.encode()`가 포함됩니다. 실행 초기에 모델을 로드하지만 예제 질문으로 검색 임베딩을 워밍업하는 단계는 없습니다.
+
+이 패턴은 첫 추론의 초기 준비 비용을 시사하지만, 내부 단계별 측정 없이 39초 전체를 SBERT의 특정 작업으로 단정할 수는 없습니다. 첫 검색이 느리면 같은 실행에서 다른 질문을 추가해 반복 검색 시간을 비교하세요. 반복 질문도 계속 느리다면 별도의 CPU·메모리·추론 시간 진단이 필요합니다.
+
+`[시간] 검색 / 답변 / 음성` 로그는 단계별로 봅니다. 검색은 로컬 검색 처리, 답변은 LLM 생성, 음성은 **합성과 재생 완료 대기**를 포함합니다. 예를 들어 음성 시간이 60초라고 해서 합성 계산만 60초 걸렸다는 뜻은 아닙니다.
+
+개선안은 앱 초기화 중 예제 문장을 한 번 임베딩하고 워밍업 완료 후 준비 상태를 표시하는 것입니다. 이는 첫 질문 지연을 시작 단계로 옮기는 방식이며 전체 준비 비용이 사라지는 것은 아닙니다. **현재 브랜치에는 이 워밍업 개선을 적용하지 않았습니다.**
+
+## 여러 구역의 라즈베리파이 연결
+
+설치 구역은 각 Pi의 `.env`에서 `ZONE_ID=A` 또는 `B`, `C`로 설정합니다. 직접 감지 구역은 `DETECTION_ZONE_ID`로 별도 설정하며 생략하면 `ZONE_ID`를 사용합니다. 안내 B / 감지 A라면 `ZONE_ID=B`, `DETECTION_ZONE_ID=A`로 설정합니다. 화재 발생 구역은 HTTP 이벤트의 별도 `fire_zone`으로 전달됩니다. A 화재를 B에서 수신하면 B의 대피로와 A 화재 발생지를 안내합니다. B 센서가 정상이어도 A 장치의 정상 복귀 이벤트 전에는 원격 경보를 해제하지 않습니다.
+
+여러 구역에서 발생하면 화재 위치를 A·C처럼 합쳐 안내하고 현재 안내 구역의 등록된 대피로를 사용합니다. 변경 수신은 1초 동안 모아 진행 중인 음성 종료 후 안내하며 기존 음성을 중간에 끊지 않습니다. 같은 구역의 여러 감지 장치가 있으면 모두 해제해야 해당 구역의 경보가 해제됩니다. 일부 구역 해제 시 남은 화재 경보를 유지하고, 이전 상황의 늦은 AI 답변은 재생하지 않습니다. 등록 경로의 통과 구역·차단 자료가 없으므로 다중 화재를 피해 경로를 재계산하는 기능은 포함하지 않습니다. 추가 `.env` 설정은 필요하지 않으며 프로그램을 재시작해야 적용됩니다. 다중 장치와 실제 스피커 동시 검증은 별도로 진행하세요.
+
+연결할 각 Pi에 `ALERT_HTTP_ENABLED=true`, `ALERT_HTTP_HOST=0.0.0.0`, `ALERT_HTTP_PORT=8765`, 같은 `ALERT_HTTP_TOKEN`, 서로 다른 `ALERT_NODE_ID`를 설정합니다. `ALERT_HTTP_PEERS`는 상대의 `http://IP:8765` 주소이며 여러 주소는 쉼표로 구분합니다. README의 A/B 설정 예제를 참고하고 프로그램을 재시작하세요. 의존성 추가는 없습니다. 내부망의 TCP 8765 접근이 필요하며 토큰은 커밋하지 않습니다.
+
+데모 모드에서 A 장치의 `test fire`를 실행해 B 수신을 확인합니다. B에서 `test fire A`를 입력하면 네트워크 없이 수신 처리만 시험할 수 있으며 `test clear A`로 해제합니다. 실제 두 Pi 사이 연결과 스피커 재생은 해당 장치에서 별도 검증해야 합니다. 통신 단절·프로그램 종료만으로 화재 해제하지 않습니다. 화재 중 발생 장치 재시작 시 기존 수신 경보가 남을 수 있습니다.
+
+대피로는 각 구역 파일에 등록된 경로입니다. 통로 연결·차단 정보를 이용한 우회 경로 계산은 포함하지 않습니다.
+
+## 공식 참고 자료 링크
+
+- [CPU PyTorch 설치](https://pytorch.org/get-started/locally/)
+- [python-mecab-ko 설치](https://python-mecab-ko.readthedocs.io/en/latest/install/)
+- [pygame mixer](https://www.pygame.org/docs/ref/mixer.html)
+- [Debian PipeWire xrdp 패키지](https://packages.debian.org/trixie/pipewire-module-xrdp)
+- [PipeWire xrdp 모듈](https://github.com/neutrinolabs/pipewire-module-xrdp)
+- [Windows 원격 데스크톱 오디오 설정](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-pc-connections-faq)
+- [Gemini TTS API](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)
+- [Gemini API 가격·무료 티어](https://ai.google.dev/gemini-api/docs/pricing)
+- [Raspberry Pi 카메라 소프트웨어](https://www.raspberrypi.com/documentation/computers/camera_software.html)
+# 부팅 자동 실행 추가 안내
+
+터미널 입력 없는 실행 모드와 사용자 systemd 서비스 설치 도구를 추가했습니다. 기존 Python 3.11 가상환경과 `.env`를 사용하며, 프로젝트 폴더에서 `python tools/install_autostart.py --start`로 등록합니다. 물리 스피커 준비·로그인 없는 시작·수동 실행 전 서비스 중지 절차는 [부팅 자동 실행 안내](docs/raspberry_pi_autostart.md)를 확인하세요. 실제 재부팅·센서·음성 검증은 각 Pi에서 진행해야 합니다.
